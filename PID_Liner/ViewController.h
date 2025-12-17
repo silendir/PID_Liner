@@ -9,6 +9,9 @@
 
 @interface ViewController : UIViewController
 
+@property (nonatomic, strong) UIButton *convertButton;
+@property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, strong) UITextView *logTextView;
 
 @end
 
