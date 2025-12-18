@@ -380,6 +380,8 @@
         action:@selector(shareCurrentPreview:)];
     previewVC.navigationItem.rightBarButtonItem.tag = [_csvRecords indexOfObject:record];
 
+    // 临时创建的ViewController没有viewDidLoad，在push前打印类名以供调试
+    NSLog(@"本类为:%@ (CSV预览页)", [NSString stringWithUTF8String:object_getClassName(previewVC)]);
     [self.navigationController pushViewController:previewVC animated:YES];
 }
 
