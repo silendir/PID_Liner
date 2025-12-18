@@ -39,14 +39,46 @@
         _createTime = attrs[NSFileCreationDate] ?: [NSDate date];
     }
 
-    // 统计行数
-    NSError *error = nil;
-    NSString *content = [NSString stringWithContentsOfFile:_filePath
-                                                  encoding:NSUTF8StringEncoding
-                                                     error:&error];
-    if (content) {
-        _lineCount = [[content componentsSeparatedByString:@"\n"] count];
+    // 使用流式读取统计行数，避免大文件导致内存问题
+    _lineCount = [self countLinesInFileStreaming:_filePath maxLines:100000];
+}
+
+/// 流式读取文件统计行数，设置上限避免超大文件卡顿
+/// @param filePath 文件路径
+/// @param maxLines 最大统计行数，超过则返回该值（表示 "N+ 行"）
+- (NSInteger)countLinesInFileStreaming:(NSString *)filePath maxLines:(NSInteger)maxLines {
+    NSFileHandle *fileHandle = [NSFileHandle fileHandleForReadingAtPath:filePath];
+    if (!fileHandle) {
+        return 0;
     }
+
+    NSInteger lineCount = 0;
+    const NSUInteger bufferSize = 8192; // 8KB 缓冲区
+    NSData *data = nil;
+
+    @try {
+        while ((data = [fileHandle readDataOfLength:bufferSize]) && data.length > 0) {
+            const char *bytes = (const char *)data.bytes;
+            NSUInteger length = data.length;
+
+            for (NSUInteger i = 0; i < length; i++) {
+                if (bytes[i] == '\n') {
+                    lineCount++;
+                    // 达到上限则提前返回
+                    if (lineCount >= maxLines) {
+                        [fileHandle closeFile];
+                        return maxLines;
+                    }
+                }
+            }
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"统计行数异常: %@", exception);
+    } @finally {
+        [fileHandle closeFile];
+    }
+
+    return lineCount;
 }
 
 - (NSString *)formattedFileSize {
@@ -352,25 +384,21 @@
         [textView.bottomAnchor constraintEqualToAnchor:previewVC.view.safeAreaLayoutGuide.bottomAnchor constant:-10]
     ]];
 
-    // 加载CSV内容
-    NSError *error = nil;
-    NSString *content = [NSString stringWithContentsOfFile:record.filePath
-                                                  encoding:NSUTF8StringEncoding
-                                                     error:&error];
-    if (content) {
-        // 只显示前100行
-        NSArray *lines = [content componentsSeparatedByString:@"\n"];
-        NSInteger maxLines = MIN(100, lines.count);
-        NSArray *previewLines = [lines subarrayWithRange:NSMakeRange(0, maxLines)];
-        NSMutableString *previewText = [NSMutableString stringWithString:[previewLines componentsJoinedByString:@"\n"]];
+    // 流式读取CSV内容，只获取前100行，避免大文件内存问题
+    NSInteger maxPreviewLines = 100;
+    NSString *previewContent = [self readFirstNLines:record.filePath maxLines:maxPreviewLines];
 
-        if (lines.count > maxLines) {
-            [previewText appendFormat:@"\n\n... 还有 %ld 行 ...", (long)(lines.count - maxLines)];
+    if (previewContent) {
+        NSMutableString *previewText = [NSMutableString stringWithString:previewContent];
+
+        // 如果文件总行数超过预览行数，显示提示
+        if (record.lineCount > maxPreviewLines) {
+            [previewText appendFormat:@"\n\n... 还有 %ld 行 ...", (long)(record.lineCount - maxPreviewLines)];
         }
 
         textView.text = previewText;
     } else {
-        textView.text = [NSString stringWithFormat:@"无法读取文件: %@", error.localizedDescription];
+        textView.text = @"无法读取文件";
     }
 
     // 添加分享按钮
@@ -383,6 +411,47 @@
     // 临时创建的ViewController没有viewDidLoad，在push前打印类名以供调试
     NSLog(@"本类为:%@ (CSV预览页)", [NSString stringWithUTF8String:object_getClassName(previewVC)]);
     [self.navigationController pushViewController:previewVC animated:YES];
+}
+
+/// 流式读取文件前N行内容
+/// @param filePath 文件路径
+/// @param maxLines 最大读取行数
+- (NSString *)readFirstNLines:(NSString *)filePath maxLines:(NSInteger)maxLines {
+    NSFileHandle *fileHandle = [NSFileHandle fileHandleForReadingAtPath:filePath];
+    if (!fileHandle) {
+        return nil;
+    }
+
+    NSMutableData *resultData = [NSMutableData data];
+    NSInteger lineCount = 0;
+    const NSUInteger bufferSize = 8192; // 8KB 缓冲区
+    NSData *data = nil;
+
+    @try {
+        while ((data = [fileHandle readDataOfLength:bufferSize]) && data.length > 0) {
+            const char *bytes = (const char *)data.bytes;
+            NSUInteger length = data.length;
+
+            for (NSUInteger i = 0; i < length; i++) {
+                [resultData appendBytes:&bytes[i] length:1];
+
+                if (bytes[i] == '\n') {
+                    lineCount++;
+                    if (lineCount >= maxLines) {
+                        [fileHandle closeFile];
+                        return [[NSString alloc] initWithData:resultData encoding:NSUTF8StringEncoding];
+                    }
+                }
+            }
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"读取文件异常: %@", exception);
+        [fileHandle closeFile];
+        return nil;
+    }
+
+    [fileHandle closeFile];
+    return [[NSString alloc] initWithData:resultData encoding:NSUTF8StringEncoding];
 }
 
 - (void)shareCurrentPreview:(UIBarButtonItem *)sender {
