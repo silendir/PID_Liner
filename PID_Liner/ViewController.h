@@ -7,11 +7,19 @@
 
 #import <UIKit/UIKit.h>
 
+@class BBLSessionInfo;
+
 @interface ViewController : UIViewController
 
-@property (nonatomic, strong) UIButton *convertButton;
-@property (nonatomic, strong) UILabel *statusLabel;
-@property (nonatomic, strong) UITextView *logTextView;
+// UI控件
+@property (nonatomic, strong) UIButton *convertButton;       // 转换按钮
+@property (nonatomic, strong) UIButton *sessionSelectButton; // Session选择按钮（下拉选择）
+@property (nonatomic, strong) UILabel *statusLabel;          // 状态标签
+@property (nonatomic, strong) UITextView *logTextView;       // 日志显示
+
+// 数据
+@property (nonatomic, strong) NSString *currentBBLPath;              // 当前BBL文件路径
+@property (nonatomic, strong) NSArray<BBLSessionInfo *> *sessions;   // Session列表
+@property (nonatomic, assign) NSInteger selectedSessionIndex;        // 选中的Session索引（-1表示全部）
 
 @end
-
