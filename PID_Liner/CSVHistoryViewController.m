@@ -77,7 +77,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-
+    NSLog(@"本类为:%@",[NSString stringWithUTF8String:object_getClassName(self)]);
     self.title = @"CSV转换记录";
     self.view.backgroundColor = [UIColor systemBackgroundColor];
 

@@ -20,7 +20,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-
+    NSLog(@"本类为:%@",[NSString stringWithUTF8String:object_getClassName(self)]);
     self.decoder = [[BlackboxDecoder alloc] init];
     self.selectedSessionIndex = -1; // 默认全部
 
