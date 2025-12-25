@@ -43,6 +43,9 @@ static const NSInteger kDefaultMaxRows = 100000;
 // 数据缓存（解析过程中使用）
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray<NSNumber *> *> *dataCache;
 
+// 读取缓冲区（保存跨行的剩余数据）
+@property (nonatomic, strong) NSMutableData *readBuffer;
+
 @end
 
 @implementation PIDCSVParser
@@ -70,8 +73,10 @@ static const NSInteger kDefaultMaxRows = 100000;
 + (NSArray<NSString *> *)requiredFields {
     // 对应Python PID-Analyzer源码中的wanted数组
     // 源文件: PID-Analyzer.py line 679-691
+    // 注意：同时包含 "time (us)" 和 "time" 以支持不同的CSV格式
     return @[
-        @"time (us)",
+        @"time",           // 优先使用（真机解码生成的CSV使用此字段名）
+        @"time (us)",      // 备用字段名（标准格式）
         @"rcCommand[0]", @"rcCommand[1]", @"rcCommand[2]", @"rcCommand[3]",
         @"axisP[0]", @"axisP[1]", @"axisP[2]",
         @"axisI[0]", @"axisI[1]", @"axisI[2]",
@@ -253,6 +258,9 @@ static const NSInteger kDefaultMaxRows = 100000;
 
     // 清空字段索引
     [self.fieldIndexes removeAllObjects];
+
+    // 初始化读取缓冲区
+    self.readBuffer = [NSMutableData data];
 }
 
 - (void)buildFieldIndexes:(NSArray<NSString *> *)headers {
@@ -272,8 +280,18 @@ static const NSInteger kDefaultMaxRows = 100000;
     PIDCSVData *data = [[PIDCSVData alloc] init];
 
     // 使用KVC或直接方法调用来设置属性值
-    // 时间字段
-    data.timeUs = [self arrayFromFields:@[@"time (us)"]];
+    // 时间字段 - 优先使用 "time"（真机格式），备用 "time (us)"（标准格式）
+    data.timeUs = [self arrayFromFields:@[@"time", @"time (us)"]];
+
+    // 🔧 调试日志：检查时间数据读取
+    if (self.verboseLogging) {
+        NSLog(@"🔍 timeUs读取结果: %lu个数据点", (unsigned long)data.timeUs.count);
+        if (data.timeUs.count > 0) {
+            NSLog(@"🔍 timeUs[0]=%@, timeUs[1]=%@", data.timeUs[0], data.timeUs.count > 1 ? data.timeUs[1] : @"N/A");
+        }
+        NSLog(@"🔍 dataCache中time字段数: %lu", (unsigned long)self.dataCache[@"time"].count);
+        NSLog(@"🔍 dataCache中time (us)字段数: %lu", (unsigned long)self.dataCache[@"time (us)"].count);
+    }
 
     // 转换为秒
     NSMutableArray<NSNumber *> *timeSeconds = [NSMutableArray arrayWithCapacity:data.timeUs.count];
@@ -282,6 +300,10 @@ static const NSInteger kDefaultMaxRows = 100000;
         [timeSeconds addObject:@(seconds)];
     }
     data.timeSeconds = timeSeconds;
+
+    if (self.verboseLogging && timeSeconds.count > 0) {
+        NSLog(@"🔍 timeSeconds[0]=%@, timeSeconds[1]=%@", timeSeconds[0], timeSeconds.count > 1 ? timeSeconds[1] : @"N/A");
+    }
 
     // 遥控命令
     data.rcCommand0 = [self arrayFromFields:@[@"rcCommand[0]"]];
@@ -328,7 +350,17 @@ static const NSInteger kDefaultMaxRows = 100000;
     for (NSString *field in fields) {
         NSMutableArray<NSNumber *> *cached = self.dataCache[field];
         if (cached && cached.count > 0) {
-            return [cached copy];
+            // 检查数据是否有效（不只是全是NaN）
+            BOOL hasValidData = NO;
+            for (NSNumber *num in cached) {
+                if (!isnan([num doubleValue])) {
+                    hasValidData = YES;
+                    break;
+                }
+            }
+            if (hasValidData) {
+                return [cached copy];
+            }
         }
     }
     // 如果没有数据，返回空数组
@@ -369,29 +401,82 @@ static const NSInteger kDefaultMaxRows = 100000;
 }
 
 /**
- * 从文件句柄读取下一行（支持跨缓冲区读取）
+ * 从文件句柄读取下一行（支持跨缓冲区读取，使用缓冲区避免数据丢失）
  */
 - (nullable NSString *)readNextLineFromFile:(NSFileHandle *)fileHandle {
     NSMutableData *lineData = [NSMutableData data];
     BOOL foundNewline = NO;
 
-    while (!foundNewline) {
-        NSData *chunk = [fileHandle readDataOfLength:512]; // 小块读取
-        if (!chunk || chunk.length == 0) {
-            break; // EOF
-        }
-
-        NSRange newlineRange = [chunk rangeOfData:[NSData dataWithBytes:"\n" length:1]
-                                          options:0
-                                            range:NSMakeRange(0, chunk.length)];
+    // 先处理缓冲区中的剩余数据
+    if (self.readBuffer.length > 0) {
+        NSRange newlineRange = [self.readBuffer rangeOfData:[NSData dataWithBytes:"\n" length:1]
+                                                     options:0
+                                                       range:NSMakeRange(0, self.readBuffer.length)];
 
         if (newlineRange.location != NSNotFound) {
-            // 找到换行符
-            [lineData appendData:[chunk subdataWithRange:NSMakeRange(0, newlineRange.location)]];
-            // 简化处理：忽略换行符后的剩余数据（对CSV解析影响很小）
+            // 缓冲区中已有完整行
+            [lineData appendData:[self.readBuffer subdataWithRange:NSMakeRange(0, newlineRange.location)]];
+
+            // 保留剩余部分到缓冲区
+            NSInteger remainingStart = newlineRange.location + 1; // +1 跳过换行符
+            if (remainingStart < self.readBuffer.length) {
+                NSData *remaining = [self.readBuffer subdataWithRange:NSMakeRange(remainingStart, self.readBuffer.length - remainingStart)];
+                self.readBuffer = [NSMutableData dataWithData:remaining];
+            } else {
+                [self.readBuffer setLength:0];
+            }
+
+            if (lineData.length > 0) {
+                return [[NSString alloc] initWithData:lineData encoding:NSUTF8StringEncoding];
+            }
+        }
+    }
+
+    // 缓冲区没有完整行，需要读取新数据
+    while (!foundNewline) {
+        NSData *chunk = [fileHandle readDataOfLength:4096]; // 使用4KB块提高效率
+        if (!chunk || chunk.length == 0) {
+            // EOF，返回缓冲区剩余的所有数据
+            if (self.readBuffer.length > 0) {
+                [lineData appendData:self.readBuffer];
+                [self.readBuffer setLength:0];
+            } else if (lineData.length == 0) {
+                return nil;
+            }
+            break;
+        }
+
+        // 将新数据追加到缓冲区
+        [self.readBuffer appendData:chunk];
+
+        // 在缓冲区中查找换行符
+        NSRange newlineRange = [self.readBuffer rangeOfData:[NSData dataWithBytes:"\n" length:1]
+                                                     options:0
+                                                       range:NSMakeRange(0, self.readBuffer.length)];
+
+        if (newlineRange.location != NSNotFound) {
+            // 找到完整行
+            [lineData appendData:[self.readBuffer subdataWithRange:NSMakeRange(0, newlineRange.location)]];
+
+            // 保留剩余部分到缓冲区
+            NSInteger remainingStart = newlineRange.location + 1; // +1 跳过换行符
+            if (remainingStart < self.readBuffer.length) {
+                NSData *remaining = [self.readBuffer subdataWithRange:NSMakeRange(remainingStart, self.readBuffer.length - remainingStart)];
+                self.readBuffer = [NSMutableData dataWithData:remaining];
+            } else {
+                [self.readBuffer setLength:0];
+            }
+
             foundNewline = YES;
         } else {
-            [lineData appendData:chunk];
+            // 还没找到换行符，继续读取
+            // 避免无限增长（防止恶意文件）
+            if (self.readBuffer.length > 1024 * 1024) { // 1MB单行限制
+                NSLog(@"⚠️ 单行数据超过1MB，强制截断");
+                [lineData appendData:self.readBuffer];
+                [self.readBuffer setLength:0];
+                break;
+            }
         }
     }
 

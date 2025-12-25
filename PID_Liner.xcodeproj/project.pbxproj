@@ -57,15 +57,11 @@
 		};
 		F6273D9D2EC5DDFF00C75207 /* PID_LinerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PID_LinerTests;
 			sourceTree = "<group>";
 		};
 		F6273DA72EC5DDFF00C75207 /* PID_LinerUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PID_LinerUITests;
 			sourceTree = "<group>";
 		};
@@ -103,7 +99,6 @@
 				874A2C06820C545314E1DB67 /* Pods-PID_Liner.debug.xcconfig */,
 				8DCC04F833AEC05D9FBFDB0B /* Pods-PID_Liner.release.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
@@ -280,9 +275,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-PID_Liner/Pods-PID_Liner-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-PID_Liner/Pods-PID_Liner-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -372,6 +371,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/PID_Liner/Libs/BlackboxDecoder.xcframework.old/ios-arm64",
+					"$(PROJECT_DIR)/PID_Liner/Libs/BlackboxDecoder.xcframework.old/ios-arm64_x86_64-simulator",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.silen.PID-Liner";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -403,6 +407,11 @@
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/PID_Liner/Libs/BlackboxDecoder.xcframework.old/ios-arm64",
+					"$(PROJECT_DIR)/PID_Liner/Libs/BlackboxDecoder.xcframework.old/ios-arm64_x86_64-simulator",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.silen.PID-Liner";

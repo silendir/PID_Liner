@@ -64,14 +64,124 @@ static const double kP_SCALE_FACTOR = 0.032029;
             double pval = [rcCommand0[j] doubleValue];
             double gyro = [gyro0[j] doubleValue];
             double pidp = [axisP0[j] doubleValue];
-            // pidin = gyro + pval / (0.032029 * pidp)
-            double pidin = gyro + pval / (kP_SCALE_FACTOR * pidp);
+
+            // 🔧 防止除以0：当axisP为0或很小时，只使用gyro作为输入
+            double pidin;
+            double denom = kP_SCALE_FACTOR * pidp;
+            if (fabs(denom) < 1e-9) {
+                // axisP为0或接近0，无法计算PID输入，使用gyro作为fallback
+                pidin = gyro;
+            } else {
+                // pidin = gyro + pval / (0.032029 * pidp)
+                pidin = gyro + pval / denom;
+            }
             [pidInput addObject:@(pidin)];
         }
 
         [timeStack addObject:[timeWindow mutableCopy]];
         [inputStack addObject:pidInput];
         [gyroStack addObject:[gyro0 mutableCopy]];
+        [throttleStack addObject:[rcCommand3 mutableCopy]];
+    }
+
+    stack.input = inputStack;
+    stack.gyro = gyroStack;
+    stack.throttle = throttleStack;
+    stack.time = timeStack;
+
+    return stack;
+}
+
++ (instancetype)stackFromData:(PIDCSVData *)data
+                    axisIndex:(NSInteger)axisIndex
+                  windowSize:(NSInteger)windowSize
+                    overlap:(double)overlap {
+    PIDStackData *stack = [[PIDStackData alloc] init];
+
+    NSInteger n = data.timeSeconds.count;
+    if (n == 0 || windowSize <= 0) {
+        return stack;
+    }
+
+    // 计算步长
+    NSInteger step = (NSInteger)(windowSize * (1.0 - overlap));
+    if (step < 1) step = 1;
+
+    // 计算窗口数量
+    NSInteger windowCount = (n - windowSize) / step + 1;
+
+    // 创建堆叠数据
+    NSMutableArray<NSMutableArray<NSNumber *> *> *inputStack = [NSMutableArray arrayWithCapacity:windowCount];
+    NSMutableArray<NSMutableArray<NSNumber *> *> *gyroStack = [NSMutableArray arrayWithCapacity:windowCount];
+    NSMutableArray<NSMutableArray<NSNumber *> *> *throttleStack = [NSMutableArray arrayWithCapacity:windowCount];
+    NSMutableArray<NSMutableArray<NSNumber *> *> *timeStack = [NSMutableArray arrayWithCapacity:windowCount];
+
+    // 根据轴索引选择数据
+    NSArray<NSNumber *> *rcCommandAxis = nil;
+    NSArray<NSNumber *> *gyroADCAxis = nil;
+    NSArray<NSNumber *> *axisP = nil;
+
+    switch (axisIndex) {
+        case 0:  // Roll
+            rcCommandAxis = data.rcCommand0;
+            gyroADCAxis = data.gyroADC0;
+            axisP = data.axisP0;
+            break;
+        case 1:  // Pitch
+            rcCommandAxis = data.rcCommand1;
+            gyroADCAxis = data.gyroADC1;
+            axisP = data.axisP1;
+            break;
+        case 2:  // Yaw
+            rcCommandAxis = data.rcCommand2;
+            gyroADCAxis = data.gyroADC2;
+            axisP = data.axisP2;
+            break;
+        default:
+            return stack;
+    }
+
+    // 验证数据
+    if (!rcCommandAxis || !gyroADCAxis || !axisP) {
+        return stack;
+    }
+
+    for (NSInteger i = 0; i < windowCount; i++) {
+        NSInteger start = i * step;
+        NSInteger end = MIN(start + windowSize, n);
+
+        if (end <= start) break;
+
+        // 提取窗口数据
+        NSArray<NSNumber *> *timeWindow = [data.timeSeconds subarrayWithRange:NSMakeRange(start, end - start)];
+        NSArray<NSNumber *> *rcCommandWindow = [rcCommandAxis subarrayWithRange:NSMakeRange(start, end - start)];
+        NSArray<NSNumber *> *rcCommand3 = [data.rcCommand3 subarrayWithRange:NSMakeRange(start, end - start)];  // Throttle
+        NSArray<NSNumber *> *gyroWindow = [gyroADCAxis subarrayWithRange:NSMakeRange(start, end - start)];
+        NSArray<NSNumber *> *axisPWindow = [axisP subarrayWithRange:NSMakeRange(start, end - start)];
+
+        // 计算PID输入
+        NSMutableArray<NSNumber *> *pidInput = [NSMutableArray arrayWithCapacity:end - start];
+        for (NSInteger j = 0; j < rcCommandWindow.count; j++) {
+            double pval = [rcCommandWindow[j] doubleValue];
+            double gyro = [gyroWindow[j] doubleValue];
+            double pidp = [axisPWindow[j] doubleValue];
+
+            // 🔧 防止除以0：当axisP为0或很小时，只使用gyro作为输入
+            double pidin;
+            double denom = kP_SCALE_FACTOR * pidp;
+            if (fabs(denom) < 1e-9) {
+                // axisP为0或接近0，无法计算PID输入，使用gyro作为fallback
+                pidin = gyro;
+            } else {
+                // pidin = gyro + pval / (0.032029 * pidp)
+                pidin = gyro + pval / denom;
+            }
+            [pidInput addObject:@(pidin)];
+        }
+
+        [timeStack addObject:[timeWindow mutableCopy]];
+        [inputStack addObject:pidInput];
+        [gyroStack addObject:[gyroWindow mutableCopy]];
         [throttleStack addObject:[rcCommand3 mutableCopy]];
     }
 
@@ -198,6 +308,17 @@ static const double kP_SCALE_FACTOR = 0.032029;
                                                                        output:outp
                                                                        cutFreq:self.cutFreq];
 
+    // 🔍 调试：检查反卷积结果
+    NSLog(@"🔍 反卷积结果: rowCount=%lu, columnCount=%ld",
+          (unsigned long)deconvResult.data.count, (long)deconvResult.columnCount);
+    if (deconvResult.data.count > 0 && deconvResult.data[0].count > 0) {
+        NSArray<NSNumber *> *firstRow = deconvResult.data[0];
+        NSLog(@"🔍 反卷积data[0]前5个值: %@, %@, %@, %@, %@",
+              firstRow[0], firstRow[1], firstRow[2],
+              firstRow.count > 3 ? firstRow[3] : @"N/A",
+              firstRow.count > 4 ? firstRow[4] : @"N/A");
+    }
+
     // 截取指定长度
     NSMutableArray<NSArray<NSNumber *> *> *truncatedDeconv = [NSMutableArray arrayWithCapacity:windowCount];
     NSInteger rlen = MIN(self.responseLen, deconvResult.columnCount);
@@ -209,7 +330,19 @@ static const double kP_SCALE_FACTOR = 0.032029;
     // 累积和 (cumsum = 阶跃响应)
     NSMutableArray<NSArray<NSNumber *> *> *stepResponse = [NSMutableArray arrayWithCapacity:windowCount];
     for (NSArray<NSNumber *> *row in truncatedDeconv) {
-        [stepResponse addObject:[PIDInterpolation cumsum:row]];
+        NSArray<NSNumber *> *cumsum = [PIDInterpolation cumsum:row];
+        [stepResponse addObject:cumsum];
+    }
+
+    // 🔍 调试：检查阶跃响应结果
+    if (stepResponse.count > 0) {
+        NSArray<NSNumber *> *firstStep = stepResponse[0];
+        NSLog(@"🔍 阶跃响应stepResponse[0]前5个值: %@, %@, %@, %@, %@",
+              firstStep.count > 0 ? firstStep[0] : @"N/A",
+              firstStep.count > 1 ? firstStep[1] : @"N/A",
+              firstStep.count > 2 ? firstStep[2] : @"N/A",
+              firstStep.count > 3 ? firstStep[3] : @"N/A",
+              firstStep.count > 4 ? firstStep[4] : @"N/A");
     }
 
     // 计算统计量

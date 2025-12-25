@@ -76,6 +76,20 @@
     }
 }
 
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+
+    // 布局完成后更新图表（如果有数据的话）
+    [self updateChartsIfNeeded];
+}
+
+- (void)updateChartsIfNeeded {
+    // 只有在Tab视图可见且有数据时才更新图表
+    if (!_tabBarController.view.hidden && (_rollResponse || _rollSpectrum || _parsedData)) {
+        [self updateCharts];
+    }
+}
+
 #pragma mark - Setup
 
 - (void)setupUI {
@@ -396,194 +410,326 @@
 
     if (!rcCommand || !gyroADC || !pValues) return;
 
-    // 创建堆叠窗口数据
-    // 注意：这里使用简化的堆叠方法，实际应用中需要完整的stackFromData实现
-    // 为简化，直接使用当前数据进行堆叠响应分析
+    // 🔍 调试：检查输入数据
+    NSLog(@"🔍 轴%ld原始数据检查:", (long)axisIndex);
+    NSLog(@"   rcCommand.count=%lu, 前3个值: %@, %@, %@",
+          (unsigned long)rcCommand.count,
+          rcCommand.count > 0 ? rcCommand[0] : @"N/A",
+          rcCommand.count > 1 ? rcCommand[1] : @"N/A",
+          rcCommand.count > 2 ? rcCommand[2] : @"N/A");
+    NSLog(@"   gyroADC.count=%lu, 前3个值: %@, %@, %@",
+          (unsigned long)gyroADC.count,
+          gyroADC.count > 0 ? gyroADC[0] : @"N/A",
+          gyroADC.count > 1 ? gyroADC[1] : @"N/A",
+          gyroADC.count > 2 ? gyroADC[2] : @"N/A");
 
-    // 生成Tukey窗（用于后续的stackResponse分析）
-    // NSArray<NSNumber *> *window = [PIDTraceAnalyzer tukeyWindowWithLength:windowSize alpha:0.5];
+    // 检查axisP数据
+    NSArray<NSNumber *> *axisP = nil;
+    switch (axisIndex) {
+        case 0: axisP = _parsedData.axisP0; break;
+        case 1: axisP = _parsedData.axisP1; break;
+        case 2: axisP = _parsedData.axisP2; break;
+    }
+    NSLog(@"   axisP.count=%lu, 前3个值: %@, %@, %@",
+          (unsigned long)axisP.count,
+          axisP.count > 0 ? axisP[0] : @"N/A",
+          axisP.count > 1 ? axisP[1] : @"N/A",
+          axisP.count > 2 ? axisP[2] : @"N/A");
 
-    // 创建简化的堆叠数据（实际应使用PIDStackData）
-    // 这里使用前windowSize个数据作为示例
-    NSInteger dataLen = MIN(windowSize, rcCommand.count);
+    // 创建指定轴的堆叠窗口数据
+    PIDStackData *stackData = [PIDStackData stackFromData:_parsedData
+                                                 axisIndex:axisIndex
+                                                windowSize:windowSize
+                                                  overlap:overlap];
 
-    // 创建简化的stack数据
-    NSMutableArray<NSArray<NSNumber *> *> *inputStack = [NSMutableArray array];
-    NSMutableArray<NSArray<NSNumber *> *> *gyroStack = [NSMutableArray array];
-
-    for (NSInteger i = 0; i < 16; i++) {  // 16个窗口
-        NSInteger start = (i * dataLen / 16);
-        NSInteger end = MIN(start + dataLen / 4, rcCommand.count);
-
-        if (end > start) {
-            NSRange range = NSMakeRange(start, end - start);
-            [inputStack addObject:[rcCommand subarrayWithRange:range]];
-            [gyroStack addObject:[gyroADC subarrayWithRange:range]];
-        }
+    // 验证堆叠数据
+    if (stackData.windowCount == 0) {
+        NSLog(@"⚠️ 轴%ld堆叠数据为空", (long)axisIndex);
+        return;
     }
 
-    // 响应分析（使用简化的数据结构）
-    // 实际应用中需要完整的PIDStackData对象
-    // 这里跳过，等待完整的stackResponse调用
+    NSLog(@"✅ 轴%ld堆叠数据创建成功: %ld个窗口", (long)axisIndex, (long)stackData.windowCount);
+
+    // 🔍 调试：检查堆叠后的input数据
+    if (stackData.input.count > 0) {
+        NSArray<NSNumber *> *firstWindow = stackData.input[0];
+        NSLog(@"🔍 堆叠后input[0]前5个值: %@, %@, %@, %@, %@",
+              firstWindow.count > 0 ? firstWindow[0] : @"N/A",
+              firstWindow.count > 1 ? firstWindow[1] : @"N/A",
+              firstWindow.count > 2 ? firstWindow[2] : @"N/A",
+              firstWindow.count > 3 ? firstWindow[3] : @"N/A",
+              firstWindow.count > 4 ? firstWindow[4] : @"N/A");
+    }
+
+    if (stackData.gyro.count > 0) {
+        NSArray<NSNumber *> *firstGyro = stackData.gyro[0];
+        NSLog(@"🔍 堆叠后gyro[0]前5个值: %@, %@, %@, %@, %@",
+              firstGyro.count > 0 ? firstGyro[0] : @"N/A",
+              firstGyro.count > 1 ? firstGyro[1] : @"N/A",
+              firstGyro.count > 2 ? firstGyro[2] : @"N/A",
+              firstGyro.count > 3 ? firstGyro[3] : @"N/A",
+              firstGyro.count > 4 ? firstGyro[4] : @"N/A");
+    }
+
+    // 生成Tukey窗函数（用于stackResponse分析）
+    NSArray<NSNumber *> *window = [analyzer tukeyWindowWithLength:windowSize alpha:0.5];
+
+    // 响应分析 - 调用stackResponse获取阶跃响应结果
+    PIDResponseResult *response = [analyzer stackResponse:stackData window:window];
+    if (response && response.stepResponse.count > 0) {
+        // 确保responses数组有足够空间
+        while (responses.count <= axisIndex) {
+            [responses addObject:[[PIDResponseResult alloc] init]];
+        }
+        responses[axisIndex] = response;
+        NSLog(@"✅ 轴%ld响应分析完成: stepResponse.count=%lu",
+              (long)axisIndex, (unsigned long)response.stepResponse.count);
+    } else {
+        NSLog(@"⚠️ 轴%ld响应分析失败", (long)axisIndex);
+    }
 
     // 频谱分析
     PIDSpectrumResult *spectrum = [analyzer spectrumWithTime:_parsedData.timeSeconds
-                                                        traces:gyroStack];
+                                                        traces:stackData.gyro];
     if (spectrums.count <= axisIndex) {
         [spectrums addObject:spectrum];
     }
 }
 
 /**
- * 更新图表显示
+ * 更新图表显示 - 确保在主线程且视图已布局后执行
  */
 - (void)updateCharts {
+    // 确保在主线程执行
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self updateCharts];
+        });
+        return;
+    }
+
     // 更新响应图 - 使用AAChartView
     AAChartView *responseChart = objc_getAssociatedObject(_responseViewController, @"aaChartView");
 
-    if (_rollResponse || _parsedData) {
-        // 使用模拟数据创建阶跃响应图表
-        [self configureResponseChart:responseChart];
-    } else {
-        // 没有数据时显示提示
-        [self showEmptyStateChart:responseChart message:@"暂无数据\n请确保CSV文件包含完整的PID参数"];
+    // 检查视图是否已布局（frame不为0）
+    if (responseChart && responseChart.bounds.size.width > 0 && responseChart.bounds.size.height > 0) {
+        if (_rollResponse || _parsedData) {
+            [self configureResponseChart:responseChart];
+        } else {
+            [self showEmptyStateChart:responseChart message:@"暂无数据\n请确保CSV文件包含完整的PID参数"];
+        }
     }
 
     // 更新噪声图 - 使用AAChartView
     AAChartView *noiseChart = objc_getAssociatedObject(_noiseViewController, @"aaNoiseChartView");
 
-    if (_rollSpectrum || _parsedData) {
-        // 使用频谱数据创建噪声图表
-        [self configureNoiseChart:noiseChart];
-    } else {
-        // 没有数据时显示提示
-        [self showEmptyStateChart:noiseChart message:@"暂无数据\n请确保CSV文件包含完整的陀螺仪数据"];
+    if (noiseChart && noiseChart.bounds.size.width > 0 && noiseChart.bounds.size.height > 0) {
+        if (_rollSpectrum || _parsedData) {
+            [self configureNoiseChart:noiseChart];
+        } else {
+            [self showEmptyStateChart:noiseChart message:@"暂无数据\n请确保CSV文件包含完整的陀螺仪数据"];
+        }
     }
 }
 
 /**
- * 配置响应图（阶跃响应）
+ * 配置响应图（阶跃响应）- 使用真实的 stepResponse 数据
  */
 - (void)configureResponseChart:(AAChartView *)chartView {
-    // 创建时间轴（0-0.5秒）
-    NSInteger timePoints = 100;
-    NSMutableArray<NSNumber *> *timeCategories = [NSMutableArray arrayWithCapacity:timePoints];
-    for (NSInteger i = 0; i < timePoints; i++) {
-        double t = 0.5 * i / timePoints;
-        [timeCategories addObject:[NSString stringWithFormat:@"%.3f", t]];
+    // 检查是否有真实的响应数据
+    if (!_rollResponse || !_rollResponse.stepResponse || _rollResponse.stepResponse.count == 0) {
+        [self showEmptyStateChart:chartView message:@"暂无响应数据\n请确保CSV文件包含完整的RC命令和陀螺仪数据"];
+        return;
     }
 
-    // 创建阶跃响应数据（Roll/Pitch/Yaw）
-    NSMutableArray<NSNumber *> *rollData = [NSMutableArray arrayWithCapacity:timePoints];
-    NSMutableArray<NSNumber *> *pitchData = [NSMutableArray arrayWithCapacity:timePoints];
-    NSMutableArray<NSNumber *> *yawData = [NSMutableArray arrayWithCapacity:timePoints];
-
-    for (NSInteger i = 0; i < timePoints; i++) {
-        double t = 0.5 * i / timePoints;
-        // 简化的阶跃响应模型：1 - exp(-t/tau)
-        double rollResp = 1.5 * (1.0 - exp(-t / 0.04));  // Roll较快
-        double pitchResp = 1.4 * (1.0 - exp(-t / 0.045)); // Pitch中等
-        double yawResp = 1.2 * (1.0 - exp(-t / 0.05));    // Yaw较慢
-        [rollData addObject:@(rollResp)];
-        [pitchData addObject:@(pitchResp)];
-        [yawData addObject:@(yawResp)];
+    // 使用真实的时间数据 (avgTime)
+    NSArray<NSNumber *> *timeData = _rollResponse.avgTime;
+    NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:timeData.count];
+    for (NSNumber *t in timeData) {
+        [timeCategories addObject:[NSString stringWithFormat:@"%.3f", t.doubleValue]];
     }
 
-    // 配置AAChartModel - 使用正确的语法
+    // 使用真实的阶跃响应数据 (stepResponse)
+    // stepResponse[0] 是 Roll, stepResponse[1] 是 Pitch, stepResponse[2] 是 Yaw
+    NSArray<NSNumber *> *rollData = _rollResponse.stepResponse.count > 0 ? _rollResponse.stepResponse[0] : @[];
+    NSArray<NSNumber *> *pitchData = _rollResponse.stepResponse.count > 1 ? _rollResponse.stepResponse[1] : @[];
+    NSArray<NSNumber *> *yawData = _rollResponse.stepResponse.count > 2 ? _rollResponse.stepResponse[2] : @[];
+
+    // 如果当前轴数据不足，尝试从其他响应对象获取
+    if (rollData.count == 0 && _pitchResponse && _pitchResponse.stepResponse.count > 0) {
+        rollData = _pitchResponse.stepResponse[0];
+    }
+    if (pitchData.count == 0 && _pitchResponse && _pitchResponse.stepResponse.count > 1) {
+        pitchData = _pitchResponse.stepResponse[1];
+    }
+    if (yawData.count == 0 && _yawResponse && _yawResponse.stepResponse.count > 2) {
+        yawData = _yawResponse.stepResponse[2];
+    }
+
+    // 如果仍然没有数据，显示空状态
+    if (rollData.count == 0 && pitchData.count == 0 && yawData.count == 0) {
+        [self showEmptyStateChart:chartView message:@"暂无响应数据 请确保CSV文件包含完整的RC命令和陀螺仪数据"];
+        return;
+    }
+
+    // 🔧 清理数据：移除NaN和Infinity值，替换为0（避免JSON序列化崩溃）
+    rollData = [self cleanNaNValuesInArray:rollData replaceWithZero:YES];
+    pitchData = [self cleanNaNValuesInArray:pitchData replaceWithZero:YES];
+    yawData = [self cleanNaNValuesInArray:yawData replaceWithZero:YES];
+
+    // 配置AAChartModel
     AAChartModel *chartModel = [[AAChartModel alloc] init];
     chartModel.chartType = AAChartTypeLine;
     chartModel.title = @"阶跃响应";
-    chartModel.subtitle = @"Roll/Pitch/Yaw 响应曲线";
+    chartModel.subtitle = @"Roll/Pitch/Yaw 响应曲线 (真实数据)";
     chartModel.categories = timeCategories;
     chartModel.yAxisTitle = @"响应值";
     chartModel.animationType = AAChartAnimationEaseOutCubic;
     chartModel.animationDuration = @800;
     chartModel.markerSymbol = AAChartSymbolTypeCircle;
 
-    // 创建数据系列
-    AASeriesElement *rollSeries = [[AASeriesElement alloc] init];
-    rollSeries.name = @"Roll";
-    rollSeries.data = rollData;
-    rollSeries.color = @"#FF6B6B";
+    // 创建数据系列 - 只添加有数据的系列
+    NSMutableArray<AASeriesElement *> *series = [NSMutableArray array];
 
-    AASeriesElement *pitchSeries = [[AASeriesElement alloc] init];
-    pitchSeries.name = @"Pitch";
-    pitchSeries.data = pitchData;
-    pitchSeries.color = @"#4ECDC4";
+    if (rollData.count > 0) {
+        AASeriesElement *rollSeries = [[AASeriesElement alloc] init];
+        rollSeries.name = @"Roll";
+        rollSeries.data = rollData;
+        rollSeries.color = @"#FF6B6B";
+        [series addObject:rollSeries];
+    }
 
-    AASeriesElement *yawSeries = [[AASeriesElement alloc] init];
-    yawSeries.name = @"Yaw";
-    yawSeries.data = yawData;
-    yawSeries.color = @"#95E1D3";
+    if (pitchData.count > 0) {
+        AASeriesElement *pitchSeries = [[AASeriesElement alloc] init];
+        pitchSeries.name = @"Pitch";
+        pitchSeries.data = pitchData;
+        pitchSeries.color = @"#4ECDC4";
+        [series addObject:pitchSeries];
+    }
 
-    chartModel.series = @[rollSeries, pitchSeries, yawSeries];
+    if (yawData.count > 0) {
+        AASeriesElement *yawSeries = [[AASeriesElement alloc] init];
+        yawSeries.name = @"Yaw";
+        yawSeries.data = yawData;
+        yawSeries.color = @"#95E1D3";
+        [series addObject:yawSeries];
+    }
+
+    chartModel.series = series;
 
     [chartView aa_drawChartWithChartModel:chartModel];
 }
 
 /**
- * 配置噪声频谱图
+ * 配置噪声频谱图 - 使用真实的 spectrum 数据
  */
 - (void)configureNoiseChart:(AAChartView *)chartView {
-    // 创建频率轴 (10Hz - 500Hz)
-    NSInteger freqPoints = 50;
-    NSMutableArray<NSNumber *> *freqCategories = [NSMutableArray arrayWithCapacity:freqPoints];
-
-    for (NSInteger i = 0; i < freqPoints; i++) {
-        double freq = 10.0 + (490.0 * i / freqPoints);
-        [freqCategories addObject:@((NSInteger)freq)];
+    // 检查是否有真实的频谱数据
+    if (!_rollSpectrum || !_rollSpectrum.frequencies || _rollSpectrum.frequencies.count == 0) {
+        [self showEmptyStateChart:chartView message:@"暂无频谱数据\n请确保CSV文件包含完整的陀螺仪数据"];
+        return;
     }
 
-    // 创建噪声频谱数据（模拟）
-    NSMutableArray<NSNumber *> *rollNoise = [NSMutableArray arrayWithCapacity:freqPoints];
-    NSMutableArray<NSNumber *> *pitchNoise = [NSMutableArray arrayWithCapacity:freqPoints];
-    NSMutableArray<NSNumber *> *yawNoise = [NSMutableArray arrayWithCapacity:freqPoints];
-
-    for (NSInteger i = 0; i < freqPoints; i++) {
-        double freq = 10.0 + (490.0 * i / freqPoints);
-        // 模拟噪声频谱：低频较高，随频率衰减
-        double baseNoise = 60.0 / (1.0 + freq / 100.0);
-
-        // 添加一些共振峰
-        double rollResonance = 30.0 * exp(-pow(freq - 120, 2) / 2000.0);
-        double pitchResonance = 25.0 * exp(-pow(freq - 130, 2) / 2000.0);
-        double yawResonance = 20.0 * exp(-pow(freq - 80, 2) / 2000.0);
-
-        [rollNoise addObject:@(baseNoise + rollResonance)];
-        [pitchNoise addObject:@(baseNoise + pitchResonance)];
-        [yawNoise addObject:@(baseNoise + yawResonance)];
+    // 使用真实的频率数据
+    NSArray<NSNumber *> *frequencies = _rollSpectrum.frequencies;
+    NSMutableArray<NSString *> *freqCategories = [NSMutableArray arrayWithCapacity:frequencies.count];
+    for (NSNumber *freq in frequencies) {
+        [freqCategories addObject:[NSString stringWithFormat:@"%.0f", freq.doubleValue]];
     }
+
+    // 使用真实的频谱幅度数据
+    // spectrum 是 [窗口][频率点] 的二维数组
+    // 我们需要对所有窗口的频谱取平均值，得到每个轴的单一频谱
+
+    // 辅助函数：计算频谱数组在所有窗口上的平均值
+    NSArray<NSNumber *> * (^averageSpectrumAcrossWindows)(NSArray<NSArray<NSNumber *> *> *) = ^ NSArray<NSNumber *> * (NSArray<NSArray<NSNumber *> *> *spectrumData) {
+        if (!spectrumData || spectrumData.count == 0) {
+            return @[];
+        }
+
+        NSInteger windowCount = spectrumData.count;
+        NSInteger freqCount = spectrumData[0].count;
+
+        NSMutableArray<NSNumber *> *avgSpectrum = [NSMutableArray arrayWithCapacity:freqCount];
+
+        for (NSInteger i = 0; i < freqCount; i++) {
+            double sum = 0.0;
+            NSInteger validCount = 0;
+
+            for (NSInteger w = 0; w < windowCount; w++) {
+                if (i < spectrumData[w].count) {
+                    sum += spectrumData[w][i].doubleValue;
+                    validCount++;
+                }
+            }
+
+            if (validCount > 0) {
+                [avgSpectrum addObject:@(sum / validCount)];
+            } else {
+                [avgSpectrum addObject:@0];
+            }
+        }
+
+        return [avgSpectrum copy];
+    };
+
+    // 获取各轴的平均频谱数据
+    NSArray<NSNumber *> *rollNoise = averageSpectrumAcrossWindows(_rollSpectrum.spectrum);
+    NSArray<NSNumber *> *pitchNoise = averageSpectrumAcrossWindows(_pitchSpectrum.spectrum);
+    NSArray<NSNumber *> *yawNoise = averageSpectrumAcrossWindows(_yawSpectrum.spectrum);
+
+    // 如果仍然没有数据，显示空状态
+    if (rollNoise.count == 0 && pitchNoise.count == 0 && yawNoise.count == 0) {
+        [self showEmptyStateChart:chartView message:@"暂无频谱数据 请确保CSV文件包含完整的陀螺仪数据"];
+        return;
+    }
+
+    // 🔧 清理数据：移除NaN和Infinity值，替换为0（避免JSON序列化崩溃）
+    rollNoise = [self cleanNaNValuesInArray:rollNoise replaceWithZero:YES];
+    pitchNoise = [self cleanNaNValuesInArray:pitchNoise replaceWithZero:YES];
+    yawNoise = [self cleanNaNValuesInArray:yawNoise replaceWithZero:YES];
 
     // 配置AAChartModel - 使用面积图
     AAChartModel *chartModel = [[AAChartModel alloc] init];
     chartModel.chartType = AAChartTypeAreaspline;
     chartModel.title = @"噪声频谱";
-    chartModel.subtitle = @"陀螺仪噪声分析";
+    chartModel.subtitle = @"陀螺仪噪声分析 (真实数据)";
     chartModel.categories = freqCategories;
-    chartModel.yAxisTitle = @"噪声强度 (dB)";
+    chartModel.yAxisTitle = @"噪声强度";
     chartModel.animationType = AAChartAnimationEaseOutCubic;
     chartModel.animationDuration = @800;
 
-    // 创建数据系列
-    AASeriesElement *rollSeries = [[AASeriesElement alloc] init];
-    rollSeries.name = @"Roll";
-    rollSeries.data = rollNoise;
-    rollSeries.color = @"#FF6B6B";
-    rollSeries.fillOpacity = @0.3;
+    // 创建数据系列 - 只添加有数据的系列
+    NSMutableArray<AASeriesElement *> *series = [NSMutableArray array];
 
-    AASeriesElement *pitchSeries = [[AASeriesElement alloc] init];
-    pitchSeries.name = @"Pitch";
-    pitchSeries.data = pitchNoise;
-    pitchSeries.color = @"#4ECDC4";
-    pitchSeries.fillOpacity = @0.3;
+    if (rollNoise.count > 0) {
+        AASeriesElement *rollSeries = [[AASeriesElement alloc] init];
+        rollSeries.name = @"Roll";
+        rollSeries.data = rollNoise;
+        rollSeries.color = @"#FF6B6B";
+        rollSeries.fillOpacity = @0.3;
+        [series addObject:rollSeries];
+    }
 
-    AASeriesElement *yawSeries = [[AASeriesElement alloc] init];
-    yawSeries.name = @"Yaw";
-    yawSeries.data = yawNoise;
-    yawSeries.color = @"#95E1D3";
-    yawSeries.fillOpacity = @0.3;
+    if (pitchNoise.count > 0) {
+        AASeriesElement *pitchSeries = [[AASeriesElement alloc] init];
+        pitchSeries.name = @"Pitch";
+        pitchSeries.data = pitchNoise;
+        pitchSeries.color = @"#4ECDC4";
+        pitchSeries.fillOpacity = @0.3;
+        [series addObject:pitchSeries];
+    }
 
-    chartModel.series = @[rollSeries, pitchSeries, yawSeries];
+    if (yawNoise.count > 0) {
+        AASeriesElement *yawSeries = [[AASeriesElement alloc] init];
+        yawSeries.name = @"Yaw";
+        yawSeries.data = yawNoise;
+        yawSeries.color = @"#95E1D3";
+        yawSeries.fillOpacity = @0.3;
+        [series addObject:yawSeries];
+    }
+
+    chartModel.series = series;
 
     [chartView aa_drawChartWithChartModel:chartModel];
 }
@@ -596,7 +742,9 @@
     AAChartModel *chartModel = [[AAChartModel alloc] init];
     chartModel.chartType = AAChartTypeColumn;
     chartModel.title = @"PID分析";
-    chartModel.subtitle = message;
+    // 将换行符替换为空格，避免JSON解析失败
+    NSString *safeMessage = [message stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    chartModel.subtitle = safeMessage;
     chartModel.yAxisVisible = NO;
     chartModel.xAxisVisible = NO;
 
@@ -718,6 +866,56 @@
     }
 
     [self presentViewController:activityVC animated:YES completion:nil];
+}
+
+#pragma mark - Data Cleaning
+
+/**
+ * 过滤数组中的NaN和Infinity值，替换为0或nil
+ * @param array 原始数据数组
+ * @param replaceWithZero YES:替换为0, NO:移除该值
+ * @return 清理后的数组
+ */
+- (NSArray<NSNumber *> *)cleanNaNValuesInArray:(NSArray<NSNumber *> *)array replaceWithZero:(BOOL)replaceWithZero {
+    if (!array || array.count == 0) {
+        return array;
+    }
+
+    NSMutableArray<NSNumber *> *cleaned = [NSMutableArray arrayWithCapacity:array.count];
+    for (NSNumber *num in array) {
+        double value = num.doubleValue;
+        // 检查是否为NaN或Infinity
+        if (isnan(value) || isinf(value)) {
+            if (replaceWithZero) {
+                [cleaned addObject:@0];
+            }
+            // 如果replaceWithZero为NO，则跳过该值
+        } else {
+            [cleaned addObject:num];
+        }
+    }
+
+    return [cleaned copy];
+}
+
+/**
+ * 过滤二维数组中的NaN和Infinity值
+ * @param array2D 原始二维数组
+ * @param replaceWithZero YES:替换为0, NO:移除该值
+ * @return 清理后的二维数组
+ */
+- (NSArray<NSArray<NSNumber *> *> *)cleanNaNValuesIn2DArray:(NSArray<NSArray<NSNumber *> *> *)array2D replaceWithZero:(BOOL)replaceWithZero {
+    if (!array2D || array2D.count == 0) {
+        return array2D;
+    }
+
+    NSMutableArray<NSArray<NSNumber *> *> *cleaned = [NSMutableArray arrayWithCapacity:array2D.count];
+    for (NSArray<NSNumber *> *innerArray in array2D) {
+        NSArray<NSNumber *> *cleanedInner = [self cleanNaNValuesInArray:innerArray replaceWithZero:replaceWithZero];
+        [cleaned addObject:cleanedInner];
+    }
+
+    return [cleaned copy];
 }
 
 @end

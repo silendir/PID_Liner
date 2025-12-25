@@ -55,6 +55,19 @@ NS_ASSUME_NONNULL_BEGIN
                   windowSize:(NSInteger)windowSize
                     overlap:(double)overlap;
 
+/**
+ * 创建指定轴的堆叠数据
+ * @param data CSV数据
+ * @param axisIndex 轴索引 (0=Roll, 1=Pitch, 2=Yaw)
+ * @param windowSize 窗口大小（样本点数）
+ * @param overlap 重叠比例（0-1）
+ * @return 堆叠数据对象
+ */
++ (instancetype)stackFromData:(PIDCSVData *)data
+                    axisIndex:(NSInteger)axisIndex
+                  windowSize:(NSInteger)windowSize
+                    overlap:(double)overlap;
+
 @end
 
 #pragma mark - 响应分析结果
