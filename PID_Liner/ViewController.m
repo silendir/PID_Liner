@@ -85,6 +85,14 @@
     _logTextView.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:_logTextView];
 
+    // ========== 进度条 ==========
+    _progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    _progressView.progressTintColor = [UIColor systemBlueColor];
+    _progressView.trackTintColor = [UIColor systemGray4Color];
+    _progressView.hidden = YES;  // 初始隐藏
+    _progressView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:_progressView];
+
     // ========== 设置约束 ==========
     [NSLayoutConstraint activateConstraints:@[
         // Session选择按钮
@@ -104,10 +112,16 @@
         [_statusLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
         [_statusLabel.topAnchor constraintEqualToAnchor:_convertButton.bottomAnchor constant:20],
 
+        // 进度条
+        [_progressView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:40],
+        [_progressView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-40],
+        [_progressView.topAnchor constraintEqualToAnchor:_statusLabel.bottomAnchor constant:12],
+        [_progressView.heightAnchor constraintEqualToConstant:4],
+
         // 日志文本视图
         [_logTextView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
         [_logTextView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
-        [_logTextView.topAnchor constraintEqualToAnchor:_statusLabel.bottomAnchor constant:15],
+        [_logTextView.topAnchor constraintEqualToAnchor:_progressView.bottomAnchor constant:15],
         [_logTextView.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-20]
     ]];
 }
@@ -279,23 +293,28 @@
     _sessionSelectButton.enabled = NO;
     _statusLabel.text = @"⏳ 正在转换...";
 
+    // 显示并重置进度条
+    _progressView.hidden = NO;
+    _progressView.progress = 0.0;
+
+    // 获取总Session数量
+    NSInteger startIndex = 0;
+    NSInteger endIndex = _sessions.count;
+    if (_selectedSessionIndex >= 0 && _selectedSessionIndex < (NSInteger)_sessions.count) {
+        startIndex = _selectedSessionIndex;
+        endIndex = _selectedSessionIndex + 1;
+    }
+    NSInteger totalSessions = endIndex - startIndex;
+
+    // 后台线程执行转换（不阻塞UI）
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSMutableArray<NSString *> *generatedFiles = [NSMutableArray array];
         NSMutableString *logText = [NSMutableString stringWithString:@"=== 转换日志 ===\n\n"];
         BOOL allSuccess = YES;
 
-        // 确定要转换的Session范围
-        NSInteger startIndex = 0;
-        NSInteger endIndex = self.sessions.count;
-
-        if (self.selectedSessionIndex >= 0 && self.selectedSessionIndex < (NSInteger)self.sessions.count) {
-            startIndex = self.selectedSessionIndex;
-            endIndex = self.selectedSessionIndex + 1;
-        }
-
         // 逐个转换Session
         for (NSInteger i = startIndex; i < endIndex; i++) {
-            BBLSessionInfo *session = self.sessions[i];
+            BBLSessionInfo *session = _sessions[i];
             NSLog(@"转换 Session %ld...", (long)i + 1);
 
             [logText appendFormat:@"📝 转换 Session %d...\n", session.logIndex + 1];
@@ -303,6 +322,14 @@
             // 生成CSV文件名：{源文件}_{日期}_{时间戳}_session{N}.csv
             NSString *csvFileName = [self generateCSVFileName:self.currentBBLPath sessionIndex:session.logIndex];
             NSString *outputPath = [self.decoder.outputDirectory stringByAppendingPathComponent:csvFileName];
+
+            // 更新进度（当前Session/总Session数）
+            float currentProgress = (float)(i - startIndex + 1) / (float)totalSessions;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self.progressView.progress = currentProgress;
+                self.statusLabel.text = [NSString stringWithFormat:@"⏳ 转换中... %ld/%ld",
+                                        (long)(i - startIndex + 1), (long)totalSessions];
+            });
 
             // 执行解码
             int result = [self.decoder decodeFlightLog:self.currentBBLPath logIndex:session.logIndex];
@@ -339,10 +366,14 @@
             }
         }
 
-        // 更新UI
+        // 更新UI（完成）
         dispatch_async(dispatch_get_main_queue(), ^{
             self.convertButton.enabled = YES;
             self.sessionSelectButton.enabled = YES;
+
+            // 隐藏进度条
+            self.progressView.hidden = YES;
+            self.progressView.progress = 0.0;
 
             if (allSuccess) {
                 self.statusLabel.text = [NSString stringWithFormat:@"✅ 转换完成！\n生成 %lu 个CSV文件",

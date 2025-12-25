@@ -6,6 +6,7 @@
 //
 
 #import "CSVHistoryViewController.h"
+#import "PIDAnalysisViewController.h"
 
 #pragma mark - CSVRecord Implementation
 
@@ -293,7 +294,45 @@
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
     CSVRecord *record = _csvRecords[indexPath.row];
-    [self showCSVPreview:record];
+    [self showActionSheetForRecord:record];
+}
+
+/**
+ * 显示操作选项（预览/分析/删除）
+ */
+- (void)showActionSheetForRecord:(CSVRecord *)record {
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:record.fileName
+        message:@"请选择操作"
+        preferredStyle:UIAlertControllerStyleActionSheet];
+
+    // 预览
+    [alert addAction:[UIAlertAction actionWithTitle:@"预览内容"
+        style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) {
+            [self showCSVPreview:record];
+        }]];
+
+    // 分析
+    [alert addAction:[UIAlertAction actionWithTitle:@"📊 PID分析"
+        style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) {
+            [self analyzeCSV:record];
+        }]];
+
+    // 取消
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消"
+        style:UIAlertActionStyleCancel
+        handler:nil]];
+
+    // iPad适配
+    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
+        alert.popoverPresentationController.sourceView = self.view;
+        alert.popoverPresentationController.sourceRect = CGRectMake(
+            self.view.bounds.size.width / 2, self.view.bounds.size.height / 2, 1, 1);
+    }
+
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
@@ -460,6 +499,19 @@
         NSIndexPath *indexPath = [NSIndexPath indexPathForRow:index inSection:0];
         [self shareRecordAtIndexPath:indexPath];
     }
+}
+
+/**
+ * 分析CSV文件
+ */
+- (void)analyzeCSV:(CSVRecord *)record {
+    NSLog(@"📊 开始分析CSV: %@", record.fileName);
+
+    // 创建分析视图控制器
+    PIDAnalysisViewController *analysisVC = [[PIDAnalysisViewController alloc]
+        initWithCSVFilePath:record.filePath];
+
+    [self.navigationController pushViewController:analysisVC animated:YES];
 }
 
 @end

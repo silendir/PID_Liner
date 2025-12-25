@@ -16,6 +16,7 @@
 @property (nonatomic, strong) UIButton *sessionSelectButton; // Session选择按钮（下拉选择）
 @property (nonatomic, strong) UILabel *statusLabel;          // 状态标签
 @property (nonatomic, strong) UITextView *logTextView;       // 日志显示
+@property (nonatomic, strong) UIProgressView *progressView;  // 进度条
 
 // 数据
 @property (nonatomic, strong) NSString *currentBBLPath;              // 当前BBL文件路径

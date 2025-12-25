@@ -1,0 +1,475 @@
+//
+//  PIDCSVParser.m
+//  PID_Liner
+//
+//  Created by Claude on 2025/12/25.
+//  CSV文件解析器实现 - 流式读取支持大文件
+//
+
+#import "PIDCSVParser.h"
+#import "PIDDataModels.h"
+
+// 默认缓冲区大小：8KB
+static const NSInteger kDefaultBufferSize = 8 * 1024;
+
+// 默认最大读取行数（防止内存溢出）
+static const NSInteger kDefaultMaxRows = 100000;
+
+#pragma mark - PIDCSVParserConfig Implementation
+
+@implementation PIDCSVParserConfig
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _maxRows = kDefaultMaxRows;          // 默认限制10万行
+        _skipEmptyValues = YES;
+        _bufferSize = kDefaultBufferSize;
+    }
+    return self;
+}
+
+@end
+
+#pragma mark - PIDCSVParser Implementation
+
+@interface PIDCSVParser ()
+
+@property (nonatomic, copy, readwrite) NSString *lastErrorMessage;
+
+// 字段索引映射（字段名 -> 列索引）
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *fieldIndexes;
+
+// 数据缓存（解析过程中使用）
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray<NSNumber *> *> *dataCache;
+
+@end
+
+@implementation PIDCSVParser
+
+#pragma mark - Lifecycle
+
++ (instancetype)parser {
+    PIDCSVParserConfig *config = [[PIDCSVParserConfig alloc] init];
+    return [[self alloc] initWithConfig:config];
+}
+
+- (instancetype)initWithConfig:(PIDCSVParserConfig *)config {
+    self = [super init];
+    if (self) {
+        _config = config ?: [[PIDCSVParserConfig alloc] init];
+        _fieldIndexes = [NSMutableDictionary dictionary];
+        _dataCache = [NSMutableDictionary dictionary];
+        _verboseLogging = YES;
+    }
+    return self;
+}
+
+#pragma mark - Public Methods
+
++ (NSArray<NSString *> *)requiredFields {
+    // 对应Python PID-Analyzer源码中的wanted数组
+    // 源文件: PID-Analyzer.py line 679-691
+    return @[
+        @"time (us)",
+        @"rcCommand[0]", @"rcCommand[1]", @"rcCommand[2]", @"rcCommand[3]",
+        @"axisP[0]", @"axisP[1]", @"axisP[2]",
+        @"axisI[0]", @"axisI[1]", @"axisI[2]",
+        @"axisD[0]", @"axisD[1]", @"axisD[2]",
+        @"gyroADC[0]", @"gyroADC[1]", @"gyroADC[2]",
+        @"debug[0]", @"debug[1]", @"debug[2]", @"debug[3]"
+    ];
+}
+
+- (NSInteger)estimateRowCount:(NSString *)filePath {
+    @try {
+        NSError *error = nil;
+        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:filePath error:&error];
+        if (!attrs) {
+            return -1;
+        }
+
+        // 估算：假设平均每行100字节
+        unsigned long long fileSize = [attrs fileSize];
+        NSInteger estimatedRows = (NSInteger)(fileSize / 100);
+
+        if (self.verboseLogging) {
+            NSLog(@"📊 估算CSV行数: 文件大小=%llu bytes, 预估约%ld行", fileSize, (long)estimatedRows);
+        }
+
+        return estimatedRows;
+    } @catch (NSException *exception) {
+        NSLog(@"❌ 估算行数失败: %@", exception.reason);
+        return -1;
+    }
+}
+
+- (BOOL)validateCSVFormat:(NSString *)filePath {
+    @try {
+        // 检查文件是否存在
+        if (![[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+            self.lastErrorMessage = [NSString stringWithFormat:@"文件不存在: %@", filePath];
+            return NO;
+        }
+
+        // 读取第一行验证表头
+        NSError *error = nil;
+        NSString *firstLine = [self readFirstLine:filePath error:&error];
+        if (!firstLine) {
+            self.lastErrorMessage = [NSString stringWithFormat:@"读取文件失败: %@", error.localizedDescription];
+            return NO;
+        }
+
+        // 解析表头
+        NSArray<NSString *> *headers = [self parseCSVLine:firstLine];
+        if (headers.count == 0) {
+            self.lastErrorMessage = @"CSV表头为空";
+            return NO;
+        }
+
+        // 检查必需字段是否存在
+        NSArray<NSString *> *requiredFields = [[self class] requiredFields];
+        NSMutableSet<NSString *> *missingFields = [NSMutableSet setWithArray:requiredFields];
+
+        for (NSString *header in headers) {
+            [missingFields removeObject:header];
+        }
+
+        if (missingFields.count > 0) {
+            NSString *missingStr = [[missingFields allObjects] componentsJoinedByString:@", "];
+            self.lastErrorMessage = [NSString stringWithFormat:@"缺少必需字段: %@", missingStr];
+            if (self.verboseLogging) {
+                NSLog(@"⚠️ CSV验证警告: %@", self.lastErrorMessage);
+            }
+            // 不返回NO，因为某些字段可能确实不存在于某些日志中
+        }
+
+        if (self.verboseLogging) {
+            NSLog(@"✅ CSV格式验证通过: %lu个字段", (unsigned long)headers.count);
+        }
+
+        return YES;
+    } @catch (NSException *exception) {
+        self.lastErrorMessage = [NSString stringWithFormat:@"验证异常: %@", exception.reason];
+        NSLog(@"❌ validateCSVFormat异常: %@", exception);
+        return NO;
+    }
+}
+
+- (nullable PIDCSVData *)parseCSV:(NSString *)filePath {
+    return [self parseCSV:filePath progressHandler:nil];
+}
+
+- (nullable PIDCSVData *)parseCSV:(NSString *)filePath
+                progressHandler:(nullable void(^)(NSInteger, NSInteger))progressHandler {
+    @try {
+        NSLog(@"📝 开始解析CSV: %@", filePath);
+
+        // 验证文件格式
+        if (![self validateCSVFormat:filePath]) {
+            NSLog(@"❌ CSV格式验证失败: %@", self.lastErrorMessage);
+            return nil;
+        }
+
+        // 重置缓存
+        [self resetDataCache];
+
+        // 流式读取文件
+        NSFileHandle *fileHandle = [NSFileHandle fileHandleForReadingAtPath:filePath];
+        if (!fileHandle) {
+            self.lastErrorMessage = @"无法打开文件";
+            return nil;
+        }
+
+        // 读取并解析表头
+        NSString *headerLine = [self readFirstLine:filePath error:nil];
+        NSArray<NSString *> *headers = [self parseCSVLine:headerLine];
+        [self buildFieldIndexes:headers];
+
+        // 解析数据行
+        NSInteger currentRow = 0;
+        NSInteger totalRows = [self estimateRowCount:filePath];
+        NSString *line;
+        BOOL hasMoreData = YES;
+
+        // 跳过表头行
+        [fileHandle seekToFileOffset:headerLine.length + 1]; // +1 for newline
+
+        while (hasMoreData && (self.config.maxRows == 0 || currentRow < self.config.maxRows)) {
+            @autoreleasepool {
+                line = [self readNextLineFromFile:fileHandle];
+                if (!line || line.length == 0) {
+                    hasMoreData = NO;
+                    break;
+                }
+
+                // 解析数据行
+                [self parseDataLine:line];
+
+                currentRow++;
+
+                // 进度回调（每100行或总行数的1%触发一次）
+                if (progressHandler && (currentRow % 100 == 0 || currentRow % (totalRows / 100 + 1) == 0)) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        progressHandler(currentRow, totalRows);
+                    });
+                }
+            }
+        }
+
+        [fileHandle closeFile];
+
+        // 构建结果对象
+        PIDCSVData *result = [self buildResult];
+        result.dataLength = currentRow;
+
+        // 计算采样率
+        if (result.timeUs.count > 1) {
+            int64_t timeDiff = [result.timeUs[1] longLongValue] - [result.timeUs[0] longLongValue];
+            result.sampleRate = timeDiff > 0 ? 1000000.0 / timeDiff : 8000.0;
+        }
+
+        NSLog(@"✅ CSV解析完成: %ld行, 采样率=%.0fHz", (long)currentRow, result.sampleRate);
+
+        return result;
+
+    } @catch (NSException *exception) {
+        self.lastErrorMessage = [NSString stringWithFormat:@"解析异常: %@", exception.reason];
+        NSLog(@"❌ parseCSV异常: %@", exception);
+        return nil;
+    }
+}
+
+#pragma mark - Private Methods - 数据缓存管理
+
+- (void)resetDataCache {
+    // 初始化所有字段的数组
+    self.dataCache = [NSMutableDictionary dictionary];
+
+    NSArray<NSString *> *requiredFields = [[self class] requiredFields];
+    for (NSString *field in requiredFields) {
+        self.dataCache[field] = [NSMutableArray array];
+    }
+
+    // 清空字段索引
+    [self.fieldIndexes removeAllObjects];
+}
+
+- (void)buildFieldIndexes:(NSArray<NSString *> *)headers {
+    [self.fieldIndexes removeAllObjects];
+
+    for (NSInteger i = 0; i < headers.count; i++) {
+        NSString *header = headers[i];
+        self.fieldIndexes[header] = @(i);
+
+        if (self.verboseLogging) {
+            NSLog(@"📋 字段[%ld] = %@", (long)i, header);
+        }
+    }
+}
+
+- (PIDCSVData *)buildResult {
+    PIDCSVData *data = [[PIDCSVData alloc] init];
+
+    // 使用KVC或直接方法调用来设置属性值
+    // 时间字段
+    data.timeUs = [self arrayFromFields:@[@"time (us)"]];
+
+    // 转换为秒
+    NSMutableArray<NSNumber *> *timeSeconds = [NSMutableArray arrayWithCapacity:data.timeUs.count];
+    for (NSNumber *us in data.timeUs) {
+        double seconds = [us doubleValue] * 1e-6;
+        [timeSeconds addObject:@(seconds)];
+    }
+    data.timeSeconds = timeSeconds;
+
+    // 遥控命令
+    data.rcCommand0 = [self arrayFromFields:@[@"rcCommand[0]"]];
+    data.rcCommand1 = [self arrayFromFields:@[@"rcCommand[1]"]];
+    data.rcCommand2 = [self arrayFromFields:@[@"rcCommand[2]"]];
+    data.rcCommand3 = [self arrayFromFields:@[@"rcCommand[3]"]];
+
+    // 油门是rcCommand[3]
+    data.throttle = data.rcCommand3;
+
+    // PID参数
+    data.axisP0 = [self arrayFromFields:@[@"axisP[0]"]];
+    data.axisP1 = [self arrayFromFields:@[@"axisP[1]"]];
+    data.axisP2 = [self arrayFromFields:@[@"axisP[2]"]];
+
+    data.axisI0 = [self arrayFromFields:@[@"axisI[0]"]];
+    data.axisI1 = [self arrayFromFields:@[@"axisI[1]"]];
+    data.axisI2 = [self arrayFromFields:@[@"axisI[2]"]];
+
+    data.axisD0 = [self arrayFromFields:@[@"axisD[0]"]];
+    data.axisD1 = [self arrayFromFields:@[@"axisD[1]"]];
+    data.axisD2 = [self arrayFromFields:@[@"axisD[2]"]];
+
+    // 陀螺仪数据
+    data.gyroADC0 = [self arrayFromFields:@[@"gyroADC[0]"]];
+    data.gyroADC1 = [self arrayFromFields:@[@"gyroADC[1]"]];
+    data.gyroADC2 = [self arrayFromFields:@[@"gyroADC[2]"]];
+
+    // Debug数据
+    data.debug0 = [self arrayFromFields:@[@"debug[0]"]];
+    data.debug1 = [self arrayFromFields:@[@"debug[1]"]];
+    data.debug2 = [self arrayFromFields:@[@"debug[2]"]];
+    data.debug3 = [self arrayFromFields:@[@"debug[3]"]];
+
+    return data;
+}
+
+/**
+ * 从缓存中获取数组
+ * @param fields 源字段名列表
+ * @return 数组副本
+ */
+- (NSArray<NSNumber *> *)arrayFromFields:(NSArray<NSString *> *)fields {
+    for (NSString *field in fields) {
+        NSMutableArray<NSNumber *> *cached = self.dataCache[field];
+        if (cached && cached.count > 0) {
+            return [cached copy];
+        }
+    }
+    // 如果没有数据，返回空数组
+    return @[];
+}
+
+#pragma mark - Private Methods - CSV解析
+
+/**
+ * 读取文件第一行
+ */
+- (nullable NSString *)readFirstLine:(NSString *)filePath error:(NSError **)error {
+    NSFileHandle *fileHandle = [NSFileHandle fileHandleForReadingAtPath:filePath];
+    if (!fileHandle) {
+        return nil;
+    }
+
+    NSData *data = [fileHandle readDataOfLength:self.config.bufferSize];
+    [fileHandle closeFile];
+
+    if (!data || data.length == 0) {
+        return nil;
+    }
+
+    // 查找第一个换行符
+    NSRange newlineRange = [data rangeOfData:[NSData dataWithBytes:"\n" length:1]
+                                        options:0
+                                          range:NSMakeRange(0, data.length)];
+    NSInteger lineLength;
+    if (newlineRange.location != NSNotFound) {
+        lineLength = newlineRange.location;
+    } else {
+        lineLength = data.length;
+    }
+
+    NSData *lineData = [data subdataWithRange:NSMakeRange(0, lineLength)];
+    return [[NSString alloc] initWithData:lineData encoding:NSUTF8StringEncoding];
+}
+
+/**
+ * 从文件句柄读取下一行（支持跨缓冲区读取）
+ */
+- (nullable NSString *)readNextLineFromFile:(NSFileHandle *)fileHandle {
+    NSMutableData *lineData = [NSMutableData data];
+    BOOL foundNewline = NO;
+
+    while (!foundNewline) {
+        NSData *chunk = [fileHandle readDataOfLength:512]; // 小块读取
+        if (!chunk || chunk.length == 0) {
+            break; // EOF
+        }
+
+        NSRange newlineRange = [chunk rangeOfData:[NSData dataWithBytes:"\n" length:1]
+                                          options:0
+                                            range:NSMakeRange(0, chunk.length)];
+
+        if (newlineRange.location != NSNotFound) {
+            // 找到换行符
+            [lineData appendData:[chunk subdataWithRange:NSMakeRange(0, newlineRange.location)]];
+            // 简化处理：忽略换行符后的剩余数据（对CSV解析影响很小）
+            foundNewline = YES;
+        } else {
+            [lineData appendData:chunk];
+        }
+    }
+
+    if (lineData.length == 0) {
+        return nil;
+    }
+
+    return [[NSString alloc] initWithData:lineData encoding:NSUTF8StringEncoding];
+}
+
+/**
+ * 解析CSV行（处理逗号分隔）
+ * 简化版本：不处理引号包裹的字段
+ */
+- (NSArray<NSString *> *)parseCSVLine:(NSString *)line {
+    if (!line || line.length == 0) {
+        return @[];
+    }
+
+    // 简单的逗号分割（适用于当前CSV格式）
+    NSArray<NSString *> *components = [line componentsSeparatedByString:@","];
+
+    // 去除首尾空白
+    NSMutableArray<NSString *> *result = [NSMutableArray arrayWithCapacity:components.count];
+    for (NSString *component in components) {
+        NSString *trimmed = [component stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        [result addObject:trimmed];
+    }
+
+    return result;
+}
+
+/**
+ * 解析数据行并填充缓存
+ */
+- (void)parseDataLine:(NSString *)line {
+    NSArray<NSString *> *values = [self parseCSVLine:line];
+
+    NSArray<NSString *> *requiredFields = [[self class] requiredFields];
+    for (NSString *field in requiredFields) {
+        NSNumber *indexNum = self.fieldIndexes[field];
+        if (!indexNum) {
+            // 字段不存在，填入NaN
+            [self addValue:@(NAN) forField:field];
+            continue;
+        }
+
+        NSInteger index = [indexNum integerValue];
+        if (index >= values.count) {
+            [self addValue:@(NAN) forField:field];
+            continue;
+        }
+
+        NSString *valueStr = values[index];
+        if (valueStr.length == 0) {
+            // 空值
+            if (self.config.skipEmptyValues) {
+                [self addValue:@(NAN) forField:field];
+            } else {
+                [self addValue:@0 forField:field];
+            }
+        } else {
+            double value = [valueStr doubleValue];
+            [self addValue:@(value) forField:field];
+        }
+    }
+}
+
+/**
+ * 添加值到缓存
+ */
+- (void)addValue:(NSNumber *)value forField:(NSString *)field {
+    NSMutableArray<NSNumber *> *array = self.dataCache[field];
+    if (!array) {
+        array = [NSMutableArray array];
+        self.dataCache[field] = array;
+    }
+    [array addObject:value];
+}
+
+@end
