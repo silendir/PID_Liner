@@ -691,7 +691,7 @@
                                                                                                           avgTime:responseResult.avgTime
                                                                                                          maxInput:responseResult.maxInput
                                                                                                        vertRange:vertRange
-                                                                                                        vertBins:200];  // 🔧 优化: 1000→200
+                                                                                                        vertBins:1000];  // 🔧 修复: 对齐Python实现 (之前错误地"优化"成了200)
 
     // 清理数据：移除NaN和Infinity值
     NSArray<NSNumber *> *stepData = [self cleanNaNValuesInArray:averagedStepData replaceWithZero:YES];
