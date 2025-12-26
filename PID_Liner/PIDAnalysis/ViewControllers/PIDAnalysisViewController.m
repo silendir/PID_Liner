@@ -196,6 +196,7 @@
     UIScrollView *scrollView = [[UIScrollView alloc] init];
     scrollView.translatesAutoresizingMaskIntoConstraints = NO;
     scrollView.showsVerticalScrollIndicator = YES;
+    scrollView.showsHorizontalScrollIndicator = NO;
     [vc.view addSubview:scrollView];
 
     // 创建内容视图
@@ -217,6 +218,8 @@
         AAChartView *chartView = [[AAChartView alloc] init];
         chartView.translatesAutoresizingMaskIntoConstraints = NO;
         chartView.contentHeight = chartHeight;
+        // 启用AAChartView的内置缩放功能
+        chartView.scrollEnabled = YES;  // 允许滚动缩放
         [contentView addSubview:chartView];
 
         // 保存引用
@@ -679,18 +682,17 @@
     // 清理数据：移除NaN和Infinity值
     stepData = [self cleanNaNValuesInArray:stepData replaceWithZero:YES];
 
-    // 配置AAChartModel
+    // 配置AAChartModel（支持双指缩放）
     AAChartModel *chartModel = [[AAChartModel alloc] init];
     chartModel.chartType = AAChartTypeLine;
     chartModel.title = [NSString stringWithFormat:@"%@ 阶跃响应", axisName];
-    chartModel.subtitle = @"Step Response Curve";
+    chartModel.subtitle = @"双指缩放查看详情";
     chartModel.categories = timeCategories;
     chartModel.yAxisTitle = @"响应值";
-    // X轴标题通过 categories 自动设置 (s)";
     chartModel.animationType = AAChartAnimationEaseOutCubic;
     chartModel.animationDuration = @800;
-    chartModel.markerSymbol = AAChartSymbolTypeCircle;
-    chartModel.markerRadius = @3;
+    // 启用X轴和Y轴的缩放功能
+    chartModel.zoomType = AAChartZoomTypeXY;
 
     // 创建数据系列
     AASeriesElement *series = [[AASeriesElement alloc] init];
@@ -698,14 +700,17 @@
     series.data = stepData;
     series.color = color;
     series.lineWidth = @2.5;
-    series.zIndex = @1;
+    // 隐藏数据点显示（设置半径为0）
+    AAMarker *marker = [[AAMarker alloc] init];
+    marker.radius = @0;
+    series.marker = marker;
 
     chartModel.series = @[series];
 
     // 绘制图表
     [chartView aa_drawChartWithChartModel:chartModel];
 
-    NSLog(@"✅ %@阶跃响应图表配置完成，数据点数: %lu", axisName, (unsigned long)stepData.count);
+    NSLog(@"✅ %@阶跃响应图表配置完成，数据点数: %lu (支持双指缩放)", axisName, (unsigned long)stepData.count);
 }
 
 /**
