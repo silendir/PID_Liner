@@ -36,36 +36,19 @@
 		F6273DA42EC5DDFF00C75207 /* PID_LinerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PID_LinerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		F6273DAC2EC5DDFF00C75207 /* Exceptions for "PID_Liner" folder in "PID_Liner" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = F6273D7E2EC5DDFC00C75207 /* PID_Liner */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		F6273D812EC5DDFC00C75207 /* PID_Liner */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				F6273DAC2EC5DDFF00C75207 /* Exceptions for "PID_Liner" folder in "PID_Liner" target */,
-			);
 			path = PID_Liner;
 			sourceTree = "<group>";
 		};
 		F6273D9D2EC5DDFF00C75207 /* PID_LinerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PID_LinerTests;
 			sourceTree = "<group>";
 		};
 		F6273DA72EC5DDFF00C75207 /* PID_LinerUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PID_LinerUITests;
 			sourceTree = "<group>";
 		};
@@ -279,9 +262,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-PID_Liner/Pods-PID_Liner-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-PID_Liner/Pods-PID_Liner-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

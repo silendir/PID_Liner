@@ -192,22 +192,68 @@
     UIViewController *vc = [[UIViewController alloc] init];
     vc.view.backgroundColor = [UIColor systemBackgroundColor];
 
-    // 创建AAChartView用于显示响应图
-    AAChartView *chartView = [[AAChartView alloc] init];
-    chartView.translatesAutoresizingMaskIntoConstraints = NO;
-    chartView.contentWidth = self.view.bounds.size.width - 20;
-    chartView.contentHeight = 400;
-    [vc.view addSubview:chartView];
+    // 创建滚动视图以容纳三个图表
+    UIScrollView *scrollView = [[UIScrollView alloc] init];
+    scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    scrollView.showsVerticalScrollIndicator = YES;
+    [vc.view addSubview:scrollView];
 
+    // 创建内容视图
+    UIView *contentView = [[UIView alloc] init];
+    contentView.translatesAutoresizingMaskIntoConstraints = NO;
+    [scrollView addSubview:contentView];
+
+    // 图表高度配置
+    CGFloat chartHeight = 300;  // 每个图表高度
+    CGFloat spacing = 15;        // 图表间距
+
+    // 用于保存三个图表视图的引用
+    AAChartView *rollChartView = nil;
+    AAChartView *pitchChartView = nil;
+    AAChartView *yawChartView = nil;
+
+    // 创建三个独立的 AAChartView (Roll, Pitch, Yaw)
+    for (NSInteger i = 0; i < 3; i++) {
+        AAChartView *chartView = [[AAChartView alloc] init];
+        chartView.translatesAutoresizingMaskIntoConstraints = NO;
+        chartView.contentHeight = chartHeight;
+        [contentView addSubview:chartView];
+
+        // 保存引用
+        if (i == 0) rollChartView = chartView;
+        else if (i == 1) pitchChartView = chartView;
+        else if (i == 2) yawChartView = chartView;
+
+        // 设置约束 - 垂直排列
+        [NSLayoutConstraint activateConstraints:@[
+            [chartView.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:10],
+            [chartView.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-10],
+            [chartView.topAnchor constraintEqualToAnchor:contentView.topAnchor constant:spacing + i * (chartHeight + spacing)],
+            [chartView.heightAnchor constraintEqualToConstant:chartHeight]
+        ]];
+
+        // 保存每个图表的引用，使用静态char指针作为key
+        static char const *const kChartViewKeys[] = {"aaChartView0", "aaChartView1", "aaChartView2"};
+        objc_setAssociatedObject(vc, kChartViewKeys[i], chartView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
+    // 设置内容视图底部约束（最后一个图表的底部）
     [NSLayoutConstraint activateConstraints:@[
-        [chartView.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:10],
-        [chartView.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:10],
-        [chartView.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-10],
-        [chartView.bottomAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.bottomAnchor constant:-10]
+        [contentView.bottomAnchor constraintEqualToAnchor:yawChartView.bottomAnchor constant:spacing]
     ]];
 
-    // 保存chartView引用以便更新数据
-    objc_setAssociatedObject(vc, @"aaChartView", chartView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // 设置滚动视图约束
+    [NSLayoutConstraint activateConstraints:@[
+        [scrollView.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor],
+        [scrollView.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor],
+        [scrollView.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor],
+        [scrollView.bottomAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.bottomAnchor],
+        [contentView.topAnchor constraintEqualToAnchor:scrollView.topAnchor],
+        [contentView.leadingAnchor constraintEqualToAnchor:scrollView.leadingAnchor],
+        [contentView.trailingAnchor constraintEqualToAnchor:scrollView.trailingAnchor],
+        [contentView.bottomAnchor constraintEqualToAnchor:scrollView.bottomAnchor],
+        [contentView.widthAnchor constraintEqualToAnchor:scrollView.widthAnchor]
+    ]];
 
     // 添加导出按钮
     vc.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
@@ -508,16 +554,29 @@
         return;
     }
 
-    // 更新响应图 - 使用AAChartView
-    AAChartView *responseChart = objc_getAssociatedObject(_responseViewController, @"aaChartView");
+    // 定义静态key（与createResponseViewController中的key保持一致）
+    static char const *const kChartViewKeys[] = {"aaChartView0", "aaChartView1", "aaChartView2"};
+
+    // 获取第一个响应图表来检查是否已布局
+    AAChartView *firstChartView = objc_getAssociatedObject(_responseViewController, kChartViewKeys[0]);
 
     // 检查视图是否已布局（frame不为0）
-    if (responseChart && responseChart.bounds.size.width > 0 && responseChart.bounds.size.height > 0) {
-        if (_rollResponse || _parsedData) {
-            [self configureResponseChart:responseChart];
+    if (firstChartView && firstChartView.bounds.size.width > 0 && firstChartView.bounds.size.height > 0) {
+        if (_rollResponse || _pitchResponse || _yawResponse) {
+            [self configureResponseCharts];
+        } else if (_parsedData) {
+            [self configureResponseCharts];
         } else {
-            [self showEmptyStateChart:responseChart message:@"暂无数据\n请确保CSV文件包含完整的PID参数"];
+            // 显示空状态
+            for (NSInteger i = 0; i < 3; i++) {
+                AAChartView *chartView = objc_getAssociatedObject(_responseViewController, kChartViewKeys[i]);
+                if (chartView) {
+                    [self showEmptyStateChart:chartView message:@"暂无数据\n请确保CSV文件包含完整的PID参数"];
+                }
+            }
         }
+    } else {
+        NSLog(@"⚠️ 响应图表视图未布局，bounds=%@", NSStringFromCGRect(firstChartView ? firstChartView.bounds : CGRectZero));
     }
 
     // 更新噪声图 - 使用AAChartView
@@ -534,90 +593,119 @@
 
 /**
  * 配置响应图（阶跃响应）- 使用真实的 stepResponse 数据
+ * 为每个轴创建独立的图表
  */
 - (void)configureResponseChart:(AAChartView *)chartView {
-    // 检查是否有真实的响应数据
-    if (!_rollResponse || !_rollResponse.stepResponse || _rollResponse.stepResponse.count == 0) {
-        [self showEmptyStateChart:chartView message:@"暂无响应数据\n请确保CSV文件包含完整的RC命令和陀螺仪数据"];
+    // 此方法不再使用，改为 configureResponseCharts
+    // 保留此方法以避免编译错误
+    [self configureResponseCharts];
+}
+
+/**
+ * 配置三个独立的响应图（Roll, Pitch, Yaw）
+ */
+- (void)configureResponseCharts {
+    // 定义静态key（与createResponseViewController中的key保持一致）
+    static char const *const kChartViewKeys[] = {"aaChartView0", "aaChartView1", "aaChartView2"};
+
+    // 检查是否有响应数据
+    if (!_rollResponse && !_pitchResponse && !_yawResponse) {
+        // 显示空状态
+        for (NSInteger i = 0; i < 3; i++) {
+            AAChartView *chartView = objc_getAssociatedObject(_responseViewController, kChartViewKeys[i]);
+            if (chartView) {
+                [self showEmptyStateChart:chartView message:@"暂无响应数据\n请确保CSV文件包含完整的RC命令和陀螺仪数据"];
+            }
+        }
         return;
     }
 
-    // 使用真实的时间数据 (avgTime)
-    NSArray<NSNumber *> *timeData = _rollResponse.avgTime;
+    // 配置每个轴的图表
+    [self configureSingleAxisChart:0 responseResult:_rollResponse axisName:@"Roll" color:@"#FF6B6B"];
+    [self configureSingleAxisChart:1 responseResult:_pitchResponse axisName:@"Pitch" color:@"#4ECDC4"];
+    [self configureSingleAxisChart:2 responseResult:_yawResponse axisName:@"Yaw" color:@"#95E1D3"];
+}
+
+/**
+ * 配置单个轴的响应图表
+ * @param axisIndex 轴索引 (0=Roll, 1=Pitch, 2=Yaw)
+ * @param responseResult 响应结果对象
+ * @param axisName 轴名称
+ * @param color 图表颜色 (HEX)
+ */
+- (void)configureSingleAxisChart:(NSInteger)axisIndex
+                  responseResult:(PIDResponseResult *)responseResult
+                        axisName:(NSString *)axisName
+                           color:(NSString *)color {
+
+    // 定义静态key（与createResponseViewController中的key保持一致）
+    static char const *const kChartViewKeys[] = {"aaChartView0", "aaChartView1", "aaChartView2"};
+
+    // 获取对应的图表视图
+    AAChartView *chartView = objc_getAssociatedObject(_responseViewController, kChartViewKeys[axisIndex]);
+
+    if (!chartView) {
+        NSLog(@"⚠️ 轴%@的图表视图不存在", axisName);
+        return;
+    }
+
+    // 检查视图是否已布局（frame不为0）
+    if (chartView.bounds.size.width == 0 || chartView.bounds.size.height == 0) {
+        NSLog(@"⚠️ 轴%@的图表视图未布局，延迟配置", axisName);
+        return;
+    }
+
+    // 检查是否有响应数据
+    if (!responseResult || !responseResult.stepResponse || responseResult.stepResponse.count == 0) {
+        [self showEmptyStateChart:chartView message:[NSString stringWithFormat:@"暂无%@响应数据", axisName]];
+        return;
+    }
+
+    // 获取时间数据 (avgTime)
+    NSArray<NSNumber *> *timeData = responseResult.avgTime;
     NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:timeData.count];
     for (NSNumber *t in timeData) {
         [timeCategories addObject:[NSString stringWithFormat:@"%.3f", t.doubleValue]];
     }
 
-    // 使用真实的阶跃响应数据 (stepResponse)
-    // stepResponse[0] 是 Roll, stepResponse[1] 是 Pitch, stepResponse[2] 是 Yaw
-    NSArray<NSNumber *> *rollData = _rollResponse.stepResponse.count > 0 ? _rollResponse.stepResponse[0] : @[];
-    NSArray<NSNumber *> *pitchData = _rollResponse.stepResponse.count > 1 ? _rollResponse.stepResponse[1] : @[];
-    NSArray<NSNumber *> *yawData = _rollResponse.stepResponse.count > 2 ? _rollResponse.stepResponse[2] : @[];
-
-    // 如果当前轴数据不足，尝试从其他响应对象获取
-    if (rollData.count == 0 && _pitchResponse && _pitchResponse.stepResponse.count > 0) {
-        rollData = _pitchResponse.stepResponse[0];
-    }
-    if (pitchData.count == 0 && _pitchResponse && _pitchResponse.stepResponse.count > 1) {
-        pitchData = _pitchResponse.stepResponse[1];
-    }
-    if (yawData.count == 0 && _yawResponse && _yawResponse.stepResponse.count > 2) {
-        yawData = _yawResponse.stepResponse[2];
-    }
-
-    // 如果仍然没有数据，显示空状态
-    if (rollData.count == 0 && pitchData.count == 0 && yawData.count == 0) {
-        [self showEmptyStateChart:chartView message:@"暂无响应数据 请确保CSV文件包含完整的RC命令和陀螺仪数据"];
+    // 获取第一个窗口的阶跃响应数据作为代表
+    // stepResponse 是 [窗口][响应值] 的二维数组
+    NSArray<NSNumber *> *stepData = responseResult.stepResponse[0];
+    if (!stepData || stepData.count == 0) {
+        [self showEmptyStateChart:chartView message:[NSString stringWithFormat:@"%@响应数据为空", axisName]];
         return;
     }
 
-    // 🔧 清理数据：移除NaN和Infinity值，替换为0（避免JSON序列化崩溃）
-    rollData = [self cleanNaNValuesInArray:rollData replaceWithZero:YES];
-    pitchData = [self cleanNaNValuesInArray:pitchData replaceWithZero:YES];
-    yawData = [self cleanNaNValuesInArray:yawData replaceWithZero:YES];
+    // 清理数据：移除NaN和Infinity值
+    stepData = [self cleanNaNValuesInArray:stepData replaceWithZero:YES];
 
     // 配置AAChartModel
     AAChartModel *chartModel = [[AAChartModel alloc] init];
     chartModel.chartType = AAChartTypeLine;
-    chartModel.title = @"阶跃响应";
-    chartModel.subtitle = @"Roll/Pitch/Yaw 响应曲线 (真实数据)";
+    chartModel.title = [NSString stringWithFormat:@"%@ 阶跃响应", axisName];
+    chartModel.subtitle = @"Step Response Curve";
     chartModel.categories = timeCategories;
     chartModel.yAxisTitle = @"响应值";
+    // X轴标题通过 categories 自动设置 (s)";
     chartModel.animationType = AAChartAnimationEaseOutCubic;
     chartModel.animationDuration = @800;
     chartModel.markerSymbol = AAChartSymbolTypeCircle;
+    chartModel.markerRadius = @3;
 
-    // 创建数据系列 - 只添加有数据的系列
-    NSMutableArray<AASeriesElement *> *series = [NSMutableArray array];
+    // 创建数据系列
+    AASeriesElement *series = [[AASeriesElement alloc] init];
+    series.name = axisName;
+    series.data = stepData;
+    series.color = color;
+    series.lineWidth = @2.5;
+    series.zIndex = @1;
 
-    if (rollData.count > 0) {
-        AASeriesElement *rollSeries = [[AASeriesElement alloc] init];
-        rollSeries.name = @"Roll";
-        rollSeries.data = rollData;
-        rollSeries.color = @"#FF6B6B";
-        [series addObject:rollSeries];
-    }
+    chartModel.series = @[series];
 
-    if (pitchData.count > 0) {
-        AASeriesElement *pitchSeries = [[AASeriesElement alloc] init];
-        pitchSeries.name = @"Pitch";
-        pitchSeries.data = pitchData;
-        pitchSeries.color = @"#4ECDC4";
-        [series addObject:pitchSeries];
-    }
-
-    if (yawData.count > 0) {
-        AASeriesElement *yawSeries = [[AASeriesElement alloc] init];
-        yawSeries.name = @"Yaw";
-        yawSeries.data = yawData;
-        yawSeries.color = @"#95E1D3";
-        [series addObject:yawSeries];
-    }
-
-    chartModel.series = series;
-
+    // 绘制图表
     [chartView aa_drawChartWithChartModel:chartModel];
+
+    NSLog(@"✅ %@阶跃响应图表配置完成，数据点数: %lu", axisName, (unsigned long)stepData.count);
 }
 
 /**
