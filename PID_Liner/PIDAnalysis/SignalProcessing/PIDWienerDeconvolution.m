@@ -269,34 +269,42 @@
     }
 
     NSInteger n = data.count;
-    // 核大小 = 6 * sigma（确保是奇数）
+    // 🔧 限制核大小，避免kernelSize > n导致vDSP_conv崩溃
     NSInteger kernelSize = (NSInteger)(sigma * 6) | 1;  // 确保奇数
     if (kernelSize < 3) kernelSize = 3;
+    // vDSP_conv要求 N >= L，即 n >= kernelSize
+    if (kernelSize > n) {
+        kernelSize = (n / 2) | 1;  // 使用较小的核，确保是奇数
+        if (kernelSize < 3) kernelSize = 3;
+    }
 
     // 生成高斯核
     float *kernel = (float *)malloc(kernelSize * sizeof(float));
     [self generateGaussianKernel:kernel size:kernelSize sigma:sigma];
 
-    // 卷积
-    float *input = (float *)malloc(n * sizeof(float));
-    float *output = (float *)malloc(n * sizeof(float));
-
-    for (NSInteger i = 0; i < n; i++) {
-        input[i] = [data[i] floatValue];
-    }
-
-    // vDSP卷积
-    vDSP_conv(input, 1, kernel, 1, output, 1, n, kernelSize);
-
-    // 转换为输出数组
+    // 🔧 使用简单卷积实现，避免vDSP_conv的边界问题
     NSMutableArray<NSNumber *> *result = [NSMutableArray arrayWithCapacity:n];
+
     for (NSInteger i = 0; i < n; i++) {
-        [result addObject:@(output[i])];
+        double sum = 0.0;
+        double weightSum = 0.0;
+        NSInteger halfKernel = kernelSize / 2;
+
+        for (NSInteger j = 0; j < kernelSize; j++) {
+            NSInteger dataIndex = i - halfKernel + j;
+            double weight = kernel[j];
+
+            if (dataIndex >= 0 && dataIndex < n) {
+                sum += [data[dataIndex] doubleValue] * weight;
+                weightSum += weight;
+            }
+        }
+
+        // 归一化
+        [result addObject:@(weightSum > 0 ? sum / weightSum : 0.0)];
     }
 
     free(kernel);
-    free(input);
-    free(output);
 
     return [result copy];
 }

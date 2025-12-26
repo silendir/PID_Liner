@@ -352,14 +352,15 @@
  */
 - (void)performAnalysis {
     @try {
-        // 创建分析器
+        // 🔧 修正：Python使用cutfreq=25Hz而非150Hz
         PIDTraceAnalyzer *analyzer = [[PIDTraceAnalyzer alloc]
             initWithSampleRate:8000.0
-            cutFreq:150.0];
+            cutFreq:25.0];
 
+        // 🔧 修正：Python使用superpos=16，对应overlap=15/16=0.9375
         // 创建堆叠窗口数据
         NSInteger windowSize = 8000;  // 1秒窗口 @ 8kHz
-        double overlap = 0.5;
+        double overlap = 0.9375;
 
         // 分析每个轴
         NSMutableArray<PIDResponseResult *> *responses = [NSMutableArray array];
@@ -485,11 +486,21 @@
           axisP.count > 1 ? axisP[1] : @"N/A",
           axisP.count > 2 ? axisP[2] : @"N/A");
 
+    // 🔧 修正：添加pGain参数（使用默认值45，后续可从CSV头解析）
+    // 不同轴的P增益值：Roll=45, Pitch=50, Yaw=55（常见配置）
+    double pGain = 45.0;
+    switch (axisIndex) {
+        case 0: pGain = 45.0; break;  // Roll
+        case 1: pGain = 50.0; break;  // Pitch
+        case 2: pGain = 55.0; break;  // Yaw
+    }
+
     // 创建指定轴的堆叠窗口数据
     PIDStackData *stackData = [PIDStackData stackFromData:_parsedData
                                                  axisIndex:axisIndex
                                                 windowSize:windowSize
-                                                  overlap:overlap];
+                                                  overlap:overlap
+                                                     pGain:pGain];
 
     // 验证堆叠数据
     if (stackData.windowCount == 0) {
@@ -520,8 +531,9 @@
               firstGyro.count > 4 ? firstGyro[4] : @"N/A");
     }
 
-    // 生成Tukey窗函数（用于stackResponse分析）
-    NSArray<NSNumber *> *window = [analyzer tukeyWindowWithLength:windowSize alpha:0.5];
+    // 🔧 修正：Python使用Hanning窗而非Tukey窗
+    // 生成Hanning窗函数（用于stackResponse分析）
+    NSArray<NSNumber *> *window = [PIDTraceAnalyzer hanningWindowWithLength:windowSize];
 
     // 响应分析 - 调用stackResponse获取阶跃响应结果
     PIDResponseResult *response = [analyzer stackResponse:stackData window:window];
@@ -664,23 +676,45 @@
         return;
     }
 
-    // 获取时间数据 (avgTime)
-    NSArray<NSNumber *> *timeData = responseResult.avgTime;
-    NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:timeData.count];
-    for (NSNumber *t in timeData) {
-        [timeCategories addObject:[NSString stringWithFormat:@"%.3f", t.doubleValue]];
-    }
-
-    // 获取第一个窗口的阶跃响应数据作为代表
-    // stepResponse 是 [窗口][响应值] 的二维数组
-    NSArray<NSNumber *> *stepData = responseResult.stepResponse[0];
-    if (!stepData || stepData.count == 0) {
+    // 🔧 使用 weighted_mode_avr 进行加权模式平均（与Python一致）
+    // stepResponse 是 [窗口][响应值] 的二维数组，如 95个窗口 x 4000个响应点
+    NSInteger windowCount = responseResult.stepResponse.count;
+    if (windowCount == 0) {
         [self showEmptyStateChart:chartView message:[NSString stringWithFormat:@"%@响应数据为空", axisName]];
         return;
     }
 
+    // 调用 weighted_mode_avr 提取代表性响应曲线
+    // 参数: stepResponse, avgTime, maxInput, vertRange=[-1.5, 3.5], vertBins=1000
+    NSArray<NSNumber *> *vertRange = @[@(-1.5), @(3.5)];
+    NSArray<NSNumber *> *averagedStepData = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:responseResult.stepResponse
+                                                                                                          avgTime:responseResult.avgTime
+                                                                                                         maxInput:responseResult.maxInput
+                                                                                                       vertRange:vertRange
+                                                                                                        vertBins:1000];
+
     // 清理数据：移除NaN和Infinity值
-    stepData = [self cleanNaNValuesInArray:stepData replaceWithZero:YES];
+    NSArray<NSNumber *> *stepData = [self cleanNaNValuesInArray:averagedStepData replaceWithZero:YES];
+
+    // 🔧 使用统一的响应时间轴 (0 ~ 0.5秒)
+    // 响应长度4000对应0.5秒@8kHz采样率
+    NSInteger timePoints = MIN(100, stepData.count);  // 限制显示100个点，避免数据过密
+    NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:timePoints];
+    NSMutableArray<NSNumber *> *displayData = [NSMutableArray arrayWithCapacity:timePoints];
+
+    double duration = 0.5;  // 响应时长0.5秒
+    for (NSInteger i = 0; i < timePoints; i++) {
+        double t = (i * duration) / (timePoints - 1);
+        [timeCategories addObject:[NSString stringWithFormat:@"%.3f", t]];
+
+        // 对原始数据进行降采样
+        NSInteger srcIndex = (i * stepData.count) / timePoints;
+        if (srcIndex < stepData.count) {
+            [displayData addObject:stepData[srcIndex]];
+        } else {
+            [displayData addObject:@0];
+        }
+    }
 
     // 配置AAChartModel（支持双指缩放）
     AAChartModel *chartModel = [[AAChartModel alloc] init];
@@ -697,7 +731,7 @@
     // 创建数据系列
     AASeriesElement *series = [[AASeriesElement alloc] init];
     series.name = axisName;
-    series.data = stepData;
+    series.data = displayData;  // 🔧 使用降采样后的数据
     series.color = color;
     series.lineWidth = @2.5;
     // 隐藏数据点显示（设置半径为0）
@@ -710,7 +744,8 @@
     // 绘制图表
     [chartView aa_drawChartWithChartModel:chartModel];
 
-    NSLog(@"✅ %@阶跃响应图表配置完成，数据点数: %lu (支持双指缩放)", axisName, (unsigned long)stepData.count);
+    NSLog(@"✅ %@阶跃响应图表配置完成，数据点数: %lu (从%ld个窗口平均，降采样到%lu个显示点)",
+          axisName, (unsigned long)displayData.count, (long)windowCount, (unsigned long)displayData.count);
 }
 
 /**

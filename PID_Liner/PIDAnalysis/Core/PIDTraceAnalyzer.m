@@ -93,9 +93,10 @@ static const double kP_SCALE_FACTOR = 0.032029;
 }
 
 + (instancetype)stackFromData:(PIDCSVData *)data
-                    axisIndex:(NSInteger)axisIndex
-                  windowSize:(NSInteger)windowSize
-                    overlap:(double)overlap {
+                  axisIndex:(NSInteger)axisIndex
+                windowSize:(NSInteger)windowSize
+                  overlap:(double)overlap
+                     pGain:(double)pGain {
     PIDStackData *stack = [[PIDStackData alloc] init];
 
     NSInteger n = data.timeSeconds.count;
@@ -103,7 +104,15 @@ static const double kP_SCALE_FACTOR = 0.032029;
         return stack;
     }
 
-    // 计算步长
+    // 🔧 使用固定的P增益值（从CSV头信息解析得到，而非axisP数据）
+    // 如果pGain无效（<=0），使用默认值45
+    if (pGain <= 0) {
+        pGain = 45.0;
+    }
+
+    // 计算步长 - Python: superpos=16, shift=framelen/16
+    // iOS传入overlap=0.5对应shift=windowSize*0.5
+    // Python的superpos=16对应overlap=15/16=0.9375
     NSInteger step = (NSInteger)(windowSize * (1.0 - overlap));
     if (step < 1) step = 1;
 
@@ -117,23 +126,19 @@ static const double kP_SCALE_FACTOR = 0.032029;
     NSMutableArray<NSMutableArray<NSNumber *> *> *timeStack = [NSMutableArray arrayWithCapacity:windowCount];
 
     // 根据轴索引选择数据
-    NSArray<NSNumber *> *rcCommandAxis = nil;
     NSArray<NSNumber *> *gyroADCAxis = nil;
     NSArray<NSNumber *> *axisP = nil;
 
     switch (axisIndex) {
         case 0:  // Roll
-            rcCommandAxis = data.rcCommand0;
             gyroADCAxis = data.gyroADC0;
             axisP = data.axisP0;
             break;
         case 1:  // Pitch
-            rcCommandAxis = data.rcCommand1;
             gyroADCAxis = data.gyroADC1;
             axisP = data.axisP1;
             break;
         case 2:  // Yaw
-            rcCommandAxis = data.rcCommand2;
             gyroADCAxis = data.gyroADC2;
             axisP = data.axisP2;
             break;
@@ -142,7 +147,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
     }
 
     // 验证数据
-    if (!rcCommandAxis || !gyroADCAxis || !axisP) {
+    if (!gyroADCAxis || !axisP) {
         return stack;
     }
 
@@ -154,23 +159,24 @@ static const double kP_SCALE_FACTOR = 0.032029;
 
         // 提取窗口数据
         NSArray<NSNumber *> *timeWindow = [data.timeSeconds subarrayWithRange:NSMakeRange(start, end - start)];
-        NSArray<NSNumber *> *rcCommandWindow = [rcCommandAxis subarrayWithRange:NSMakeRange(start, end - start)];
         NSArray<NSNumber *> *rcCommand3 = [data.rcCommand3 subarrayWithRange:NSMakeRange(start, end - start)];  // Throttle
         NSArray<NSNumber *> *gyroWindow = [gyroADCAxis subarrayWithRange:NSMakeRange(start, end - start)];
         NSArray<NSNumber *> *axisPWindow = [axisP subarrayWithRange:NSMakeRange(start, end - start)];
 
-        // 计算PID输入
+        // 🔧 修正：计算PID输入（对应Python的pid_in函数）
+        // Python: pidin = gyro + p_err / (0.032029 * pidp)
+        // 其中 p_err = axisP[i], pidp = 固定的P增益值
         NSMutableArray<NSNumber *> *pidInput = [NSMutableArray arrayWithCapacity:end - start];
-        for (NSInteger j = 0; j < rcCommandWindow.count; j++) {
-            double pval = [rcCommandWindow[j] doubleValue];
+        for (NSInteger j = 0; j < gyroWindow.count; j++) {
+            double pval = [axisPWindow[j] doubleValue];  // ✅ 修正：使用axisP作为pval
             double gyro = [gyroWindow[j] doubleValue];
-            double pidp = [axisPWindow[j] doubleValue];
+            double pidp = pGain;  // ✅ 修正：使用固定的P增益值
 
-            // 🔧 防止除以0：当axisP为0或很小时，只使用gyro作为输入
+            // 🔧 防止除以0：当pGain为0或很小时，只使用gyro作为输入
             double pidin;
             double denom = kP_SCALE_FACTOR * pidp;
             if (fabs(denom) < 1e-9) {
-                // axisP为0或接近0，无法计算PID输入，使用gyro作为fallback
+                // pGain为0或接近0，无法计算PID输入，使用gyro作为fallback
                 pidin = gyro;
             } else {
                 // pidin = gyro + pval / (0.032029 * pidp)
@@ -189,6 +195,8 @@ static const double kP_SCALE_FACTOR = 0.032029;
     stack.gyro = gyroStack;
     stack.throttle = throttleStack;
     stack.time = timeStack;
+
+    NSLog(@"✅ 堆叠数据创建完成: %ld窗口, P增益=%.1f", (long)windowCount, pGain);
 
     return stack;
 }
@@ -225,7 +233,8 @@ static const double kP_SCALE_FACTOR = 0.032029;
         _dt = 1.0 / sampleRate;
         _cutFreq = cutFreq;
         _pScale = kP_SCALE_FACTOR;
-        _responseLen = 400;  // 默认响应长度
+        // 🔧 修正：Python版本 resplen = 0.5s，8kHz采样率下 = 4000采样点
+        _responseLen = 4000;  // 0.5s @ 8kHz
         _wienerDeconvolution = [[PIDWienerDeconvolution alloc] init];
         _wienerDeconvolution.dt = _dt;
         _fftProcessor = [[PIDFFTProcessor alloc] init];
@@ -485,6 +494,32 @@ static const double kP_SCALE_FACTOR = 0.032029;
     return [window copy];
 }
 
+/**
+ * 生成Hanning窗函数
+ * 对应Python: np.hanning(length)
+ * 公式: 0.5 * (1 - cos(2*pi*n / (N-1)))
+ */
++ (NSArray<NSNumber *> *)hanningWindowWithLength:(NSInteger)length {
+    if (length <= 0) {
+        return @[];
+    }
+
+    // 长度为1时返回[1.0]
+    if (length == 1) {
+        return @[@1.0];
+    }
+
+    NSMutableArray<NSNumber *> *window = [NSMutableArray arrayWithCapacity:length];
+
+    for (NSInteger n = 0; n < length; n++) {
+        // Hanning窗公式: 0.5 * (1 - cos(2*pi*n / (N-1)))
+        double value = 0.5 * (1.0 - cos(2.0 * M_PI * n / (length - 1)));
+        [window addObject:@(value)];
+    }
+
+    return [window copy];
+}
+
 #pragma mark - Helper Methods
 
 /**
@@ -555,6 +590,252 @@ static const double kP_SCALE_FACTOR = 0.032029;
     }
 
     return sum / array.count;
+}
+
+#pragma mark - 数据预处理 (equalize_data)
+
+/**
+ * 时间轴均匀化插值
+ * 对应Python: equalize_data()
+ *
+ * 使用线性插值将不均匀采样的数据转换到均匀时间轴
+ */
++ (NSArray<NSNumber *> *)equalizeDataWithTime:(NSArray<NSNumber *> *)originalTime
+                                         data:(NSArray<NSNumber *> *)data
+                              targetSampleRate:(double)targetSampleRate {
+    if (!originalTime || !data || originalTime.count != data.count || data.count < 2) {
+        return data ?: @[];
+    }
+
+    NSInteger n = data.count;
+    double tStart = [originalTime[0] doubleValue];
+    double tEnd = [originalTime[n - 1] doubleValue];
+
+    // 如果目标采样率为0，保持原始点数
+    NSInteger targetLength = (targetSampleRate > 0)
+        ? (NSInteger)((tEnd - tStart) * targetSampleRate)
+        : n;
+
+    if (targetLength < 2) targetLength = n;
+
+    // 创建均匀时间轴
+    NSMutableArray<NSNumber *> *uniformTime = [NSMutableArray arrayWithCapacity:targetLength];
+    NSMutableArray<NSNumber *> *interpolatedData = [NSMutableArray arrayWithCapacity:targetLength];
+
+    for (NSInteger i = 0; i < targetLength; i++) {
+        double t = tStart + (tEnd - tStart) * i / (targetLength - 1);
+        [uniformTime addObject:@(t)];
+
+        // 线性插值
+        double value = 0.0;
+
+        if (t <= [originalTime[0] doubleValue]) {
+            value = [data[0] doubleValue];
+        } else if (t >= [originalTime[n - 1] doubleValue]) {
+            value = [data[n - 1] doubleValue];
+        } else {
+            // 找到t所在的区间 [time[i], time[i+1]]
+            for (NSInteger j = 0; j < n - 1; j++) {
+                double t0 = [originalTime[j] doubleValue];
+                double t1 = [originalTime[j + 1] doubleValue];
+
+                if (t >= t0 && t <= t1) {
+                    double y0 = [data[j] doubleValue];
+                    double y1 = [data[j + 1] doubleValue];
+
+                    if (t1 - t0 > 1e-9) {
+                        // 线性插值: y = y0 + (y1 - y0) * (t - t0) / (t1 - t0)
+                        value = y0 + (y1 - y0) * (t - t0) / (t1 - t0);
+                    } else {
+                        value = y0;
+                    }
+                    break;
+                }
+            }
+        }
+
+        [interpolatedData addObject:@(value)];
+    }
+
+    NSLog(@"✅ equalize_data: %ld点 -> %ld点 (时间轴 %.3f ~ %.3fs)",
+          (long)n, (long)targetLength, tStart, tEnd);
+
+    return [interpolatedData copy];
+}
+
+#pragma mark - 加权平均 (weighted_mode_avr)
+
+/**
+ * 加权模式平均
+ * 对应Python: weighted_mode_avr()
+ *
+ * 通过2D直方图统计响应分布，提取最可能的响应曲线
+ */
++ (NSArray<NSNumber *> *)weightedModeAverageWithStepResponse:(NSArray<NSArray<NSNumber *> *> *)stepResponse
+                                                   avgTime:(NSArray<NSNumber *> *)avgTime
+                                                  maxInput:(NSArray<NSNumber *> *)maxInput
+                                                vertRange:(NSArray<NSNumber *> *)vertRange
+                                                 vertBins:(NSInteger)vertBins {
+
+    if (!stepResponse || stepResponse.count == 0) {
+        return @[];
+    }
+
+    NSInteger windowCount = stepResponse.count;
+    if (windowCount == 0) return @[];
+
+    // 获取响应长度（所有窗口应该相同）
+    NSInteger responseLength = stepResponse[0].count;
+    if (responseLength == 0) return @[];
+
+    // 参数设置（与Python保持一致）
+    double filtWidth = 7.0;  // 高斯平滑宽度
+    NSInteger timeBins = MIN(200, responseLength);  // 时间方向分箱数（降采样）
+
+    // 垂直范围
+    double yMin = vertRange && vertRange.count > 0 ? [vertRange[0] doubleValue] : -1.5;
+    double yMax = vertRange && vertRange.count > 1 ? [vertRange[1] doubleValue] : 3.5;
+
+    NSLog(@"📊 weighted_mode_avr: %ld窗口 x %ld响应点, 垂直范围[%.1f, %.1f]",
+          (long)windowCount, (long)responseLength, yMin, yMax);
+
+    // 1. 构建2D直方图 [timeBins][vertBins]
+    NSMutableArray<NSMutableArray<NSNumber *> *> *hist2d =
+        [NSMutableArray arrayWithCapacity:timeBins];
+
+    for (NSInteger t = 0; t < timeBins; t++) {
+        NSMutableArray<NSNumber *> *column = [NSMutableArray arrayWithCapacity:vertBins];
+        for (NSInteger v = 0; v < vertBins; v++) {
+            [column addObject:@0.0];
+        }
+        [hist2d addObject:column];
+    }
+
+    // 填充直方图
+    for (NSInteger w = 0; w < windowCount; w++) {
+        NSArray<NSNumber *> *windowResp = stepResponse[w];
+        if (!windowResp || windowResp.count != responseLength) continue;
+
+        // 权重：基于输入幅度（输入幅度越大，权重越高）
+        double weight = 1.0;
+        if (maxInput && w < maxInput.count) {
+            double maxIn = [maxInput[w] doubleValue];
+            // 归一化权重：500°/s为参考值
+            weight = sqrt(MAX(1.0, maxIn / 500.0));
+        }
+
+        for (NSInteger i = 0; i < responseLength; i++) {
+            double respVal = [windowResp[i] doubleValue];
+            if (isnan(respVal) || isinf(respVal)) continue;
+
+            // 映射到直方图坐标
+            NSInteger tBin = (i * timeBins) / responseLength;
+            NSInteger vBin = (NSInteger)((respVal - yMin) / (yMax - yMin) * vertBins);
+
+            // 边界检查
+            if (tBin >= 0 && tBin < timeBins && vBin >= 0 && vBin < vertBins) {
+                double current = [hist2d[tBin][vBin] doubleValue];
+                hist2d[tBin][vBin] = @(current + weight);
+            }
+        }
+    }
+
+    // 2. 高斯平滑（时间方向）
+    NSMutableArray<NSMutableArray<NSNumber *> *> *hist2dSmooth =
+        [NSMutableArray arrayWithCapacity:timeBins];
+
+    for (NSInteger t = 0; t < timeBins; t++) {
+        NSMutableArray<NSNumber *> *smoothColumn = [NSMutableArray arrayWithCapacity:vertBins];
+
+        for (NSInteger v = 0; v < vertBins; v++) {
+            double sum = 0.0;
+            double weightSum = 0.0;
+
+            // 高斯核平滑
+            for (NSInteger dt = -7; dt <= 7; dt++) {
+                NSInteger srcT = t + dt;
+                if (srcT >= 0 && srcT < timeBins) {
+                    // 高斯权重
+                    double gaussWeight = exp(-(dt * dt) / (2 * filtWidth * filtWidth / 9));
+                    double val = [hist2d[srcT][v] doubleValue];
+                    sum += val * gaussWeight;
+                    weightSum += gaussWeight;
+                }
+            }
+
+            double smoothed = weightSum > 0 ? sum / weightSum : 0.0;
+            [smoothColumn addObject:@(smoothed)];
+        }
+
+        [hist2dSmooth addObject:smoothColumn];
+    }
+
+    // 3. 归一化（每列除以最大值）
+    for (NSInteger t = 0; t < timeBins; t++) {
+        double maxVal = 0.0;
+        for (NSInteger v = 0; v < vertBins; v++) {
+            double val = [hist2dSmooth[t][v] doubleValue];
+            if (val > maxVal) maxVal = val;
+        }
+
+        if (maxVal > 1e-9) {
+            for (NSInteger v = 0; v < vertBins; v++) {
+                double val = [hist2dSmooth[t][v] doubleValue];
+                hist2dSmooth[t][v] = @(val / maxVal);
+            }
+        }
+    }
+
+    // 4. 加权平均提取最可能的响应曲线
+    NSMutableArray<NSNumber *> *avgResponse = [NSMutableArray arrayWithCapacity:timeBins];
+
+    for (NSInteger t = 0; t < timeBins; t++) {
+        double weightedSum = 0.0;
+        double weightSum = 0.0;
+
+        for (NSInteger v = 0; v < vertBins; v++) {
+            double histVal = [hist2dSmooth[t][v] doubleValue];
+            double y = yMin + (yMax - yMin) * (v + 0.5) / vertBins;
+
+            // 权重 = 直方图值的平方（增强峰值）
+            double w = histVal * histVal;
+            weightedSum += y * w;
+            weightSum += w;
+        }
+
+        double avgVal = weightSum > 1e-9 ? weightedSum / weightSum : 0.0;
+        [avgResponse addObject:@(avgVal)];
+    }
+
+    // 5. 插值回原始长度
+    if (timeBins < responseLength) {
+        NSMutableArray<NSNumber *> *upSampled = [NSMutableArray arrayWithCapacity:responseLength];
+
+        for (NSInteger i = 0; i < responseLength; i++) {
+            double x = (double)i * (timeBins - 1) / (responseLength - 1);
+            NSInteger x0 = (NSInteger)x;
+            NSInteger x1 = MIN(x0 + 1, timeBins - 1);
+
+            if (x0 < x1) {
+                double y0 = [avgResponse[x0] doubleValue];
+                double y1 = [avgResponse[x1] doubleValue];
+                double frac = x - x0;
+                [upSampled addObject:@(y0 + (y1 - y0) * frac)];
+            } else {
+                [upSampled addObject:avgResponse[x0]];
+            }
+        }
+
+        NSLog(@"✅ weighted_mode_avr完成: %ld窗口 -> 1条曲线 (降采样%ld -> %ld -> 插值%ld)",
+              (long)windowCount, (long)responseLength, (long)timeBins, (long)responseLength);
+
+        return [upSampled copy];
+    }
+
+    NSLog(@"✅ weighted_mode_avr完成: %ld窗口 -> 1条曲线 (%lu点)",
+          (long)windowCount, (unsigned long)avgResponse.count);
+
+    return [avgResponse copy];
 }
 
 @end

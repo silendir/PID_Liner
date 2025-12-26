@@ -30,26 +30,29 @@
     float *kernel = (float *)malloc(kernelSize * sizeof(float));
     [self generateGaussianKernel:kernel size:kernelSize sigma:sigma];
 
-    // 准备输入和输出
-    float *input = (float *)malloc(n * sizeof(float));
-    float *output = (float *)malloc(n * sizeof(float));
-
-    for (NSInteger i = 0; i < n; i++) {
-        input[i] = [data[i] floatValue];
-    }
-
-    // 使用vDSP进行卷积
-    vDSP_conv(input, 1, kernel, 1, output, 1, n, kernelSize);
-
-    // 转换为输出数组
+    // 🔧 使用简单卷积实现，避免vDSP_conv的边界问题
     NSMutableArray<NSNumber *> *result = [NSMutableArray arrayWithCapacity:n];
+
     for (NSInteger i = 0; i < n; i++) {
-        [result addObject:@(output[i])];
+        double sum = 0.0;
+        double weightSum = 0.0;
+        NSInteger halfKernel = kernelSize / 2;
+
+        for (NSInteger j = 0; j < kernelSize; j++) {
+            NSInteger dataIndex = i - halfKernel + j;
+            double weight = kernel[j];
+
+            if (dataIndex >= 0 && dataIndex < n) {
+                sum += [data[dataIndex] doubleValue] * weight;
+                weightSum += weight;
+            }
+        }
+
+        // 归一化
+        [result addObject:@(weightSum > 0 ? sum / weightSum : 0.0)];
     }
 
     free(kernel);
-    free(input);
-    free(output);
 
     return [result copy];
 }

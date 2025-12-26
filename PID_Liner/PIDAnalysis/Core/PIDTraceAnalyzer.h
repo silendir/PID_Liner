@@ -61,12 +61,14 @@ NS_ASSUME_NONNULL_BEGIN
  * @param axisIndex 轴索引 (0=Roll, 1=Pitch, 2=Yaw)
  * @param windowSize 窗口大小（样本点数）
  * @param overlap 重叠比例（0-1）
+ * @param pGain PID的P增益值（从CSV头解析得到，固定值）
  * @return 堆叠数据对象
  */
 + (instancetype)stackFromData:(PIDCSVData *)data
                     axisIndex:(NSInteger)axisIndex
                   windowSize:(NSInteger)windowSize
-                    overlap:(double)overlap;
+                    overlap:(double)overlap
+                       pGain:(double)pGain;
 
 @end
 
@@ -221,6 +223,53 @@ NS_ASSUME_NONNULL_BEGIN
  */
 + (NSArray<NSNumber *> *)tukeyWindowWithLength:(NSInteger)length
                                           alpha:(double)alpha;
+
+/**
+ * 生成Hanning窗函数
+ * 对应Python: np.hanning(length)
+ *
+ * @param length 窗口长度
+ * @return 窗函数数组
+ */
++ (NSArray<NSNumber *> *)hanningWindowWithLength:(NSInteger)length;
+
+#pragma mark - 数据预处理
+
+/**
+ * 时间轴均匀化插值
+ * 对应Python: equalize_data()
+ *
+ * 将不均匀采样的数据插值到均匀时间轴
+ *
+ * @param originalTime 原始时间数组（可能不均匀）
+ * @param data 要插值的数据数组
+ * @param targetSampleRate 目标采样率 (Hz)，0表示保持原始点数
+ * @return 插值后的数据数组
+ */
++ (NSArray<NSNumber *> *)equalizeDataWithTime:(NSArray<NSNumber *> *)originalTime
+                                         data:(NSArray<NSNumber *> *)data
+                              targetSampleRate:(double)targetSampleRate;
+
+#pragma mark - 加权平均
+
+/**
+ * 加权模式平均 - 从多个响应中提取代表性曲线
+ * 对应Python: weighted_mode_avr()
+ *
+ * 使用2D直方图统计响应分布，提取最可能的响应曲线
+ *
+ * @param stepResponse 阶跃响应矩阵 [窗口数][响应点数]
+ * @param avgTime 每个窗口的平均时间
+ * @param maxInput 每个窗口的最大输入幅度（用于权重）
+ * @param vertRange 响应值的垂直范围 [min, max]
+ * @param vertBins 垂直方向分箱数量
+ * @return 加权平均后的响应曲线
+ */
++ (NSArray<NSNumber *> *)weightedModeAverageWithStepResponse:(NSArray<NSArray<NSNumber *> *> *)stepResponse
+                                                   avgTime:(NSArray<NSNumber *> *)avgTime
+                                                  maxInput:(NSArray<NSNumber *> *)maxInput
+                                                vertRange:(NSArray<NSNumber *> *)vertRange
+                                                 vertBins:(NSInteger)vertBins;
 
 @end
 
