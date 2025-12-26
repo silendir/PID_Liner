@@ -205,7 +205,7 @@
     [scrollView addSubview:contentView];
 
     // 图表高度配置
-    CGFloat chartHeight = 300;  // 每个图表高度
+    CGFloat chartHeight = 540;  // 每个图表高度 (原300 * 1.8)
     CGFloat spacing = 15;        // 图表间距
 
     // 用于保存三个图表视图的引用
