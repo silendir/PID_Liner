@@ -691,7 +691,7 @@
                                                                                                           avgTime:responseResult.avgTime
                                                                                                          maxInput:responseResult.maxInput
                                                                                                        vertRange:vertRange
-                                                                                                        vertBins:1000];
+                                                                                                        vertBins:200];  // 🔧 优化: 1000→200
 
     // 清理数据：移除NaN和Infinity值
     NSArray<NSNumber *> *stepData = [self cleanNaNValuesInArray:averagedStepData replaceWithZero:YES];

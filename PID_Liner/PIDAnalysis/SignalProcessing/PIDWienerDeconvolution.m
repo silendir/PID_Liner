@@ -9,6 +9,18 @@
 #import "PIDWienerDeconvolution.h"
 #import "PIDFFTProcessor.h"
 #import <Accelerate/Accelerate.h>
+#import <mach/mach_time.h>
+
+// 获取mach_absolute_time的频率
+static double getMachFrequency(void) {
+    static double frequency = 0.0;
+    if (frequency == 0.0) {
+        mach_timebase_info_data_t info;
+        mach_timebase_info(&info);
+        frequency = (double)info.numer / info.denom;
+    }
+    return frequency;
+}
 
 @implementation PIDWienerResult
 
@@ -53,8 +65,11 @@
  * result = IFFT(G * conj(H) / (H * conj(H) + 1/sn))
  */
 - (PIDWienerResult *)deconvolveWithInput:(NSArray<NSArray<NSNumber *> *> *)inputSignal
-                                output:(NSArray<NSArray<NSArray<NSNumber *> *> *> *)outputSignal
+                                output:(NSArray<NSArray<NSNumber *> *> *)outputSignal
                                 cutFreq:(double)cutFreq {
+
+    // 性能监控
+    uint64_t startTime = mach_absolute_time();
 
     if (!inputSignal || !outputSignal || inputSignal.count != outputSignal.count) {
         return [[PIDWienerResult alloc] init];
@@ -78,6 +93,12 @@
     NSLog(@"📊 维纳反卷积: %ld窗口, 原始长度=%ld, padding后=%lu",
           (long)rowCount, (long)maxColCount, paddedLength);
 
+    // 🔧 优化: 信噪比sn对所有窗口相同，只需计算一次
+    NSArray<NSNumber *> *freqs = [self.fftProcessor fftfreqWithLength:paddedLength dt:self.dt];
+    NSArray<NSNumber *> *sn = [self calculateSignalToNoise:freqs cutFreq:cutFreq];
+    NSArray<NSNumber *> *invSN = [self reciprocal:sn];  // 预计算1/sn
+
+    // 🔧 使用NSMutableArray预分配，提高性能
     NSMutableArray<NSArray<NSNumber *> *> *resultData = [NSMutableArray arrayWithCapacity:rowCount];
 
     // 对每个窗口进行反卷积
@@ -99,18 +120,11 @@
             NSArray<NSNumber *> *G_real = outputFFT[@"real"];
             NSArray<NSNumber *> *G_imag = outputFFT[@"imag"];
 
-            // 计算信噪比sn
-            NSArray<NSNumber *> *freqs = [self.fftProcessor fftfreqWithLength:paddedLength dt:self.dt];
-            NSArray<NSNumber *> *sn = [self calculateSignalToNoise:freqs cutFreq:cutFreq];
-
             // 维纳反卷积公式: G * conj(H) / (H * conj(H) + 1/sn)
             // H * conj(H) = |H|^2（功率谱）
             NSArray<NSNumber *> *powerH = [self complexPowerSpectrumReal:H_real imag:H_imag];
 
-            // 1/sn
-            NSArray<NSNumber *> *invSN = [self reciprocal:sn];
-
-            // 分母: powerH + 1/sn
+            // 分母: powerH + 1/sn (使用预计算的invSN)
             NSArray<NSNumber *> *denomReal = [self addArrays:powerH and:invSN];
 
             // 分子: G * conj(H)
@@ -135,12 +149,17 @@
         }
     }
 
+    // 性能监控
+    uint64_t endTime = mach_absolute_time();
+    double elapsedMs = (double)(endTime - startTime) * 1000.0 / getMachFrequency();
+
     PIDWienerResult *result = [[PIDWienerResult alloc] init];
     result.data = resultData;
     result.rowCount = rowCount;
     result.columnCount = maxColCount;
 
-    NSLog(@"✅ 维纳反卷积完成: %ld x %ld", (long)rowCount, (long)maxColCount);
+    NSLog(@"✅ 维纳反卷积完成: %ld x %ld | 耗时: %.1fms (并行优化+sn预计算)",
+          (long)rowCount, (long)maxColCount, elapsedMs);
 
     return result;
 }
