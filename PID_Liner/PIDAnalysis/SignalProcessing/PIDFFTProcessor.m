@@ -4,6 +4,7 @@
 //
 //  Created by Claude on 2025/12/25.
 //  FFT信号处理实现 - 使用Accelerate vDSP
+//  🔧 修复: 正确处理vDSP的打包格式，对齐numpy FFT输出
 //
 
 #import "PIDFFTProcessor.h"
@@ -13,6 +14,14 @@
 
 #pragma mark - Public Methods
 
+/**
+ * vDSP打包格式说明 (n=8为例):
+ * realp: [DC, f1r, f2r, f3r, Nyq,  0,   0,   0  ]
+ * imagp: [0,  f1i, f2i, f3i, 0,   f3i, f2i, f1i]
+ *
+ * numpy标准格式:
+ * [DC, f1r+f1i*i, f2r+f2i*i, f3r+f3i*i, Nyq, f3r-f3i*i, f2r-f2i*i, f1r-f1i*i]
+ */
 - (NSDictionary<NSString *, NSArray<NSNumber *> *> *)fftWithReal:(NSArray<NSNumber *> *)realInput
                                                             imag:(nullable NSArray<NSNumber *> *)imagInput
                                                           length:(vDSP_Length)length {
@@ -23,7 +32,7 @@
     // 确保长度是2的幂次
     vDSP_Length n = [[self class] nextPowerOfTwo:length];
 
-    // 准备输入数据（分拆为实部和虚部）
+    // 准备输入数据
     float *inputReal = (float *)malloc(n * sizeof(float));
     float *inputImag = (float *)malloc(n * sizeof(float));
 
@@ -31,7 +40,6 @@
         inputReal[i] = [realInput[i] floatValue];
         inputImag[i] = imagInput ? [imagInput[i] floatValue] : 0.0f;
     }
-    // 填充0
     for (vDSP_Length i = length; i < n; i++) {
         inputReal[i] = 0.0f;
         inputImag[i] = 0.0f;
@@ -46,22 +54,33 @@
     inputComplex.realp = inputReal;
     inputComplex.imagp = inputImag;
 
-    // 执行FFT
+    // 🔧 修复: 只执行FFT_FORWARD，不要执行FFT_INVERSE
     vDSP_fft_zrip(fftSetup, &inputComplex, 1, log2n, FFT_FORWARD);
 
-    // 打包结果（vDSP使用特殊的打包格式）
-    vDSP_fft_zrip(fftSetup, &inputComplex, 1, log2n, FFT_INVERSE);
-    // 重新forward获取正确格式
-    // 实际上vDSP的打包格式需要特殊处理
-
-    // 转换为输出数组
+    // 🔧 修复: 将vDSP打包格式转换为numpy标准格式
+    // vDSP打包格式需要正确解包
     NSMutableArray<NSNumber *> *outputReal = [NSMutableArray arrayWithCapacity:n];
     NSMutableArray<NSNumber *> *outputImag = [NSMutableArray arrayWithCapacity:n];
 
-    // vDSP打包格式：DC分量在realp[0]，Nyquist在imagp[0]
-    for (vDSP_Length i = 0; i < n; i++) {
+    // DC分量
+    [outputReal addObject:@(inputComplex.realp[0])];
+    [outputImag addObject:@0.0f];
+
+    // 正频率分量 f1 到 f(n/2-1)
+    vDSP_Length halfN = n / 2;
+    for (vDSP_Length i = 1; i < halfN; i++) {
         [outputReal addObject:@(inputComplex.realp[i])];
         [outputImag addObject:@(inputComplex.imagp[i])];
+    }
+
+    // Nyquist分量
+    [outputReal addObject:@(inputComplex.imagp[0])];
+    [outputImag addObject:@0.0f];
+
+    // 负频率分量 f(-n/2+1) 到 f(-1)
+    for (vDSP_Length i = halfN - 1; i > 0; i--) {
+        [outputReal addObject:@(inputComplex.realp[i])];      // 实部相同
+        [outputImag addObject:@(-inputComplex.imagp[i])];     // 虚部取反（共轭）
     }
 
     // 清理
@@ -72,57 +91,82 @@
     return @{@"real": outputReal, @"imag": outputImag};
 }
 
+/**
+ * IFFT - 逆傅里叶变换
+ * 🔧 修复: 将numpy标准格式转换为vDSP打包格式，然后执行IFFT
+ */
 - (NSDictionary<NSString *, NSArray<NSNumber *> *> *)ifftWithReal:(NSArray<NSNumber *> *)realInput
                                                              imag:(NSArray<NSNumber *> *)imagInput
                                                            length:(vDSP_Length)length {
     if (!realInput || length == 0) {
         return @{};
     }
-
+    
     vDSP_Length n = [[self class] nextPowerOfTwo:length];
-
-    // 准备输入数据
-    float *inputReal = (float *)malloc(n * sizeof(float));
-    float *inputImag = (float *)malloc(n * sizeof(float));
-
-    for (vDSP_Length i = 0; i < length; i++) {
-        inputReal[i] = [realInput[i] floatValue];
-        inputImag[i] = [imagInput[i] floatValue];
+    
+    // 准备vDSP打包格式的输入
+    float *packedReal = (float *)calloc(n, sizeof(float));
+    float *packedImag = (float *)calloc(n, sizeof(float));
+    
+    // 将numpy标准格式转换为vDSP打包格式
+    // numpy: [DC, f1, f2, ..., f(n/2-1), Nyq, f(-n/2+1), ..., f(-1)]
+    // vDSP:   realp[0]=DC, imagp[0]=Nyq, realp[1]=f1r, imagp[1]=f1i, ...
+    
+    packedReal[0] = [realInput[0] floatValue];  // DC分量
+    
+    vDSP_Length halfN = n / 2;
+    
+    // 正频率分量
+    for (vDSP_Length i = 1; i < halfN; i++) {
+        if (i < realInput.count) {
+            packedReal[i] = [realInput[i] floatValue];
+            packedImag[i] = (imagInput && i < imagInput.count) ? [imagInput[i] floatValue] : 0.0f;
+        }
     }
-    for (vDSP_Length i = length; i < n; i++) {
-        inputReal[i] = 0.0f;
-        inputImag[i] = 0.0f;
+    
+    // Nyquist分量
+    if (halfN < realInput.count) {
+        packedImag[0] = [realInput[halfN] floatValue];  // vDSP将Nyquist存在imagp[0]
     }
-
+    
+    // 负频率分量（共轭对称，用于vDSP的打包格式）
+    for (vDSP_Length i = 1; i < halfN; i++) {
+        vDSP_Length numpyIdx = n - i;  // 对应的负频率索引
+        if (numpyIdx < realInput.count) {
+            // 负频率是正频率的共轭，vDSP打包格式会自动处理
+            // 这里不需要额外设置，vDSP会根据正频率计算
+        }
+    }
+    
     // 创建FFT setup
     vDSP_Length log2n = (vDSP_Length)log2(n);
     FFTSetup fftSetup = vDSP_create_fftsetup(log2n, FFT_RADIX2);
-
+    
     DSPSplitComplex inputComplex;
-    inputComplex.realp = inputReal;
-    inputComplex.imagp = inputImag;
-
+    inputComplex.realp = packedReal;
+    inputComplex.imagp = packedImag;
+    
     // 执行IFFT
     vDSP_fft_zrip(fftSetup, &inputComplex, 1, log2n, FFT_INVERSE);
-
-    // 缩放（vDSP的IFFT需要额外缩放）
-    float scale = 1.0f / n;
+    
+    // 缩放（vDSP的IFFT需要除以2*n）
+    float scale = 0.5f / n;
     vDSP_vsmul(inputComplex.realp, 1, &scale, inputComplex.realp, 1, n);
     vDSP_vsmul(inputComplex.imagp, 1, &scale, inputComplex.imagp, 1, n);
-
-    // 转换为输出数组
-    NSMutableArray<NSNumber *> *outputReal = [NSMutableArray arrayWithCapacity:n];
-    NSMutableArray<NSNumber *> *outputImag = [NSMutableArray arrayWithCapacity:n];
-
-    for (vDSP_Length i = 0; i < n; i++) {
+    
+    // 转换为输出（只取实部，因为IFFT结果应该是实数）
+    NSMutableArray<NSNumber *> *outputReal = [NSMutableArray arrayWithCapacity:length];
+    NSMutableArray<NSNumber *> *outputImag = [NSMutableArray arrayWithCapacity:length];
+    
+    for (vDSP_Length i = 0; i < length && i < n; i++) {
         [outputReal addObject:@(inputComplex.realp[i])];
         [outputImag addObject:@(inputComplex.imagp[i])];
     }
-
+    
     vDSP_destroy_fftsetup(fftSetup);
-    free(inputReal);
-    free(inputImag);
-
+    free(packedReal);
+    free(packedImag);
+    
     return @{@"real": outputReal, @"imag": outputImag};
 }
 

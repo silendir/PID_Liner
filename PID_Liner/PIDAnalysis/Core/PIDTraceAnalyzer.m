@@ -296,10 +296,12 @@ static const double kP_SCALE_FACTOR = 0.032029;
     NSInteger windowLen = stacks.windowLength;
 
     // 确保窗函数长度匹配
+    // 🔧 修复: 使用Hanning窗（与Python版本一致）
+    // Python: self.window = np.hanning(self.flen)
     NSArray<NSNumber *> *win = window;
     if (win.count != windowLen) {
-        // 如果不匹配，重新生成窗函数
-        win = [PIDTraceAnalyzer tukeyWindowWithLength:windowLen alpha:0.5];
+        // 如果不匹配，重新生成Hanning窗函数
+        win = [PIDTraceAnalyzer hanningWindowWithLength:windowLen];
     }
 
     // 应用窗函数
@@ -323,10 +325,22 @@ static const double kP_SCALE_FACTOR = 0.032029;
           (unsigned long)deconvResult.data.count, (long)deconvResult.columnCount);
     if (deconvResult.data.count > 0 && deconvResult.data[0].count > 0) {
         NSArray<NSNumber *> *firstRow = deconvResult.data[0];
-        NSLog(@"🔍 反卷积data[0]前5个值: %@, %@, %@, %@, %@",
-              firstRow[0], firstRow[1], firstRow[2],
-              firstRow.count > 3 ? firstRow[3] : @"N/A",
-              firstRow.count > 4 ? firstRow[4] : @"N/A");
+        NSInteger n = MIN(10, firstRow.count);
+        NSMutableString *values = [NSMutableString string];
+        for (NSInteger i = 0; i < n; i++) {
+            [values appendFormat:@"%.4f ", [firstRow[i] doubleValue]];
+        }
+        NSLog(@"🔍 反卷积data[0]前%ld个值: %@", (long)n, values);
+
+        // 计算反卷积结果的范围
+        double minVal = [firstRow[0] doubleValue];
+        double maxVal = [firstRow[0] doubleValue];
+        for (NSNumber *num in firstRow) {
+            double v = [num doubleValue];
+            if (v < minVal) minVal = v;
+            if (v > maxVal) maxVal = v;
+        }
+        NSLog(@"🔍 反卷积data[0]范围: min=%.4f, max=%.4f", minVal, maxVal);
     }
 
     // 截取指定长度
@@ -338,8 +352,17 @@ static const double kP_SCALE_FACTOR = 0.032029;
     }
 
     // 累积和 (cumsum = 阶跃响应)
+    // 🔧 修复: 对齐Python实现，直接对脉冲响应做cumsum
+    // Python: delta_resp = deconvolved_sm.cumsum(axis=1)
+    // 不再做基准面调整（减去第一个值），因为这会导致负累积
     NSMutableArray<NSArray<NSNumber *> *> *stepResponse = [NSMutableArray arrayWithCapacity:windowCount];
     for (NSArray<NSNumber *> *row in truncatedDeconv) {
+        if (row.count == 0) {
+            [stepResponse addObject:@[]];
+            continue;
+        }
+
+        // 直接对脉冲响应做累积和（与Python版本一致）
         NSArray<NSNumber *> *cumsum = [PIDInterpolation cumsum:row];
         [stepResponse addObject:cumsum];
     }
@@ -347,12 +370,48 @@ static const double kP_SCALE_FACTOR = 0.032029;
     // 🔍 调试：检查阶跃响应结果
     if (stepResponse.count > 0) {
         NSArray<NSNumber *> *firstStep = stepResponse[0];
-        NSLog(@"🔍 阶跃响应stepResponse[0]前5个值: %@, %@, %@, %@, %@",
-              firstStep.count > 0 ? firstStep[0] : @"N/A",
-              firstStep.count > 1 ? firstStep[1] : @"N/A",
-              firstStep.count > 2 ? firstStep[2] : @"N/A",
-              firstStep.count > 3 ? firstStep[3] : @"N/A",
-              firstStep.count > 4 ? firstStep[4] : @"N/A");
+        NSInteger n = MIN(10, firstStep.count);
+        NSMutableString *values = [NSMutableString string];
+        for (NSInteger i = 0; i < n; i++) {
+            [values appendFormat:@"%.3f ", [firstStep[i] doubleValue]];
+        }
+        NSLog(@"🔍 阶跃响应stepResponse[0]前%ld个值: %@", (long)n, values);
+
+        // 计算阶跃响应的最大最小值
+        double minVal = [firstStep[0] doubleValue];
+        double maxVal = [firstStep[0] doubleValue];
+        for (NSNumber *num in firstStep) {
+            double v = [num doubleValue];
+            if (v < minVal) minVal = v;
+            if (v > maxVal) maxVal = v;
+        }
+        NSLog(@"🔍 阶跃响应stepResponse[0]范围: min=%.3f, max=%.3f", minVal, maxVal);
+
+        // 🔍 新增：检查最后一个点的值
+        if (firstStep.count > 1) {
+            NSLog(@"🔍 阶跃响应stepResponse[0]起点=%.3f, 终点=%.3f",
+                  [firstStep[0] doubleValue],
+                  [firstStep[firstStep.count-1] doubleValue]);
+        }
+    }
+
+    // 🔍 新增：计算所有窗口的平均阶跃响应，检查整体趋势
+    if (stepResponse.count > 0) {
+        double startAvg = 0.0;
+        double endAvg = 0.0;
+        NSInteger count = 0;
+        for (NSArray<NSNumber *> *step in stepResponse) {
+            if (step.count > 0) {
+                startAvg += [step[0] doubleValue];
+                endAvg += [step[step.count-1] doubleValue];
+                count++;
+            }
+        }
+        if (count > 0) {
+            startAvg /= count;
+            endAvg /= count;
+            NSLog(@"🔍 所有窗口平均: 起点=%.3f, 终点=%.3f", startAvg, endAvg);
+        }
     }
 
     // 计算统计量
@@ -833,6 +892,14 @@ static double getMachFrequency(void) {
         [avgResponse addObject:@(avgVal)];
     }
 
+    // 🔍 调试：检查avgResponse的关键点
+    if (avgResponse.count > 0) {
+        NSLog(@"🔍 avgResponse(加权平均后) 起点=%.3f, 终点=%.3f, 中点=%.3f",
+              [avgResponse[0] doubleValue],
+              [avgResponse[avgResponse.count-1] doubleValue],
+              [avgResponse[avgResponse.count/2] doubleValue]);
+    }
+
     // 5. 插值回原始长度（使用简单线性插值）
     NSMutableArray<NSNumber *> *upSampled = [NSMutableArray arrayWithCapacity:responseLength];
 
@@ -859,6 +926,14 @@ static double getMachFrequency(void) {
     // 性能监控：计算耗时
     uint64_t endTime = mach_absolute_time();
     double elapsedMs = (double)(endTime - startTime) * 1000.0 / getMachFrequency();
+
+    // 🔍 调试：检查upSampled数据的关键点
+    if (upSampled.count > 10) {
+        NSLog(@"🔍 weighted_mode_avr upSampled数据: 起点=%.3f, 终点=%.3f, 中点=%.3f",
+              [upSampled[0] doubleValue],
+              [upSampled[upSampled.count-1] doubleValue],
+              [upSampled[upSampled.count/2] doubleValue]);
+    }
 
     NSLog(@"✅ weighted_mode_avr完成: %ld窗口 -> 1条曲线 | 耗时: %.1fms | 参数: %ld×%ld直方图",
           (long)windowCount, elapsedMs, (long)timeBins, (long)vertBins);
