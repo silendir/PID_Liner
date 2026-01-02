@@ -280,7 +280,11 @@ static double getMachFrequency(void) {
 
 /**
  * 高斯滤波（1D）
- * 对应Python: gaussian_filter1d(data, sigma)
+ * 对应Python: gaussian_filter1d(data, sigma, mode='constant')
+ *
+ * 🔧 修复边界处理：scipy的mode='constant'表示边界外用0填充
+ * 这与之前的实现不同：之前跳过边界外数据并重新归一化，
+ * 现在边界外数据用0填充，权重核保持完整
  */
 - (NSArray<NSNumber *> *)gaussianFilter:(NSArray<NSNumber *> *)data sigma:(double)sigma {
     if (!data || data.count == 0 || sigma < 0.01) {
@@ -288,12 +292,11 @@ static double getMachFrequency(void) {
     }
 
     NSInteger n = data.count;
-    // 🔧 限制核大小，避免kernelSize > n导致vDSP_conv崩溃
+    // 🔧 限制核大小，避免kernelSize > n导致问题
     NSInteger kernelSize = (NSInteger)(sigma * 6) | 1;  // 确保奇数
     if (kernelSize < 3) kernelSize = 3;
-    // vDSP_conv要求 N >= L，即 n >= kernelSize
     if (kernelSize > n) {
-        kernelSize = (n / 2) | 1;  // 使用较小的核，确保是奇数
+        kernelSize = (n / 2) | 1;
         if (kernelSize < 3) kernelSize = 3;
     }
 
@@ -301,26 +304,26 @@ static double getMachFrequency(void) {
     float *kernel = (float *)malloc(kernelSize * sizeof(float));
     [self generateGaussianKernel:kernel size:kernelSize sigma:sigma];
 
-    // 🔧 使用简单卷积实现，避免vDSP_conv的边界问题
+    // 🔧 修复：使用scipy mode='constant'边界处理
+    // 边界外的数据视为0，权重核保持完整（不重新归一化）
     NSMutableArray<NSNumber *> *result = [NSMutableArray arrayWithCapacity:n];
+    NSInteger halfKernel = kernelSize / 2;
 
     for (NSInteger i = 0; i < n; i++) {
         double sum = 0.0;
-        double weightSum = 0.0;
-        NSInteger halfKernel = kernelSize / 2;
 
         for (NSInteger j = 0; j < kernelSize; j++) {
             NSInteger dataIndex = i - halfKernel + j;
             double weight = kernel[j];
 
+            // scipy的mode='constant': 边界外用0填充
             if (dataIndex >= 0 && dataIndex < n) {
                 sum += [data[dataIndex] doubleValue] * weight;
-                weightSum += weight;
             }
+            // dataIndex < 0 或 >= n 时，dataValue视为0，无需加到sum中
         }
 
-        // 归一化
-        [result addObject:@(weightSum > 0 ? sum / weightSum : 0.0)];
+        [result addObject:@(sum)];
     }
 
     free(kernel);

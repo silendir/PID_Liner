@@ -148,9 +148,11 @@
     
     // 执行IFFT
     vDSP_fft_zrip(fftSetup, &inputComplex, 1, log2n, FFT_INVERSE);
-    
-    // 缩放（vDSP的IFFT需要除以2*n）
-    float scale = 0.5f / n;
+
+    // 🔥 关键修复: 缩放因子应该是 1/n，而不是 0.5/n
+    // Python的np.fft.ifft使用默认norm='backward'，缩放因子为 1/n
+    // 这修复了iOS输出约为Python一半的问题
+    float scale = 1.0f / n;
     vDSP_vsmul(inputComplex.realp, 1, &scale, inputComplex.realp, 1, n);
     vDSP_vsmul(inputComplex.imagp, 1, &scale, inputComplex.imagp, 1, n);
     

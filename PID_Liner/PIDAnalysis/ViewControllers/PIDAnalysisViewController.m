@@ -643,10 +643,12 @@
 
 /**
  * 配置单个轴的响应图表
+ * 🔑 修复版本：使用low_high_mask分离低/高输入响应，显示两条曲线
+ *
  * @param axisIndex 轴索引 (0=Roll, 1=Pitch, 2=Yaw)
  * @param responseResult 响应结果对象
  * @param axisName 轴名称
- * @param color 图表颜色 (HEX)
+ * @param color 图表颜色 (HEX) - 仅用于低输入曲线，高输入曲线自动使用橙色
  */
 - (void)configureSingleAxisChart:(NSInteger)axisIndex
                   responseResult:(PIDResponseResult *)responseResult
@@ -676,76 +678,200 @@
         return;
     }
 
-    // 🔧 使用 weighted_mode_avr 进行加权模式平均（与Python一致）
-    // stepResponse 是 [窗口][响应值] 的二维数组，如 95个窗口 x 4000个响应点
     NSInteger windowCount = responseResult.stepResponse.count;
     if (windowCount == 0) {
         [self showEmptyStateChart:chartView message:[NSString stringWithFormat:@"%@响应数据为空", axisName]];
         return;
     }
 
-    // 调用 weighted_mode_avr 提取代表性响应曲线
-    // 参数: stepResponse, avgTime, maxInput, vertRange=[-1.5, 3.5], vertBins=1000
+    // 🔑🔑🔑 关键修复：实现Python的数据分离逻辑 🔑🔑🔑
+    // Python: low_mask, high_mask = low_high_mask(max_in, threshold)
+    //         toolow_mask = low_high_mask(max_in, 20)[1]
+    //         resp_low_mask = low_mask * toolow_mask
+    //         resp_high_mask = high_mask * toolow_mask
+
+    // 1. 计算low/high mask (threshold=500)
+    NSDictionary *masks = [PIDTraceAnalyzer lowHighMask:responseResult.maxInput threshold:500.0];
+    NSArray<NSNumber *> *lowMask = masks[@"low"];
+    NSArray<NSNumber *> *highMask = masks[@"high"];
+
+    // 2. 计算toolow_mask (threshold=20)
+    // Python: toolow_mask = low_high_mask(max_in, 20)[1] (取high部分，即>20)
+    NSDictionary *tooLowMasks = [PIDTraceAnalyzer lowHighMask:responseResult.maxInput threshold:20.0];
+    NSArray<NSNumber *> *toolowMask = tooLowMasks[@"high"];  // 取high部分（>20）
+
+    // 3. 组合mask
+    NSMutableArray<NSNumber *> *respLowMask = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *respHighMask = [NSMutableArray array];
+
+    for (NSInteger i = 0; i < MIN(lowMask.count, toolowMask.count); i++) {
+        double lowVal = [lowMask[i] doubleValue];
+        double toolowVal = [toolowMask[i] doubleValue];
+        [respLowMask addObject:@(lowVal * toolowVal)];  // low AND toolow
+    }
+
+    for (NSInteger i = 0; i < MIN(highMask.count, toolowMask.count); i++) {
+        double highVal = [highMask[i] doubleValue];
+        double toolowVal = [toolowMask[i] doubleValue];
+        [respHighMask addObject:@(highVal * toolowVal)];  // high AND toolow
+    }
+
+    // 4. 计算分离的响应曲线
     NSArray<NSNumber *> *vertRange = @[@(-1.5), @(3.5)];
-    NSArray<NSNumber *> *averagedStepData = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:responseResult.stepResponse
-                                                                                                          avgTime:responseResult.avgTime
-                                                                                                         maxInput:responseResult.maxInput
-                                                                                                       vertRange:vertRange
-                                                                                                        vertBins:1000];  // 🔧 修复: 对齐Python实现 (之前错误地"优化"成了200)
+    NSArray<NSNumber *> *respLow = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
+        responseResult.stepResponse
+        avgTime:responseResult.avgTime
+        dataMask:respLowMask  // 🔑 使用low mask
+        vertRange:vertRange
+        vertBins:1000];
 
-    // 清理数据：移除NaN和Infinity值
-    NSArray<NSNumber *> *stepData = [self cleanNaNValuesInArray:averagedStepData replaceWithZero:YES];
+    // 🔍 调试：打印respLow的数据范围
+    if (respLow && respLow.count > 0) {
+        double minVal = [respLow[0] doubleValue];
+        double maxVal = [respLow[0] doubleValue];
+        for (NSNumber *num in respLow) {
+            double v = [num doubleValue];
+            if (v < minVal) minVal = v;
+            if (v > maxVal) maxVal = v;
+        }
+        NSLog(@"🔍 [%@] respLow范围: [%.3f, %.3f]，起点=%.3f，终点=%.3f",
+              axisName, minVal, maxVal, [respLow[0] doubleValue], [respLow[respLow.count-1] doubleValue]);
+    }
 
-    // 🔧 使用统一的响应时间轴 (0 ~ 0.5秒)
-    // 响应长度4000对应0.5秒@8kHz采样率
-    NSInteger timePoints = MIN(100, stepData.count);  // 限制显示100个点，避免数据过密
-    NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:timePoints];
-    NSMutableArray<NSNumber *> *displayData = [NSMutableArray arrayWithCapacity:timePoints];
+    NSArray<NSNumber *> *respHigh = nil;
+    BOOL hasHighData = NO;
 
-    double duration = 0.5;  // 响应时长0.5秒
-    for (NSInteger i = 0; i < timePoints; i++) {
-        double t = (i * duration) / (timePoints - 1);
-        [timeCategories addObject:[NSString stringWithFormat:@"%.3f", t]];
-
-        // 对原始数据进行降采样
-        NSInteger srcIndex = (i * stepData.count) / timePoints;
-        if (srcIndex < stepData.count) {
-            [displayData addObject:stepData[srcIndex]];
-        } else {
-            [displayData addObject:@0];
+    // 检查是否有高输入数据
+    NSInteger highWindowCount = 0;
+    for (NSNumber *maskVal in respHighMask) {
+        if ([maskVal doubleValue] > 0.5) {
+            highWindowCount++;
         }
     }
 
-    // 配置AAChartModel（支持双指缩放）
+    if (highWindowCount >= 10) {  // 至少10个窗口
+        respHigh = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
+            responseResult.stepResponse
+            avgTime:responseResult.avgTime
+            dataMask:respHighMask  // 🔑 使用high mask
+            vertRange:vertRange
+            vertBins:1000];
+        hasHighData = YES;
+        NSLog(@"✅ %@: 高输入响应计算成功 (%ld窗口)", axisName, (long)highWindowCount);
+    } else {
+        NSLog(@"⚠️ %@: 高输入窗口数(%ld) < 10，跳过高输入曲线", axisName, (long)highWindowCount);
+    }
+
+    // 5. 准备图表数据
+    NSInteger lowWindowCount = 0;
+    for (NSNumber *maskVal in respLowMask) {
+        if ([maskVal doubleValue] > 0.5) {
+            lowWindowCount++;
+        }
+    }
+
+    // 降采样到100个点用于显示
+    NSInteger displayPoints = 100;
+    NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:displayPoints];
+    NSMutableArray<NSNumber *> *displayLowData = [NSMutableArray arrayWithCapacity:displayPoints];
+    NSMutableArray<NSNumber *> *displayHighData = hasHighData ? [NSMutableArray arrayWithCapacity:displayPoints] : nil;
+
+    double duration = 0.5;  // 响应时长0.5秒
+    for (NSInteger i = 0; i < displayPoints; i++) {
+        double t = (i * duration) / (displayPoints - 1);
+        [timeCategories addObject:[NSString stringWithFormat:@"%.3f", t]];
+
+        // 降采样低输入数据
+        NSInteger srcIndex = (i * respLow.count) / displayPoints;
+        if (srcIndex < respLow.count) {
+            [displayLowData addObject:respLow[srcIndex]];
+        } else {
+            [displayLowData addObject:@0];
+        }
+
+        // 降采样高输入数据
+        if (hasHighData && respHigh && displayHighData) {
+            NSInteger highSrcIndex = (i * respHigh.count) / displayPoints;
+            if (highSrcIndex < respHigh.count) {
+                [displayHighData addObject:respHigh[highSrcIndex]];
+            } else {
+                [displayHighData addObject:@0];
+            }
+        }
+    }
+
+    // 6. 配置图表显示两条曲线
     AAChartModel *chartModel = [[AAChartModel alloc] init];
     chartModel.chartType = AAChartTypeLine;
-    chartModel.title = [NSString stringWithFormat:@"%@ 阶跃响应", axisName];
-    chartModel.subtitle = @"双指缩放查看详情";
+    chartModel.title = [NSString stringWithFormat:@"%@ 阶跃响应 (分离)", axisName];
+
+    // 副标题：显示数据状态，帮助用户理解为什么橙色线可能没有数据
+    NSString *subtitleText;
+    if (hasHighData) {
+        subtitleText = [NSString stringWithFormat:@"蓝: ≤500°/s (%ld窗口) | 橙: >500°/s (%ld窗口)",
+                       (long)lowWindowCount, (long)highWindowCount];
+    } else {
+        subtitleText = [NSString stringWithFormat:@"蓝: ≤500°/s (%ld窗口) | 橙: >500°/s (无数据，需更激烈的操纵)",
+                       (long)lowWindowCount];
+    }
+    chartModel.subtitle = subtitleText;
     chartModel.categories = timeCategories;
     chartModel.yAxisTitle = @"响应值";
     chartModel.animationType = AAChartAnimationEaseOutCubic;
     chartModel.animationDuration = @800;
-    // 启用X轴和Y轴的缩放功能
     chartModel.zoomType = AAChartZoomTypeXY;
+    chartModel.yAxisMin = @0;
+    chartModel.yAxisMax = @2;
 
     // 创建数据系列
-    AASeriesElement *series = [[AASeriesElement alloc] init];
-    series.name = axisName;
-    series.data = displayData;  // 🔧 使用降采样后的数据
-    series.color = color;
-    series.lineWidth = @2.5;
-    // 隐藏数据点显示（设置半径为0）
-    AAMarker *marker = [[AAMarker alloc] init];
-    marker.radius = @0;
-    series.marker = marker;
+    NSMutableArray<AASeriesElement *> *series = [NSMutableArray array];
 
-    chartModel.series = @[series];
+    // 低输入响应曲线（蓝色）
+    AASeriesElement *lowSeries = [[AASeriesElement alloc] init];
+    lowSeries.name = [NSString stringWithFormat:@"%@ 低输入 (≤500°/s)", axisName];
+    lowSeries.data = displayLowData;
+    lowSeries.color = @"#007AFF";  // 蓝色
+    lowSeries.lineWidth = @2.5;
+    AAMarker *lowMarker = [[AAMarker alloc] init];
+    lowMarker.radius = @0;
+    lowSeries.marker = lowMarker;
+    [series addObject:lowSeries];
+
+    // 🔑 修复：即使没有高输入数据，也要在图例中显示橙色线
+    // 如果有数据，显示实际曲线；如果没有数据，显示一条平线表示无数据
+    AASeriesElement *highSeries = [[AASeriesElement alloc] init];
+    highSeries.name = [NSString stringWithFormat:@"%@ 高输入 (>500°/s)", axisName];
+
+    if (hasHighData && displayHighData) {
+        // 有数据：显示实际曲线
+        highSeries.data = displayHighData;
+        highSeries.color = @"#FF9500";  // 橙色
+        highSeries.lineWidth = @2.5;
+        highSeries.enableMouseTracking = @YES;
+    } else {
+        // 无数据：显示一条值为0的平线，让图例可见但曲线不明显
+        NSMutableArray<NSNumber *> *zeroData = [NSMutableArray arrayWithCapacity:displayPoints];
+        for (NSInteger i = 0; i < displayPoints; i++) {
+            [zeroData addObject:@0];
+        }
+        highSeries.data = zeroData;
+        highSeries.color = @"#FFCCAA";  // 浅橙色（表示无数据）
+        highSeries.lineWidth = @1.0;     // 更细的线
+        highSeries.dashStyle = @"Dash";  // 虚线表示无数据
+        highSeries.enableMouseTracking = @NO;  // 禁用鼠标跟踪
+    }
+    AAMarker *highMarker = [[AAMarker alloc] init];
+    highMarker.radius = @0;
+    highSeries.marker = highMarker;
+    [series addObject:highSeries];  // 🔑 始终添加到图例中
+
+    chartModel.series = series;
 
     // 绘制图表
     [chartView aa_drawChartWithChartModel:chartModel];
 
-    NSLog(@"✅ %@阶跃响应图表配置完成，数据点数: %lu (从%ld个窗口平均，降采样到%lu个显示点)",
-          axisName, (unsigned long)displayData.count, (long)windowCount, (unsigned long)displayData.count);
+    NSLog(@"✅ %@阶跃响应图表配置完成: 低输入=%ld窗口, 高输入=%ld窗口, 显示点数=%lu",
+          axisName, (long)lowWindowCount, (long)highWindowCount, (unsigned long)displayPoints);
 }
 
 /**

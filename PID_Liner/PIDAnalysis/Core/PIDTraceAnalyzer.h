@@ -250,6 +250,25 @@ NS_ASSUME_NONNULL_BEGIN
                                          data:(NSArray<NSNumber *> *)data
                               targetSampleRate:(double)targetSampleRate;
 
+#pragma mark - 数据分离 (Mask)
+
+/**
+ * 计算低/高输入mask
+ * 对应Python: low_high_mask(signal, threshold)
+ *
+ * 将窗口按最大输入值分为低输入组和/高输入组
+ * low[i] = 1.0 if maxInArray[i] <= threshold, else 0.0
+ * high[i] = 1.0 if maxInArray[i] > threshold, else 0.0
+ *
+ * 如果高输入窗口数 < 10，则high全设为0（数据太少，忽略）
+ *
+ * @param maxInArray 每个窗口的最大输入值 (max_in)
+ * @param threshold 阈值（单位：°/s）
+ * @return @{@"low": lowMask, @"high": highMask}
+ */
++ (NSDictionary<NSString *, NSArray<NSNumber *> *> *)lowHighMask:(NSArray<NSNumber *> *)maxInArray
+                                                      threshold:(double)threshold;
+
 #pragma mark - 加权平均
 
 /**
@@ -260,10 +279,22 @@ NS_ASSUME_NONNULL_BEGIN
  *
  * @param stepResponse 阶跃响应矩阵 [窗口数][响应点数]
  * @param avgTime 每个窗口的平均时间
- * @param maxInput 每个窗口的最大输入幅度（用于权重）
+ * @param dataMask 数据mask (0或1的数组)，与windowCount长度相同
+ *                 mask[i] = 1 表示保留第i个窗口的数据
+ *                 mask[i] = 0 表示丢弃第i个窗口的数据
  * @param vertRange 响应值的垂直范围 [min, max]
  * @param vertBins 垂直方向分箱数量
  * @return 加权平均后的响应曲线
+ */
++ (NSArray<NSNumber *> *)weightedModeAverageWithStepResponse:(NSArray<NSArray<NSNumber *> *> *)stepResponse
+                                                   avgTime:(NSArray<NSNumber *> *)avgTime
+                                                  dataMask:(NSArray<NSNumber *> *)dataMask
+                                                vertRange:(NSArray<NSNumber *> *)vertRange
+                                                 vertBins:(NSInteger)vertBins;
+
+/**
+ * 加权模式平均 - 兼容旧版本（全部窗口权重为1）
+ * @deprecated 使用 dataMask 版本代替
  */
 + (NSArray<NSNumber *> *)weightedModeAverageWithStepResponse:(NSArray<NSArray<NSNumber *> *> *)stepResponse
                                                    avgTime:(NSArray<NSNumber *> *)avgTime
