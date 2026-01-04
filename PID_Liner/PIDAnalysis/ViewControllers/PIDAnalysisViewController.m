@@ -891,6 +891,7 @@
 
 /**
  * 配置噪声频谱图 - 使用真实的 spectrum 数据
+ * 🔥 改为直方图显示，Y轴从0开始
  */
 - (void)configureNoiseChart:(AAChartView *)chartView {
     // 检查是否有真实的频谱数据
@@ -958,17 +959,24 @@
     pitchNoise = [self cleanNaNValuesInArray:pitchNoise replaceWithZero:YES];
     yawNoise = [self cleanNaNValuesInArray:yawNoise replaceWithZero:YES];
 
-    // 配置AAChartModel - 使用面积图
+    // 🔧 确保所有值为非负数（截断负值到0）
+    rollNoise = [self ensureNonNegativeValues:rollNoise];
+    pitchNoise = [self ensureNonNegativeValues:pitchNoise];
+    yawNoise = [self ensureNonNegativeValues:yawNoise];
+
+    // 🔥 配置AAChartModel - 改为柱状直方图，Y轴从0开始
     AAChartModel *chartModel = [[AAChartModel alloc] init];
-    chartModel.chartType = AAChartTypeAreaspline;
+    chartModel.chartType = AAChartTypeColumn;  // 🔥 柱状直方图
     chartModel.title = @"噪声频谱";
     chartModel.subtitle = @"陀螺仪噪声分析 (真实数据)";
     chartModel.categories = freqCategories;
     chartModel.yAxisTitle = @"噪声强度";
+    chartModel.yAxisMin = @0;  // 🔥 Y轴从0开始
     chartModel.animationType = AAChartAnimationEaseOutCubic;
     chartModel.animationDuration = @800;
 
     // 创建数据系列 - 只添加有数据的系列
+    // 🔥 柱状图不需要 fillOpacity，移除该属性
     NSMutableArray<AASeriesElement *> *series = [NSMutableArray array];
 
     if (rollNoise.count > 0) {
@@ -976,7 +984,6 @@
         rollSeries.name = @"Roll";
         rollSeries.data = rollNoise;
         rollSeries.color = @"#FF6B6B";
-        rollSeries.fillOpacity = @0.3;
         [series addObject:rollSeries];
     }
 
@@ -985,7 +992,6 @@
         pitchSeries.name = @"Pitch";
         pitchSeries.data = pitchNoise;
         pitchSeries.color = @"#4ECDC4";
-        pitchSeries.fillOpacity = @0.3;
         [series addObject:pitchSeries];
     }
 
@@ -994,7 +1000,6 @@
         yawSeries.name = @"Yaw";
         yawSeries.data = yawNoise;
         yawSeries.color = @"#95E1D3";
-        yawSeries.fillOpacity = @0.3;
         [series addObject:yawSeries];
     }
 
@@ -1138,6 +1143,26 @@
 }
 
 #pragma mark - Data Cleaning
+
+/**
+ * 确保数组中所有值为非负数（截断负值到0）
+ * @param array 原始数据数组
+ * @return 处理后的数组，负值被截断为0
+ */
+- (NSArray<NSNumber *> *)ensureNonNegativeValues:(NSArray<NSNumber *> *)array {
+    if (!array || array.count == 0) {
+        return array;
+    }
+
+    NSMutableArray<NSNumber *> *result = [NSMutableArray arrayWithCapacity:array.count];
+    for (NSNumber *num in array) {
+        double value = num.doubleValue;
+        // 截断负值到0
+        [result addObject:@(MAX(0.0, value))];
+    }
+
+    return [result copy];
+}
 
 /**
  * 过滤数组中的NaN和Infinity值，替换为0或nil

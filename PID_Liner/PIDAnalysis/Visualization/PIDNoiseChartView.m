@@ -3,11 +3,11 @@
 //  PID_Liner
 //
 //  Created by Claude on 2025/12/25.
-//  PID噪声图表视图实现
+//  PID噪声图表视图实现 - 使用 AAChartKit 散点图替代热力图
 //
 
 #import "PIDNoiseChartView.h"
-#import "PIDHeatmapView.h"
+#import <AAChartKit/AAChartKit.h>
 
 #pragma mark - PIDNoiseSpectrumData
 
@@ -49,8 +49,8 @@
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 
-// 热力图视图数组（按行优先排列）
-@property (nonatomic, strong) NSMutableArray<PIDHeatmapView *> *heatmapViews;
+// 🔥 使用 AAChartView 替代热力图 - 性能更好，自带交互
+@property (nonatomic, strong) NSMutableArray<AAChartView *> *chartViews;
 
 // 滤波器透过率视图
 @property (nonatomic, strong) UIView *filterPassView;
@@ -66,7 +66,7 @@
         _maxFreq = 500.0;
         _showDTerm = YES;
 
-        _heatmapViews = [NSMutableArray array];
+        _chartViews = [NSMutableArray array];
 
         [self setupViews];
     }
@@ -80,7 +80,7 @@
         _maxFreq = 500.0;
         _showDTerm = YES;
 
-        _heatmapViews = [NSMutableArray array];
+        _chartViews = [NSMutableArray array];
 
         [self setupViews];
     }
@@ -114,12 +114,12 @@
 }
 
 /**
- * 设置热力图网格
+ * 🔥 设置噪声图网格 - 使用 AAChartKit 散点图替代热力图
  * 布局：3行 x 3列（Gyro/Debug/D-term x Roll/Pitch/Yaw）
  */
 - (void)setupHeatmapGrid {
     CGFloat margin = 10;
-    CGFloat heatmapHeight = 280;
+    CGFloat chartHeight = 280;
 
     // 计算列宽
     NSInteger numCols = _showDTerm ? 3 : 2;
@@ -140,14 +140,14 @@
         [_contentView addSubview:titleLabel];
     }
 
-    // 创建3行 x 3列热力图
+    // 🔥 创建3行 x 3列 AAChartView 散点图
     NSArray *rowTitles = @[@"Roll", @"Pitch", @"Yaw"];
 
     for (NSInteger row = 0; row < 3; row++) {
-        CGFloat y = 40 + row * (heatmapHeight + margin);
+        CGFloat y = 40 + row * (chartHeight + margin);
 
         // 行标题
-        UILabel *rowLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, y + heatmapHeight / 2 - 10, 35, 20)];
+        UILabel *rowLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, y + chartHeight / 2 - 10, 35, 20)];
         rowLabel.text = rowTitles[row];
         rowLabel.font = [UIFont systemFontOfSize:12];
         rowLabel.textColor = [UIColor grayColor];
@@ -156,26 +156,20 @@
         for (NSInteger col = 0; col < numCols; col++) {
             CGFloat x = margin + col * (colWidth + margin);
 
-            // 创建热力图
-            PIDHeatmapConfig *config = [PIDHeatmapConfig defaultConfig];
-            config.useLogScale = YES;  // 噪声频谱使用对数刻度
-            config.minValue = 0.1;
-            config.maxValue = 10.0;
-            config.showColorBar = YES;
-            config.xAxisLabel = @"Throttle (%)";
-            config.yAxisLabel = @"Frequency (Hz)";
-            config.title = @"";
+            // 🔥 创建 AAChartView（散点图模拟热力图）
+            AAChartView *chartView = [[AAChartView alloc] initWithFrame:CGRectMake(x, y, colWidth, chartHeight)];
+            chartView.tag = row * 10 + col;  // 用于定位
+            chartView.scrollEnabled = YES;  // 启用缩放
+            [_contentView addSubview:chartView];
+            [_chartViews addObject:chartView];
 
-            PIDHeatmapView *heatmap = [[PIDHeatmapView alloc] initWithFrame:CGRectMake(x, y, colWidth, heatmapHeight)
-                                                                       config:config];
-            heatmap.tag = row * 10 + col;  // 用于定位
-            [_contentView addSubview:heatmap];
-            [_heatmapViews addObject:heatmap];
+            // 设置空白图表占位
+            [self configureEmptyChart:chartView title:@""];
         }
     }
 
     // 更新内容视图大小
-    CGFloat totalHeight = 40 + 3 * (heatmapHeight + margin) + 150;  // +150 for filter pass
+    CGFloat totalHeight = 40 + 3 * (chartHeight + margin) + 150;  // +150 for filter pass
     CGRect contentFrame = _contentView.frame;
     contentFrame.size.height = totalHeight;
     _contentView.frame = contentFrame;
@@ -183,11 +177,30 @@
 }
 
 /**
+ * 配置空白占位图表
+ */
+- (void)configureEmptyChart:(AAChartView *)chartView title:(NSString *)title {
+    AAChartModel *chartModel = [[AAChartModel alloc] init];
+    chartModel.chartType = AAChartTypeColumn;  // 直方图
+    chartModel.title = title;
+    chartModel.animationType = AAChartAnimationEaseOutCubic;
+    chartModel.animationDuration = @0;
+    chartModel.yAxisMin = @0;  // Y轴从0开始
+
+    AASeriesElement *series = [[AASeriesElement alloc] init];
+    series.name = @"";
+    series.data = @[];
+    chartModel.series = @[series];
+
+    [chartView aa_drawChartWithChartModel:chartModel];
+}
+
+/**
  * 设置滤波器透过率视图
  */
 - (void)setupFilterPassView {
-    CGFloat y = _heatmapViews.lastObject.frame.origin.y +
-                _heatmapViews.lastObject.frame.size.height + 20;
+    CGFloat y = _chartViews.lastObject.frame.origin.y +
+                _chartViews.lastObject.frame.size.height + 20;
 
     CGFloat height = 120;
     CGFloat margin = 10;
@@ -244,9 +257,9 @@
     _dTermNoiseData = nil;
     _filterPassData = nil;
 
-    for (PIDHeatmapView *heatmap in _heatmapViews) {
-        heatmap.data = nil;
-        [heatmap refreshDisplay];
+    // 🔥 清空 AAChartView 图表
+    for (AAChartView *chartView in _chartViews) {
+        [self configureEmptyChart:chartView title:@""];
     }
 
     UIView *chartView = [_filterPassView viewWithTag:500];
@@ -285,22 +298,107 @@
 }
 
 /**
- * 更新单个热力图
+ * 🔥 更新单个噪声图 - 使用 AAChartKit 直方图
+ * 简化方案：X轴=频率，Y轴=振幅，显示最大振幅包络线
  */
 - (void)updateHeatmapAtRow:(NSInteger)row column:(NSInteger)col withData:(PIDNoiseSpectrumData *)data {
     NSInteger index = row * 3 + col;
 
-    if (index >= _heatmapViews.count) return;
+    if (index >= _chartViews.count) return;
 
-    PIDHeatmapView *heatmap = _heatmapViews[index];
-    heatmap.data = data.spectrumHeatmap;
-    heatmap.xAxisValues = data.throttleAxis;
-    heatmap.yAxisValues = data.frequencies;
+    AAChartView *chartView = _chartViews[index];
 
-    // 更新配置以使用对数刻度
-    heatmap.config.useLogScale = YES;
+    // 🔧 简化数据：对每个频率点，取所有油门位置的最大振幅
+    // X轴=频率(Hz)，Y轴=振幅
+    NSArray<NSArray<NSNumber *> *> *spectrumHeatmap = data.spectrumHeatmap;
+    NSArray<NSNumber *> *frequencies = data.frequencies;
 
-    [heatmap refreshDisplay];
+    // 只需要 frequencies.count 个数据点
+    NSMutableArray<NSNumber *> *maxAmplitudes = [NSMutableArray arrayWithCapacity:frequencies.count];
+
+    for (NSInteger f = 0; f < frequencies.count; f++) {
+        double frequency = [frequencies[f] doubleValue];
+        double maxAmp = 0;
+
+        // 遍历所有油门位置，找该频率下的最大振幅
+        for (NSInteger t = 0; t < spectrumHeatmap.count; t++) {
+            NSArray<NSNumber *> *freqAmplitudes = spectrumHeatmap[t];
+            if (f < freqAmplitudes.count) {
+                double amp = [freqAmplitudes[f] doubleValue];
+                if (amp > maxAmp) {
+                    maxAmp = amp;
+                }
+            }
+        }
+
+        [maxAmplitudes addObject:@(maxAmp)];
+    }
+
+    // 构造直方图数据
+    // 🔧 AAChartKit 柱状图需要：categories (X轴标签) + data (Y轴数值数组)
+    NSMutableArray<NSNumber *> *amplitudeData = [NSMutableArray array];
+    NSMutableArray<NSString *> *categories = [NSMutableArray array];
+
+    for (NSInteger f = 0; f < frequencies.count; f++) {
+        double frequency = [frequencies[f] doubleValue];
+        double amplitude = [maxAmplitudes[f] doubleValue];
+
+        // 🔧 截断负值到0，确保Y轴无负数
+        amplitude = MAX(0.0, amplitude);
+
+        // 限制频率范围
+        if (frequency >= self.minFreq && frequency <= self.maxFreq) {
+            [amplitudeData addObject:@(amplitude)];
+            // X轴标签：显示频率值
+            [categories addObject:[NSString stringWithFormat:@"%.0f", frequency]];
+        }
+    }
+
+    // 🔥 使用 AAChartModel 配置直方图
+    AAChartModel *chartModel = [[AAChartModel alloc] init];
+    chartModel.chartType = AAChartTypeColumn;  // 柱状直方图
+    chartModel.title = @"";
+    chartModel.subtitle = @"";
+    chartModel.animationType = AAChartAnimationEaseOutCubic;
+    chartModel.animationDuration = @0;
+    chartModel.zoomType = AAChartZoomTypeXY;
+
+    // 轴配置 - Y轴从0开始，无负数
+    chartModel.yAxisTitle = @"Amplitude";
+    chartModel.yAxisMin = @0;  // Y轴最小值为0
+    // X轴：频率分类标签
+    chartModel.categories = categories;
+
+    // 颜色
+    NSString *color;
+    switch (col) {
+        case 0:  // Gyro - 蓝色
+            color = @"#007AFF";
+            break;
+        case 1:  // Debug - 橙色
+            color = @"#FF9500";
+            break;
+        case 2:  // D-term - 绿色
+            color = @"#34C759";
+            break;
+        default:
+            color = @"#007AFF";
+    }
+
+    // 配置数据系列
+    AASeriesElement *series = [[AASeriesElement alloc] init];
+    series.name = data.axisName;
+    series.data = amplitudeData;  // Y轴数值数组
+    series.color = color;
+
+    // 直方图不需要标记点
+    AAMarker *marker = [[AAMarker alloc] init];
+    marker.enabled = @NO;
+    series.marker = marker;
+
+    chartModel.series = @[series];
+
+    [chartView aa_drawChartWithChartModel:chartModel];
 }
 
 /**
