@@ -881,6 +881,8 @@
     yAxis.title.text = @"响应值";
     yAxis.min = @0;
     yAxis.max = @2;
+    yAxis.tickInterval = @0.25;  // 每0.25一个刻度：0, 0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00
+    yAxis.allowDecimals = @YES;  // 允许小数刻度
     aaOptions.yAxis = yAxis;
 
     // 🔧 Tooltip 配置：与噪声图相同的样式
