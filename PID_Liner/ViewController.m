@@ -136,11 +136,11 @@
     NSString *documentsDir = [paths firstObject];
 
     // 查找BBL文件
-    NSString *bblPath = [documentsDir stringByAppendingPathComponent:@"003.bbl"];
+    NSString *bblPath = [documentsDir stringByAppendingPathComponent:@"001.bbl"];
 
     // 如果Documents目录没有，尝试从Bundle读取
     if (![[NSFileManager defaultManager] fileExistsAtPath:bblPath]) {
-        bblPath = [[NSBundle mainBundle] pathForResource:@"003" ofType:@"bbl"];
+        bblPath = [[NSBundle mainBundle] pathForResource:@"001" ofType:@"bbl"];
     }
 
     if (!bblPath || ![[NSFileManager defaultManager] fileExistsAtPath:bblPath]) {

@@ -372,17 +372,33 @@
 
 /**
  * 绘制 Gyro vs Input
+ * 🔥 修复：使用对称 Y 轴（以 0 为中心），同时绘制 gyro 和 input 两条曲线
+ * 对应 Python: tracelim = np.max([np.abs(tr.gyro),np.abs(tr.input)]); plt.ylim([-tracelim*1.1, tracelim*1.1])
  */
 - (void)drawGyroInputInContext:(CGContextRef)context rect:(CGRect)rect {
     if (!_gyroData || !_inputData) return;
 
-    // 计算数据范围
-    double minVal = HUGE_VAL, maxVal = -HUGE_VAL;
-    for (NSNumber *num in _inputData) {
-        double v = [num doubleValue];
-        if (v < minVal) minVal = v;
-        if (v > maxVal) maxVal = v;
+    // 🔥 计算 gyro 和 input 的最大绝对值（对称 Y 轴范围）
+    double maxAbs = 0;
+    for (NSNumber *num in _gyroData) {
+        maxAbs = MAX(maxAbs, ABS([num doubleValue]));
     }
+    for (NSNumber *num in _inputData) {
+        maxAbs = MAX(maxAbs, ABS([num doubleValue]));
+    }
+
+    // 设置对称 Y 轴范围（以 0 为中心）
+    double tracelim = maxAbs * 1.1;  // 留 10% 余量
+    double yMin = -tracelim;
+    double yMax = +tracelim;
+
+    // 绘制零线（X轴在图表中间）
+    CGContextSetStrokeColorWithColor(context, [UIColor blackColor].CGColor);
+    CGContextSetLineWidth(context, 1.0);
+    double zeroY = rect.origin.y + rect.size.height * (0.0 - yMin) / (yMax - yMin);
+    CGContextMoveToPoint(context, rect.origin.x, zeroY);
+    CGContextAddLineToPoint(context, rect.origin.x + rect.size.width, zeroY);
+    CGContextStrokePath(context);
 
     // 绘制网格
     CGContextSetStrokeColorWithColor(context, [UIColor lightGrayColor].CGColor);
@@ -396,12 +412,23 @@
     }
     CGContextStrokePath(context);
 
-    // 绘制输入曲线
+    // 🔥 绘制 gyro 曲线（红色）
+    [self drawLineInContext:context
+                       rect:rect
+                       data:_gyroData
+                      color:[UIColor redColor]
+                  lineWidth:2.0
+                  yMin:yMin
+                  yMax:yMax];
+
+    // 🔥 绘制 input 曲线（蓝色）
     [self drawLineInContext:context
                        rect:rect
                        data:_inputData
                       color:[UIColor blueColor]
-                  lineWidth:2.0];
+                  lineWidth:2.0
+                  yMin:yMin
+                  yMax:yMax];
 }
 
 /**
@@ -499,17 +526,28 @@
 }
 
 /**
- * 绘制折线
+ * 绘制折线（使用硬编码范围 [0, 2]，用于 Step Response 图表）
  */
 - (void)drawLineInContext:(CGContextRef)context
                      rect:(CGRect)rect
                      data:(NSArray<NSNumber *> *)data
                     color:(UIColor *)color
                 lineWidth:(CGFloat)lineWidth {
-    if (!data || data.count < 2) return;
+    [self drawLineInContext:context rect:rect data:data color:color lineWidth:lineWidth yMin:0.0 yMax:2.0];
+}
 
-    // 计算数据范围
-    double minVal = 0.0, maxVal = 2.0;
+/**
+ * 绘制折线（支持自定义 Y 轴范围）
+ * 🔥 新增：用于 Gyro vs Input 图表的对称 Y 轴绘制
+ */
+- (void)drawLineInContext:(CGContextRef)context
+                     rect:(CGRect)rect
+                     data:(NSArray<NSNumber *> *)data
+                    color:(UIColor *)color
+                lineWidth:(CGFloat)lineWidth
+                    yMin:(double)yMin
+                    yMax:(double)yMax {
+    if (!data || data.count < 2) return;
 
     CGContextSetStrokeColorWithColor(context, color.CGColor);
     CGContextSetLineWidth(context, lineWidth);
@@ -522,8 +560,8 @@
     for (NSInteger i = 0; i < data.count; i++) {
         double value = [data[i] doubleValue];
 
-        // 归一化到 [0, 1]
-        double normalized = (value - minVal) / (maxVal - minVal);
+        // 🔥 归一化到指定范围 [yMin, yMax]
+        double normalized = (value - yMin) / (yMax - yMin);
         normalized = MAX(0.0, MIN(1.0, normalized));
 
         // 计算坐标

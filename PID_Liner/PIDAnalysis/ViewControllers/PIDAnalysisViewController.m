@@ -778,6 +778,7 @@
     }
 
     if (highWindowCount >= 10) {  // 至少10个窗口
+        NSLog(@"🔍 [%@] 开始计算高输入响应... (%ld窗口)", axisName, (long)highWindowCount);
         respHigh = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
             responseResult.stepResponse
             avgTime:responseResult.avgTime
@@ -786,7 +787,22 @@
             vertBins:1000
             sampleRate:sampleRate];  // 🔥 传递实际采样率
         hasHighData = YES;
-        NSLog(@"✅ %@: 高输入响应计算成功 (%ld窗口)", axisName, (long)highWindowCount);
+
+        // 🔍 调试：打印respHigh的数据范围
+        if (respHigh && respHigh.count > 0) {
+            double minVal = [respHigh[0] doubleValue];
+            double maxVal = minVal;
+            for (NSNumber *num in respHigh) {
+                double v = [num doubleValue];
+                if (v < minVal) minVal = v;
+                if (v > maxVal) maxVal = v;
+            }
+            NSLog(@"✅ [%@] 高输入响应计算成功 (%ld窗口)", axisName, (long)highWindowCount);
+            NSLog(@"🔍 [%@] respHigh范围: [%.3f, %.3f]，起点=%.3f，终点=%.3f",
+                  axisName, minVal, maxVal, [respHigh[0] doubleValue], [respHigh[respHigh.count-1] doubleValue]);
+        } else {
+            NSLog(@"⚠️ [%@] respHigh为空！", axisName);
+        }
     } else {
         NSLog(@"⚠️ %@: 高输入窗口数(%ld) < 10，跳过高输入曲线", axisName, (long)highWindowCount);
     }
@@ -835,6 +851,7 @@
     // Chart 配置
     aaOptions.chart = [[AAChart alloc] init];
     aaOptions.chart.type = AAChartTypeLine;
+    aaOptions.chart.pinchType = @"xy";  // 🔥 启用双指缩放（iOS用pinchType）
 
     // Title 配置
     aaOptions.title = [[AATitle alloc] init];
@@ -1040,6 +1057,7 @@
     aaOptions.chart = [[AAChart alloc] init];
     aaOptions.chart.type = AAChartTypeColumn;
     aaOptions.chart.animation = @NO;
+    aaOptions.chart.pinchType = @"xy";  // 🔥 启用双指缩放（iOS用pinchType）
 
     // Title 配置
     aaOptions.title = [[AATitle alloc] init];

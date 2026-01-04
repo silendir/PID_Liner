@@ -331,6 +331,43 @@ static const double kP_SCALE_FACTOR = 0.032029;
         win = [PIDTraceAnalyzer hanningWindowWithLength:windowLen];
     }
 
+    // 🔍 调试：打印窗口0的原始输入数据（应用Hanning窗之前）
+    if (windowCount > 0) {
+        NSArray<NSNumber *> *rawIn = stacks.input[0];
+        NSArray<NSNumber *> *rawOut = stacks.gyro[0];
+
+        // 计算输入数据范围
+        double inMin = [rawIn[0] doubleValue], inMax = inMin;
+        for (NSNumber *n in rawIn) {
+            double v = [n doubleValue];
+            if (v < inMin) inMin = v;
+            if (v > inMax) inMax = v;
+        }
+
+        double outMin = [rawOut[0] doubleValue], outMax = outMin;
+        for (NSNumber *n in rawOut) {
+            double v = [n doubleValue];
+            if (v < outMin) outMin = v;
+            if (v > outMax) outMax = v;
+        }
+
+        NSLog(@"🔍 [原始数据窗口0] input范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
+              inMin, inMax,
+              [rawIn[0] doubleValue], [rawIn[1] doubleValue], [rawIn[2] doubleValue],
+              [rawIn[3] doubleValue], [rawIn[4] doubleValue]);
+        NSLog(@"🔍 [原始数据窗口0] gyro(output)范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
+              outMin, outMax,
+              [rawOut[0] doubleValue], [rawOut[1] doubleValue], [rawOut[2] doubleValue],
+              [rawOut[3] doubleValue], [rawOut[4] doubleValue]);
+
+        // Hanning窗前5个值
+        NSMutableString *winStr = [NSMutableString string];
+        for (NSInteger i = 0; i < 5; i++) {
+            [winStr appendFormat:@"%.6f ", [win[i] doubleValue]];
+        }
+        NSLog(@"🔍 [Hanning窗] 前5个值: %@", winStr);
+    }
+
     // 应用窗函数
     NSMutableArray<NSArray<NSNumber *> *> *inp = [NSMutableArray arrayWithCapacity:windowCount];
     NSMutableArray<NSArray<NSNumber *> *> *outp = [NSMutableArray arrayWithCapacity:windowCount];
@@ -340,6 +377,35 @@ static const double kP_SCALE_FACTOR = 0.032029;
         [inp addObject:[self multiplyArray:stacks.input[i] by:win]];
         [outp addObject:[self multiplyArray:stacks.gyro[i] by:win]];
         [thr addObject:[self multiplyArray:stacks.throttle[i] by:win]];
+    }
+
+    // 🔍 调试：打印应用Hanning窗后的输入数据
+    if (inp.count > 0) {
+        NSArray<NSNumber *> *winIn = inp[0];
+        NSArray<NSNumber *> *winOut = outp[0];
+
+        double winInMin = [winIn[0] doubleValue], winInMax = winInMin;
+        for (NSNumber *n in winIn) {
+            double v = [n doubleValue];
+            if (v < winInMin) winInMin = v;
+            if (v > winInMax) winInMax = v;
+        }
+
+        double winOutMin = [winOut[0] doubleValue], winOutMax = winOutMin;
+        for (NSNumber *n in winOut) {
+            double v = [n doubleValue];
+            if (v < winOutMin) winOutMin = v;
+            if (v > winOutMax) winOutMax = v;
+        }
+
+        NSLog(@"🔍 [加窗后窗口0] input范围: [%.6f, %.6f], 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
+              winInMin, winInMax,
+              [winIn[0] doubleValue], [winIn[1] doubleValue], [winIn[2] doubleValue],
+              [winIn[3] doubleValue], [winIn[4] doubleValue]);
+        NSLog(@"🔍 [加窗后窗口0] gyro范围: [%.6f, %.6f], 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
+              winOutMin, winOutMax,
+              [winOut[0] doubleValue], [winOut[1] doubleValue], [winOut[2] doubleValue],
+              [winOut[3] doubleValue], [winOut[4] doubleValue]);
     }
 
     // 维纳反卷积
@@ -384,7 +450,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
     // 不再做基准面调整（减去第一个值），因为这会导致负累积
     NSMutableArray<NSArray<NSNumber *> *> *stepResponse = [NSMutableArray arrayWithCapacity:windowCount];
 
-    // 🔍 调试：检查cumsum之前的值
+    // 🔍 调试：检查cumsum之前的值（详细版本）
     if (truncatedDeconv.count > 0 && truncatedDeconv[0].count > 0) {
         NSArray<NSNumber *> *firstRow = truncatedDeconv[0];
         double minVal = [firstRow[0] doubleValue], maxVal = minVal;
@@ -393,7 +459,10 @@ static const double kP_SCALE_FACTOR = 0.032029;
             if (v < minVal) minVal = v;
             if (v > maxVal) maxVal = v;
         }
-        NSLog(@"🔍 [cumsum之前] 反卷积结果范围: [%.3f, %.3f]", minVal, maxVal);
+        NSLog(@"🔍 [cumsum之前] 反卷积结果范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
+              minVal, maxVal,
+              [firstRow[0] doubleValue], [firstRow[1] doubleValue], [firstRow[2] doubleValue],
+              [firstRow[3] doubleValue], [firstRow[4] doubleValue]);
     }
 
     for (NSArray<NSNumber *> *row in truncatedDeconv) {
@@ -402,19 +471,22 @@ static const double kP_SCALE_FACTOR = 0.032029;
             continue;
         }
 
-        // 直接对脉冲响应做累积和（与Python版本一致）
+        // 直接对脉冲响应做累积和
+        // Python: delta_resp = deconvolved_sm.cumsum(axis=1)
+        // 注意：不去除DC偏移，Python也是直接cumsum
         NSArray<NSNumber *> *cumsum = [PIDInterpolation cumsum:row];
+
         [stepResponse addObject:cumsum];
 
         // 🔍 调试：打印第一个窗口的cumsum结果
         if (stepResponse.count == 1) {
             NSMutableString *s = [NSMutableString string];
-            NSInteger n = MIN(20, cumsum.count);
+            NSInteger n = MIN(10, cumsum.count);
             for (NSInteger i = 0; i < n; i++) {
                 [s appendFormat:@"%.3f ", [cumsum[i] doubleValue]];
             }
             NSLog(@"🔍 [cumsum结果] 窗口0前%ld个值: %@", (long)n, s);
-            NSLog(@"🔍 [cumsum结果] 窗口0: 起点=%.3f, 终点=%.3f, 跨度=%.3f",
+            NSLog(@"🔍 [cumsum结果] 起点=%.3f, 终点=%.3f, 跨度=%.3f",
                   [cumsum[0] doubleValue],
                   [cumsum[cumsum.count-1] doubleValue],
                   [cumsum[cumsum.count-1] doubleValue] - [cumsum[0] doubleValue]);
@@ -916,33 +988,51 @@ static double getMachFrequency(void) {
     double yMin = [vertRange[0] doubleValue];
     double yMax = [vertRange[1] doubleValue];
 
+    // 🔍 新增：打印输入参数
+    NSLog(@"🔍 [输入参数] stepResponse: windowCount=%ld, responseLen=%ld",
+          (long)windowCount, (long)responseLen);
+    NSLog(@"🔍 [输入参数] vertRange: [%.2f, %.2f], vertBins=%ld",
+          yMin, yMax, (long)vertBins);
+    NSLog(@"🔍 [输入参数] dataMask: count=%lu",
+          dataMask ? (unsigned long)dataMask.count : 0);
+
+    // 🔍 新增：检查输入数据的范围（前几个窗口）
+    NSLog(@"🔍 [输入数据检查] 检查前3个窗口的stepResponse范围:");
+    for (NSInteger w = 0; w < MIN(3, windowCount); w++) {
+        NSArray<NSNumber *> *windowResp = stepResponse[w];
+        if (windowResp && windowResp.count > 0) {
+            double minVal = [windowResp[0] doubleValue];
+            double maxVal = minVal;
+            for (NSNumber *num in windowResp) {
+                double v = [num doubleValue];
+                if (v < minVal) minVal = v;
+                if (v > maxVal) maxVal = v;
+            }
+            NSLog(@"  窗口[%ld]: 范围=[%.6f, %.6f], 起点=%.6f, 终点=%.6f",
+                  (long)w, minVal, maxVal, [windowResp[0] doubleValue],
+                  [windowResp[windowResp.count-1] doubleValue]);
+        }
+    }
+
     // ========== 3. 生成time_resp（匹配Python） ==========
-    // Python: self.time_resp = self.time[0:self.rlen] - self.time[0]
-    // Python的self.time是通过linspace生成的，所以我们也需要使用linspace
-    // Python: newtime = np.linspace(time[0], time[-1], len(time), dtype=np.float64)
-    //       self.time_resp = self.time[0:rlen] - self.time[0]
-
-    // 🔥 关键修复：使用实际采样率计算时间轴
     // Python: self.rlen = self.stepcalc(self.time, Trace.resplen)  # resplen = 0.5秒
-    // 也就是说 rlen = 0.5 * sampleRate
-    // 所以 time_resp 应该是 0 到 0.5 秒，包含 rlen 个点
-    // 但实际 responseLen 可能不等于 0.5 * sampleRate（因为数据截断）
-    // 所以我们用 responseLen 个点来表示 0.5 秒的时间（与Python保持一致）
+    // 也就是说 time_resp 代表 0 到 0.5 秒的时间范围
+    //
+    // 🔥 关键修复：时间范围固定为 0.5 秒，不依赖于传入的 sampleRate
+    // - responseLen 是实际的数据点数（由反卷积结果决定）
+    // - 无论 responseLen 是多少，时间范围始终是 [0, 0.5] 秒
+    // - dt = 0.5 / responseLen，确保 (responseLen-1) * dt ≈ 0.5
+    //
+    // 注意：传入的 sampleRate 参数是原始数据的采样率，用于窗口大小计算
+    // 但加权平均的时间轴应该始终对应 0.5 秒的响应时长
 
-    // 🔥 关键修复：使用实际采样率计算正确的时间间隔
-    // dt = 1 / sampleRate，这是每个采样点之间的实际时间间隔
-    double dt = 1.0 / sampleRate;
+    double responseDuration = 0.5;  // Python 的 resplen = 0.5 秒
+    double dt = responseDuration / (responseLen > 1 ? responseLen - 1 : 1);
 
-    // timeResp 的长度应该等于 responseLen
-    // 时间从 0 开始，每个点间隔 dt
-    // 但注意：Python的time_resp是取前rlen个点，rlen = stepcalc(time, resplen)
-    // 如果数据长度不足rlen，则取实际长度
-    // 所以 timeResp 的终点是 (responseLen - 1) * dt
-
+    // 使用 linspace 生成均匀时间轴 [0, 0.5] 秒
     NSMutableArray<NSNumber *> *timeResp = [NSMutableArray arrayWithCapacity:responseLen];
     for (NSInteger i = 0; i < responseLen; i++) {
-        // 使用实际采样间隔：t = i * dt
-        double t = i * dt;
+        double t = responseDuration * i / (responseLen > 1 ? responseLen - 1 : 1);
         [timeResp addObject:@(t)];
     }
 
@@ -997,6 +1087,23 @@ static double getMachFrequency(void) {
     NSLog(@"🔍 [Python对齐] 展平后数据点数: %lu (windowCount=%ld, responseLen=%ld)",
           (unsigned long)flatTimes.count, (long)windowCount, (long)responseLen);
 
+    // 🔍 新增：检查展平后的数据范围
+    if (flatValues.count > 0) {
+        double flatMin = [flatValues[0] doubleValue];
+        double flatMax = flatMin;
+        for (NSNumber *num in flatValues) {
+            double v = [num doubleValue];
+            if (v < flatMin) flatMin = v;
+            if (v > flatMax) flatMax = v;
+        }
+        NSLog(@"🔍 [展平数据] flatValues范围: [%.6f, %.6f], 点数=%lu",
+              flatMin, flatMax, (unsigned long)flatValues.count);
+        NSLog(@"🔍 [展平数据] 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
+              [flatValues[0] doubleValue], [flatValues[1] doubleValue],
+              [flatValues[2] doubleValue], [flatValues[3] doubleValue],
+              [flatValues[4] doubleValue]);
+    }
+
     // ========== 5. 构建histogram2d（使用新的辅助方法） ==========
     NSInteger timeBins = responseLen;
     float *hist2d = [self buildHistogram2D:flatTimes
@@ -1016,6 +1123,19 @@ static double getMachFrequency(void) {
 
     NSLog(@"🔍 [Python对齐] hist2d构建完成: shape=[%ld, %ld]",
           (long)vertBins, (long)timeBins);
+
+    // 🔍 新增：检查hist2d的统计信息
+    float histSum = 0.0f;
+    float histMax = 0.0f;
+    NSInteger nonZeroCount = 0;
+    for (NSInteger i = 0; i < vertBins * timeBins; i++) {
+        float v = hist2d[i];
+        histSum += v;
+        if (v > histMax) histMax = v;
+        if (v > 1e-6f) nonZeroCount++;
+    }
+    NSLog(@"🔍 [hist2d统计] sum=%.6f, max=%.6f, 非零点=%ld/%ld",
+          histSum, histMax, (long)nonZeroCount, (long)(vertBins * timeBins));
 
     // ========== 6. 高斯平滑（垂直方向，axis=0） ==========
     // Python: gaussian_filter1d(hist2d, filt_width=7, axis=0, mode='constant')
@@ -1151,14 +1271,33 @@ static double getMachFrequency(void) {
 
     NSMutableArray<NSNumber *> *avgResponse = [NSMutableArray arrayWithCapacity:timeBins];
 
+    // 🔍 新增：分析第一个和最后一个时间点的加权平均计算
+    NSMutableArray<NSNumber *> *timePointsToAnalyze = [NSMutableArray arrayWithObjects:@(0), @(timeBins-1), nil];
+    // 添加一些中间点
+    for (NSInteger i = 1; i < 5; i++) {
+        NSInteger idx = i * timeBins / 5;
+        [timePointsToAnalyze addObject:@(idx)];
+    }
+
     for (NSInteger t = 0; t < timeBins; t++) {
         double weightedSum = 0.0;
         double weightSum = 0.0;
+
+        // 🔍 新增：记录关键统计信息
+        double maxY_at_this_t = -HUGE_VAL;
+        double minY_with_weight = HUGE_VAL;
+        double maxY_with_weight = -HUGE_VAL;
 
         for (NSInteger v = 0; v < vertBins; v++) {
             float histVal = hist2dSmooth[v * timeBins + t];
             double y = [respY[v] doubleValue];
             double w = histVal * histVal;  // 平方权重
+
+            if (w > 1e-9) {
+                if (y < minY_with_weight) minY_with_weight = y;
+                if (y > maxY_with_weight) maxY_with_weight = y;
+            }
+            if (histVal > maxY_at_this_t) maxY_at_this_t = histVal;
 
             weightedSum += y * w;
             weightSum += w;
@@ -1166,6 +1305,15 @@ static double getMachFrequency(void) {
 
         double avgVal = weightSum > 1e-9 ? weightedSum / weightSum : 0.0;
         [avgResponse addObject:@(avgVal)];
+
+        // 🔍 新增：打印关键时间点的详细信息
+        if ([timePointsToAnalyze containsObject:@(t)]) {
+            NSLog(@"🔍 [加权平均详情] t[%ld]:", (long)t);
+            NSLog(@"  加权平均结果: %.6f", avgVal);
+            NSLog(@"  有权重的resp_y范围: [%.6f, %.6f]", minY_with_weight, maxY_with_weight);
+            NSLog(@"  最大histVal: %.6f", maxY_at_this_t);
+            NSLog(@"  weightSum: %.6f", weightSum);
+        }
     }
 
     free(hist2dSmooth);
@@ -1216,6 +1364,37 @@ static double getMachFrequency(void) {
 
     NSLog(@"✅ weighted_mode_avr完成: %ld窗口 -> 1条曲线 | 耗时: %.1fms",
           (long)windowCount, elapsedMs);
+
+    // 🔥 关键修复：阶跃响应应该从0开始，表示相对于初始状态的变化
+    // weighted_mode_avr 计算的是绝对位置的加权平均，需要减去初始值得到相对变化
+    // 例如：如果加权平均结果是 [0.97, 1.10, 1.20]，减去0.97后得到 [0, 0.13, 0.23]
+    if (avgResponse.count > 0) {
+        double baseValue = [avgResponse[0] doubleValue];
+        NSLog(@"🔍 [零点调整] 加权平均原始起点=%.6f，对所有值减去baseValue", baseValue);
+
+        for (NSInteger i = 0; i < avgResponse.count; i++) {
+            double adjustedVal = [avgResponse[i] doubleValue] - baseValue;
+            avgResponse[i] = @(adjustedVal);
+        }
+
+        NSLog(@"🔍 [零点调整] 调整后起点=%.6f，终点=%.6f",
+              [avgResponse[0] doubleValue], [avgResponse[avgResponse.count-1] doubleValue]);
+    }
+
+    // 🎯 关键输出：最终结果范围
+    if (avgResponse.count > 0) {
+        double minVal = [avgResponse[0] doubleValue];
+        double maxVal = minVal;
+        for (NSNumber *num in avgResponse) {
+            double v = [num doubleValue];
+            if (v < minVal) minVal = v;
+            if (v > maxVal) maxVal = v;
+        }
+        NSLog(@"🎯🎯🎯 [最终结果] 起点=%.3f, 终点=%.3f, 跨度=%.3f (点数=%lu)",
+              [avgResponse[0] doubleValue], [avgResponse[avgResponse.count-1] doubleValue],
+              [avgResponse[avgResponse.count-1] doubleValue] - [avgResponse[0] doubleValue],
+              (unsigned long)avgResponse.count);
+    }
 
     return [avgResponse copy];
 }
@@ -1305,18 +1484,41 @@ static double getMachFrequency(void) {
     // 3. 填充hist2d
     // numpy的histogram2d返回 [timebins, vertbins]
     // 我们先按 [timebins, vertbins] 填充，然后转置为 [vertbins, timebins]
+
+    // 🔥 关键修复：numpy histogram2d 会忽略超出 range 的值！
+    // 测试证明：numpy.histogram2d(values, range=[a, b]) 会忽略 <a 或 >b 的值
+    // iOS 之前的实现是把超范围值 clamp 到边界，这是错误的！
+
+    NSInteger ignoredCount = 0;  // 🎯 统计被忽略的值数量
+    NSInteger processedCount = 0;  // 🎯 统计被处理的值数量
+
     for (NSUInteger i = 0; i < times.count; i++) {
         double t = [times[i] doubleValue];
         double v = [values[i] doubleValue];
         double w = weights ? [weights[i] doubleValue] : 1.0;
 
+        // 🔥 关键修复：检查是否超出范围（numpy行为：超范围值被忽略）
+        // 对于半开区间 [a, b)，值 < a 或 >= b 都被视为超范围
+        // 但 numpy 对边界值有特殊处理：等于 a 的值计入第一个 bin
+        // 等于 b 的值也计入最后一个 bin（因为 epsilon 处理）
+        if (t < timeMin || t >= timeMaxEffective) {
+            ignoredCount++;
+            continue;  // 🎯 跳过超出时间范围的值
+        }
+        if (v < valueMin || v >= valueMaxEffective) {
+            ignoredCount++;
+            continue;  // 🎯 跳过超出值范围的值
+        }
+
+        processedCount++;
+
         // 计算bin索引（精确匹配numpy的histogram2d行为）
         // numpy: bin = floor((x - range[0]) / (range[1] - range[0]) * nbins)
-        // 对于 [a, b) 范围，x=b 时 bin=nb，所以需要clamp
         double tRatio = (t - timeMin) / timeSpan;
         double vRatio = (v - valueMin) / vertSpan;
 
-        // clamp到[0, 1]范围
+        // 由于已经检查了范围，这里 tRatio 和 vRatio 应该在 [0, 1) 内
+        // 但为了浮点精度安全，再做一次 clamp
         if (tRatio < 0.0) tRatio = 0.0;
         if (tRatio > 1.0) tRatio = 1.0;
         if (vRatio < 0.0) vRatio = 0.0;
@@ -1335,6 +1537,22 @@ static double getMachFrequency(void) {
         // 填充 [timebins, vertbins]
         hist2d[tBin * vertBins + vBin] += w;
     }
+
+    // 🎯 打印统计信息（带独特标记，方便筛选）
+    NSLog(@"🎯🎯🎯 [hist2d填充] 总点数=%ld, 处理=%ld, 忽略=%ld (超范围值被跳过)",
+          (long)times.count, (long)processedCount, (long)ignoredCount);
+
+    // 🎯🎯🎯 关键：打印实际使用的 value 范围（用于验证）
+    double actualValueMin = HUGE_VAL, actualValueMax = -HUGE_VAL;
+    for (NSUInteger i = 0; i < times.count; i++) {
+        double v = [values[i] doubleValue];
+        if (v >= valueMin && v < valueMaxEffective) {  // 在范围内的值
+            if (v < actualValueMin) actualValueMin = v;
+            if (v > actualValueMax) actualValueMax = v;
+        }
+    }
+    NSLog(@"🎯🎯🎯 [hist2d实际范围] value范围=[%.3f, %.3f], vertRange=[%.3f, %.3f]",
+          actualValueMin, actualValueMax, valueMin, valueMax);
 
     // 4. 转置为 [vertbins, timebins] 以匹配Python的.transpose()
     float *transposed = (float *)malloc(histSize * sizeof(float));

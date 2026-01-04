@@ -214,11 +214,11 @@ static double getMachFrequency(void) {
     NSArray<NSNumber *> *sn = [self normalizeToMask:clipped];
 
     // 计算低通滤波器长度
-    NSInteger lenLPF = 0;
+    // Python: len_lpf = np.sum(np.ones_like(sn) - sn)
+    // 即：sum(1 - sn)，不是count(sn > 0.5)
+    double lenLPF = 0.0;
     for (NSNumber *val in sn) {
-        if ([val doubleValue] > 0.5) {
-            lenLPF++;
-        }
+        lenLPF += 1.0 - [val doubleValue];
     }
 
     // 高斯滤波
