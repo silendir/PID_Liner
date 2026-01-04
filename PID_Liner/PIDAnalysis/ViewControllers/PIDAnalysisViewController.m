@@ -572,8 +572,11 @@
  * 更新图表显示 - 确保在主线程且视图已布局后执行
  */
 - (void)updateCharts {
+    NSLog(@"🔍🔍🔍 [updateCharts] ========== 开始执行 ==========");
+
     // 确保在主线程执行
     if (![NSThread isMainThread]) {
+        NSLog(@"🔍 [updateCharts] 不在主线程，切换到主线程");
         dispatch_async(dispatch_get_main_queue(), ^{
             [self updateCharts];
         });
@@ -608,12 +611,23 @@
     // 更新噪声图 - 使用AAChartView
     AAChartView *noiseChart = objc_getAssociatedObject(_noiseViewController, @"aaNoiseChartView");
 
-    if (noiseChart && noiseChart.bounds.size.width > 0 && noiseChart.bounds.size.height > 0) {
+    NSLog(@"🔍 [updateCharts] _noiseViewController = %@", _noiseViewController ? @"存在" : @"nil");
+    NSLog(@"🔍 [updateCharts] noiseChart = %@", noiseChart ? @"存在" : @"nil");
+    NSLog(@"🔍 [updateCharts] noiseChart.bounds = %@",
+          noiseChart ? NSStringFromCGRect(noiseChart.bounds) : @"N/A");
+    NSLog(@"🔍 [updateCharts] _rollSpectrum = %@", _rollSpectrum ? @"存在" : @"nil");
+
+    // 🔥 移除 bounds 检查，强制更新噪声图（真机可能 bounds 为 0 但仍可绘制）
+    if (noiseChart) {
         if (_rollSpectrum || _parsedData) {
+            NSLog(@"🔍 [updateCharts] 调用 configureNoiseChart (强制执行)");
             [self configureNoiseChart:noiseChart];
         } else {
+            NSLog(@"⚠️ [updateCharts] 无 rollSpectrum 数据");
             [self showEmptyStateChart:noiseChart message:@"暂无数据\n请确保CSV文件包含完整的陀螺仪数据"];
         }
+    } else {
+        NSLog(@"⚠️ [updateCharts] noiseChart 为 nil!");
     }
 }
 
@@ -894,18 +908,40 @@
  * 🔥 改为直方图显示，Y轴从0开始
  */
 - (void)configureNoiseChart:(AAChartView *)chartView {
+    NSLog(@"🔍 [噪声图] configureNoiseChart 开始执行");
+    NSLog(@"🔍 [噪声图] chartView.bounds = %@", NSStringFromCGRect(chartView.bounds));
+
+    // 检查 chartView 是否有效
+    if (!chartView) {
+        NSLog(@"⚠️ [噪声图] chartView 为 nil!");
+        return;
+    }
+
+    NSLog(@"🔍 [噪声图] _rollSpectrum = %@", _rollSpectrum ? @"存在" : @"nil");
+    NSLog(@"🔍 [噪声图] _rollSpectrum.frequencies.count = %lu",
+          _rollSpectrum ? (unsigned long)_rollSpectrum.frequencies.count : 0);
+
     // 检查是否有真实的频谱数据
     if (!_rollSpectrum || !_rollSpectrum.frequencies || _rollSpectrum.frequencies.count == 0) {
+        NSLog(@"⚠️ [噪声图] 无频谱数据，显示空状态");
         [self showEmptyStateChart:chartView message:@"暂无频谱数据\n请确保CSV文件包含完整的陀螺仪数据"];
         return;
     }
 
     // 使用真实的频率数据
     NSArray<NSNumber *> *frequencies = _rollSpectrum.frequencies;
+    NSLog(@"🔍 [噪声图] frequencies.count = %lu", (unsigned long)frequencies.count);
+    NSLog(@"🔍 [噪声图] frequencies 前3个: %@, %@, %@",
+          frequencies.count > 0 ? frequencies[0] : @"N/A",
+          frequencies.count > 1 ? frequencies[1] : @"N/A",
+          frequencies.count > 2 ? frequencies[2] : @"N/A");
+
+    // 🔥 X轴添加 Hz 单位
     NSMutableArray<NSString *> *freqCategories = [NSMutableArray arrayWithCapacity:frequencies.count];
     for (NSNumber *freq in frequencies) {
-        [freqCategories addObject:[NSString stringWithFormat:@"%.0f", freq.doubleValue]];
+        [freqCategories addObject:[NSString stringWithFormat:@"%.0f Hz", freq.doubleValue]];
     }
+    NSLog(@"🔍 [噪声图] freqCategories.count = %lu", (unsigned long)freqCategories.count);
 
     // 使用真实的频谱幅度数据
     // spectrum 是 [窗口][频率点] 的二维数组
@@ -948,8 +984,13 @@
     NSArray<NSNumber *> *pitchNoise = averageSpectrumAcrossWindows(_pitchSpectrum.spectrum);
     NSArray<NSNumber *> *yawNoise = averageSpectrumAcrossWindows(_yawSpectrum.spectrum);
 
+    NSLog(@"🔍 [噪声图] rollNoise.count = %lu", (unsigned long)rollNoise.count);
+    NSLog(@"🔍 [噪声图] pitchNoise.count = %lu", (unsigned long)pitchNoise.count);
+    NSLog(@"🔍 [噪声图] yawNoise.count = %lu", (unsigned long)yawNoise.count);
+
     // 如果仍然没有数据，显示空状态
     if (rollNoise.count == 0 && pitchNoise.count == 0 && yawNoise.count == 0) {
+        NSLog(@"⚠️ [噪声图] 所有轴数据为空");
         [self showEmptyStateChart:chartView message:@"暂无频谱数据 请确保CSV文件包含完整的陀螺仪数据"];
         return;
     }
@@ -970,42 +1011,59 @@
     chartModel.title = @"噪声频谱";
     chartModel.subtitle = @"陀螺仪噪声分析 (真实数据)";
     chartModel.categories = freqCategories;
-    chartModel.yAxisTitle = @"噪声强度";
+    chartModel.yAxisTitle = @"噪声功率";  // 🔥 简化标题
     chartModel.yAxisMin = @0;  // 🔥 Y轴从0开始
     chartModel.animationType = AAChartAnimationEaseOutCubic;
     chartModel.animationDuration = @800;
 
+    // 🔧 设置提示框：共享显示
+    chartModel.tooltipEnabled = @YES;
+    chartModel.tooltipShared = @NO;  // 单独显示每个数据点
+
     // 创建数据系列 - 只添加有数据的系列
     // 🔥 柱状图不需要 fillOpacity，移除该属性
+    // 🔧 为每个系列配置 tooltip：保留2位小数，半透明样式
+    AATooltip *seriesTooltip = [[AATooltip alloc] init];
+    seriesTooltip.valueDecimals = @2;  // 保留2位小数
+    seriesTooltip.backgroundColor = @"rgba(0, 0, 0, 0.75)";  // 半透明黑色背景
+
     NSMutableArray<AASeriesElement *> *series = [NSMutableArray array];
 
     if (rollNoise.count > 0) {
         AASeriesElement *rollSeries = [[AASeriesElement alloc] init];
-        rollSeries.name = @"Roll";
+        rollSeries.name = @"Roll";  // 🔥 简化图例名称
         rollSeries.data = rollNoise;
         rollSeries.color = @"#FF6B6B";
+        rollSeries.tooltip = seriesTooltip;
         [series addObject:rollSeries];
     }
 
     if (pitchNoise.count > 0) {
         AASeriesElement *pitchSeries = [[AASeriesElement alloc] init];
-        pitchSeries.name = @"Pitch";
+        pitchSeries.name = @"Pitch";  // 🔥 简化图例名称
         pitchSeries.data = pitchNoise;
         pitchSeries.color = @"#4ECDC4";
+        pitchSeries.tooltip = seriesTooltip;
         [series addObject:pitchSeries];
     }
 
     if (yawNoise.count > 0) {
         AASeriesElement *yawSeries = [[AASeriesElement alloc] init];
-        yawSeries.name = @"Yaw";
+        yawSeries.name = @"Yaw";  // 🔥 简化图例名称
         yawSeries.data = yawNoise;
         yawSeries.color = @"#95E1D3";
+        yawSeries.tooltip = seriesTooltip;
         [series addObject:yawSeries];
     }
 
     chartModel.series = series;
 
+    NSLog(@"🔍 [噪声图] chartModel.series.count = %lu", (unsigned long)series.count);
+    NSLog(@"🔍 [噪声图] 准备绘制图表...");
+
     [chartView aa_drawChartWithChartModel:chartModel];
+
+    NSLog(@"✅ [噪声图] 图表绘制完成");
 }
 
 /**
