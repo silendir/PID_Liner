@@ -352,14 +352,25 @@
  */
 - (void)performAnalysis {
     @try {
+        // 🔥 关键修复：使用实际采样率而非硬编码的8000Hz
+        // 实际数据可能来自不同采样率的黑盒子日志（如931Hz, 1kHz, 8kHz等）
+        double actualSampleRate = _parsedData.sampleRate > 0 ? _parsedData.sampleRate : 8000.0;
+        NSLog(@"🔍 [分析] 使用实际采样率: %.2fHz", actualSampleRate);
+
         // 🔧 修正：Python使用cutfreq=25Hz而非150Hz
         PIDTraceAnalyzer *analyzer = [[PIDTraceAnalyzer alloc]
-            initWithSampleRate:8000.0
+            initWithSampleRate:actualSampleRate
             cutFreq:25.0];
 
         // 🔧 修正：Python使用superpos=16，对应overlap=15/16=0.9375
-        // 创建堆叠窗口数据
-        NSInteger windowSize = 8000;  // 1秒窗口 @ 8kHz
+        // 🔥 关键：窗口大小保持固定值 8000，确保 FFT 分辨率和信号质量
+        // - 如果根据采样率动态计算 windowSize，会导致：
+        //   1. FFT 分辨率降低（windowSize 越小，频率分辨率越低）
+        //   2. 反卷积结果列数减少（columnCount = windowSize/2）
+        //   3. 信号能量大幅减少（窗函数能量与 windowSize 成正比）
+        // - 正确做法：保持 windowSize 固定，只修正时间轴计算
+        // TODO: 理想情况下应该重采样数据到 8kHz，但当前保持 windowSize=8000
+        NSInteger windowSize = 8000;  // 固定窗口大小（用于 FFT/反卷积）
         double overlap = 0.9375;
 
         // 分析每个轴
@@ -718,12 +729,15 @@
 
     // 4. 计算分离的响应曲线
     NSArray<NSNumber *> *vertRange = @[@(-1.5), @(3.5)];
+    // 🔥 使用实际采样率
+    double sampleRate = _parsedData.sampleRate > 0 ? _parsedData.sampleRate : 8000.0;
     NSArray<NSNumber *> *respLow = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
         responseResult.stepResponse
         avgTime:responseResult.avgTime
         dataMask:respLowMask  // 🔑 使用low mask
         vertRange:vertRange
-        vertBins:1000];
+        vertBins:1000
+        sampleRate:sampleRate];  // 🔥 传递实际采样率
 
     // 🔍 调试：打印respLow的数据范围
     if (respLow && respLow.count > 0) {
@@ -755,7 +769,8 @@
             avgTime:responseResult.avgTime
             dataMask:respHighMask  // 🔑 使用high mask
             vertRange:vertRange
-            vertBins:1000];
+            vertBins:1000
+            sampleRate:sampleRate];  // 🔥 传递实际采样率
         hasHighData = YES;
         NSLog(@"✅ %@: 高输入响应计算成功 (%ld窗口)", axisName, (long)highWindowCount);
     } else {

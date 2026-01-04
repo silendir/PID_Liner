@@ -131,6 +131,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) double cutFreq;         // 截止频率 (Hz)
 @property (nonatomic, assign) double pScale;          // P缩放因子 (Betaflight: 0.032029)
 @property (nonatomic, assign) NSInteger responseLen; // 响应长度 (样本点数)
+@property (nonatomic, assign) double sampleRate;      // 采样率 (Hz) - 🔥 新增：用于动态计算responseLen
 
 // 维纳反卷积处理器
 @property (nonatomic, strong, readonly) PIDWienerDeconvolution *wienerDeconvolution;
@@ -278,19 +279,21 @@ NS_ASSUME_NONNULL_BEGIN
  * 使用2D直方图统计响应分布，提取最可能的响应曲线
  *
  * @param stepResponse 阶跃响应矩阵 [窗口数][响应点数]
- * @param avgTime 每个窗口的平均时间
+ * @param avgTime 每个窗口的平均时间（保留用于API兼容，实际未使用）
  * @param dataMask 数据mask (0或1的数组)，与windowCount长度相同
  *                 mask[i] = 1 表示保留第i个窗口的数据
  *                 mask[i] = 0 表示丢弃第i个窗口的数据
  * @param vertRange 响应值的垂直范围 [min, max]
  * @param vertBins 垂直方向分箱数量
+ * @param sampleRate 实际采样率 (Hz)，用于计算正确的时间轴
  * @return 加权平均后的响应曲线
  */
 + (NSArray<NSNumber *> *)weightedModeAverageWithStepResponse:(NSArray<NSArray<NSNumber *> *> *)stepResponse
                                                    avgTime:(NSArray<NSNumber *> *)avgTime
                                                   dataMask:(NSArray<NSNumber *> *)dataMask
                                                 vertRange:(NSArray<NSNumber *> *)vertRange
-                                                 vertBins:(NSInteger)vertBins;
+                                                 vertBins:(NSInteger)vertBins
+                                              sampleRate:(double)sampleRate;
 
 /**
  * 加权模式平均 - 兼容旧版本（全部窗口权重为1）
@@ -301,6 +304,42 @@ NS_ASSUME_NONNULL_BEGIN
                                                   maxInput:(NSArray<NSNumber *> *)maxInput
                                                 vertRange:(NSArray<NSNumber *> *)vertRange
                                                  vertBins:(NSInteger)vertBins;
+
+#pragma mark - 辅助方法（Python算法对齐）
+
+/**
+ * 生成linspace序列，匹配Python的np.linspace
+ * np.linspace(a, b, n) 返回 n 个点，从 a 到 b（包含两端）
+ * @param start 起始值
+ * @param end 结束值
+ * @param count 点的数量
+ * @return 均匀分布的数值数组
+ */
++ (NSArray<NSNumber *> *)linspaceFrom:(double)start to:(double)end count:(NSInteger)count;
+
+/**
+ * 构建histogram2d，完全匹配Python的np.histogram2d
+ *
+ * @param times 展平的时间数组 [N]
+ * @param values 展平的值数组 [N]
+ * @param weights 展平的权重数组 [N]
+ * @param timeMin 时间范围最小值
+ * @param timeMax 时间范围最大值
+ * @param valueMin 值范围最小值
+ * @param valueMax 值范围最大值
+ * @param timeBinsCount 时间箱数量
+ * @param vertBinsCount 值箱数量
+ * @return 转置后的hist2d [vertBins, timeBins]，需要调用者释放
+ */
++ (float *)buildHistogram2D:(NSArray<NSNumber *> *)times
+                     values:(NSArray<NSNumber *> *)values
+                    weights:(NSArray<NSNumber *> *)weights
+                   timeMin:(double)timeMin
+                   timeMax:(double)timeMax
+                  valueMin:(double)valueMin
+                  valueMax:(double)valueMax
+            timeBinsCount:(NSInteger)timeBins
+            vertBinsCount:(NSInteger)vertBins;
 
 @end
 
