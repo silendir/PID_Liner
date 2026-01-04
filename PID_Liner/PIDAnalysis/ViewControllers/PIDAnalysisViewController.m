@@ -850,7 +850,7 @@
 
     // Chart 配置
     aaOptions.chart = [[AAChart alloc] init];
-    aaOptions.chart.type = AAChartTypeLine;
+    aaOptions.chart.type = AAChartTypeSpline;  // 🔥 平滑曲线样式
     aaOptions.chart.pinchType = @"xy";  // 🔥 启用双指缩放（iOS用pinchType）
 
     // Title 配置

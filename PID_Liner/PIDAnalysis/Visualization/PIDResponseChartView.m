@@ -537,8 +537,8 @@
 }
 
 /**
- * 绘制折线（支持自定义 Y 轴范围）
- * 🔥 新增：用于 Gyro vs Input 图表的对称 Y 轴绘制
+ * 绘制平滑曲线（支持自定义 Y 轴范围）
+ * 🔥 使用 Catmull-Rom 样条插值算法，曲线通过所有数据点
  */
 - (void)drawLineInContext:(CGContextRef)context
                      rect:(CGRect)rect
@@ -549,23 +549,89 @@
                     yMax:(double)yMax {
     if (!data || data.count < 2) return;
 
+    // 数据点少于3个时，直接画折线
+    if (data.count < 3) {
+        [self drawStraightLineInContext:context rect:rect data:data color:color lineWidth:lineWidth yMin:yMin yMax:yMax];
+        return;
+    }
+
+    // 计算所有点的坐标
+    NSMutableArray<NSValue *> *points = [NSMutableArray arrayWithCapacity:data.count];
+    CGFloat xStep = rect.size.width / (data.count - 1);
+
+    for (NSInteger i = 0; i < data.count; i++) {
+        double value = [data[i] doubleValue];
+        double normalized = (value - yMin) / (yMax - yMin);
+        normalized = MAX(0.0, MIN(1.0, normalized));
+
+        CGFloat x = rect.origin.x + xStep * i;
+        CGFloat y = rect.origin.y + rect.size.height * (1.0 - normalized);
+        [points addObject:[NSValue valueWithCGPoint:CGPointMake(x, y)]];
+    }
+
+    // 绘制平滑曲线
     CGContextSetStrokeColorWithColor(context, color.CGColor);
     CGContextSetLineWidth(context, lineWidth);
     CGContextSetLineJoin(context, kCGLineJoinRound);
     CGContextSetLineCap(context, kCGLineCapRound);
-
-    // 开始路径
     CGContextBeginPath(context);
+
+    CGPoint p0 = [points[0] CGPointValue];
+    CGContextMoveToPoint(context, p0.x, p0.y);
+
+    // 使用 Catmull-Rom 样条绘制曲线
+    // 对于每4个连续点 p[i-1], p[i], p[i+1], p[i+2]，绘制 p[i] 到 p[i+1] 的曲线段
+    for (NSInteger i = 0; i < points.count - 1; i++) {
+        CGPoint p1 = [points[i] CGPointValue];
+        CGPoint p2 = [points[i + 1] CGPointValue];
+
+        // 边界处理：首尾点重复
+        CGPoint p0 = (i > 0) ? [points[i - 1] CGPointValue] : p1;
+        CGPoint p3 = (i < points.count - 2) ? [points[i + 2] CGPointValue] : p2;
+
+        // 计算控制点（Catmull-Rom 转 Cubic Bezier）
+        // Catmull-Rom 样条公式转贝塞尔控制点
+        CGPoint cp1 = CGPointMake(
+            p1.x + (p2.x - p0.x) / 6.0,
+            p1.y + (p2.y - p0.y) / 6.0
+        );
+        CGPoint cp2 = CGPointMake(
+            p2.x - (p3.x - p1.x) / 6.0,
+            p2.y - (p3.y - p1.y) / 6.0
+        );
+
+        CGContextAddCurveToPoint(context, cp1.x, cp1.y, cp2.x, cp2.y, p2.x, p2.y);
+    }
+
+    CGContextStrokePath(context);
+}
+
+/**
+ * 绘制普通折线（用于数据点较少时的回退方案）
+ */
+- (void)drawStraightLineInContext:(CGContextRef)context
+                            rect:(CGRect)rect
+                            data:(NSArray<NSNumber *> *)data
+                           color:(UIColor *)color
+                       lineWidth:(CGFloat)lineWidth
+                           yMin:(double)yMin
+                           yMax:(double)yMax {
+    if (!data || data.count < 2) return;
+
+    CGContextSetStrokeColorWithColor(context, color.CGColor);
+    CGContextSetLineWidth(context, lineWidth);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextBeginPath(context);
+
+    CGFloat xStep = rect.size.width / (data.count - 1);
 
     for (NSInteger i = 0; i < data.count; i++) {
         double value = [data[i] doubleValue];
-
-        // 🔥 归一化到指定范围 [yMin, yMax]
         double normalized = (value - yMin) / (yMax - yMin);
         normalized = MAX(0.0, MIN(1.0, normalized));
 
-        // 计算坐标
-        CGFloat x = rect.origin.x + (rect.size.width / (data.count - 1)) * i;
+        CGFloat x = rect.origin.x + xStep * i;
         CGFloat y = rect.origin.y + rect.size.height * (1.0 - normalized);
 
         if (i == 0) {

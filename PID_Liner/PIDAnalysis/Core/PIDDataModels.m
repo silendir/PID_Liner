@@ -98,7 +98,7 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _chartType = @"line";
+        _chartType = @"spline";  // 平滑曲线样式
         _data = @[];
         _categories = @[];
     }
