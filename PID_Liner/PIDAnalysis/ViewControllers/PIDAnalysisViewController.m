@@ -829,12 +829,19 @@
         }
     }
 
-    // 6. 配置图表显示两条曲线
-    AAChartModel *chartModel = [[AAChartModel alloc] init];
-    chartModel.chartType = AAChartTypeLine;
-    chartModel.title = [NSString stringWithFormat:@"%@ 阶跃响应 (分离)", axisName];
+    // 6. 配置图表显示两条曲线 - 使用 AAOptions 以支持 tooltip 样式
+    AAOptions *aaOptions = [[AAOptions alloc] init];
 
-    // 副标题：显示数据状态，帮助用户理解为什么橙色线可能没有数据
+    // Chart 配置
+    aaOptions.chart = [[AAChart alloc] init];
+    aaOptions.chart.type = AAChartTypeLine;
+
+    // Title 配置
+    aaOptions.title = [[AATitle alloc] init];
+    aaOptions.title.text = [NSString stringWithFormat:@"%@ 阶跃响应 (分离)", axisName];
+
+    // Subtitle 配置
+    AASubtitle *subtitle = [[AASubtitle alloc] init];
     NSString *subtitleText;
     if (hasHighData) {
         subtitleText = [NSString stringWithFormat:@"蓝: ≤500°/s (%ld窗口) | 橙: >500°/s (%ld窗口)",
@@ -843,14 +850,34 @@
         subtitleText = [NSString stringWithFormat:@"蓝: ≤500°/s (%ld窗口) | 橙: >500°/s (无数据，需更激烈的操纵)",
                        (long)lowWindowCount];
     }
-    chartModel.subtitle = subtitleText;
-    chartModel.categories = timeCategories;
-    chartModel.yAxisTitle = @"响应值";
-    chartModel.animationType = AAChartAnimationEaseOutCubic;
-    chartModel.animationDuration = @800;
-    chartModel.zoomType = AAChartZoomTypeXY;
-    chartModel.yAxisMin = @0;
-    chartModel.yAxisMax = @2;
+    subtitle.text = subtitleText;
+    aaOptions.subtitle = subtitle;
+
+    // X轴配置
+    AAXAxis *xAxis = [[AAXAxis alloc] init];
+    xAxis.categories = timeCategories;
+    aaOptions.xAxis = xAxis;
+
+    // Y轴配置
+    AAYAxis *yAxis = [[AAYAxis alloc] init];
+    yAxis.title = [[AAAxisTitle alloc] init];
+    yAxis.title.text = @"响应值";
+    yAxis.min = @0;
+    yAxis.max = @2;
+    aaOptions.yAxis = yAxis;
+
+    // 🔧 Tooltip 配置：与噪声图相同的样式
+    AATooltip *tooltip = [[AATooltip alloc] init];
+    tooltip.enabled = @YES;
+    tooltip.useHTML = @YES;
+    tooltip.valueDecimals = @2;  // 保留2位小数
+    tooltip.backgroundColor = @"rgba(0, 0, 0, 0.5)";  // 50%不透明度的黑色背景
+    tooltip.borderColor = @"rgba(0, 0, 0, 0.5)";
+    tooltip.borderWidth = @1;
+    tooltip.shadow = @NO;  // 无阴影
+    tooltip.style = [[AAStyle alloc] init];
+    tooltip.style.color = @"#ffffff";  // 白色文字
+    aaOptions.tooltip = tooltip;
 
     // 创建数据系列
     NSMutableArray<AASeriesElement *> *series = [NSMutableArray array];
@@ -894,10 +921,10 @@
     highSeries.marker = highMarker;
     [series addObject:highSeries];  // 🔑 始终添加到图例中
 
-    chartModel.series = series;
+    aaOptions.series = series;
 
-    // 绘制图表
-    [chartView aa_drawChartWithChartModel:chartModel];
+    // 🔥 使用 AAOptions 绘制图表
+    [chartView aa_drawChartWithOptions:aaOptions];
 
     NSLog(@"✅ %@阶跃响应图表配置完成: 低输入=%ld窗口, 高输入=%ld窗口, 显示点数=%lu",
           axisName, (long)lowWindowCount, (long)highWindowCount, (unsigned long)displayPoints);
@@ -1006,62 +1033,82 @@
     yawNoise = [self ensureNonNegativeValues:yawNoise];
 
     // 🔥 配置AAChartModel - 改为柱状直方图，Y轴从0开始
-    AAChartModel *chartModel = [[AAChartModel alloc] init];
-    chartModel.chartType = AAChartTypeColumn;  // 🔥 柱状直方图
-    chartModel.title = @"噪声频谱";
-    chartModel.subtitle = @"陀螺仪噪声分析 (真实数据)";
-    chartModel.categories = freqCategories;
-    chartModel.yAxisTitle = @"噪声功率";  // 🔥 简化标题
-    chartModel.yAxisMin = @0;  // 🔥 Y轴从0开始
-    chartModel.animationType = AAChartAnimationEaseOutCubic;
-    chartModel.animationDuration = @800;
+    // 使用 AAOptions 以获得更完整的 tooltip 样式控制
+    AAOptions *aaOptions = [[AAOptions alloc] init];
 
-    // 🔧 设置提示框：共享显示
-    chartModel.tooltipEnabled = @YES;
-    chartModel.tooltipShared = @NO;  // 单独显示每个数据点
+    // Chart 配置
+    aaOptions.chart = [[AAChart alloc] init];
+    aaOptions.chart.type = AAChartTypeColumn;
+    aaOptions.chart.animation = @NO;
+
+    // Title 配置
+    aaOptions.title = [[AATitle alloc] init];
+    aaOptions.title.text = @"噪声频谱";
+
+    // Subtitle 配置
+    AASubtitle *subtitle = [[AASubtitle alloc] init];
+    subtitle.text = @"陀螺仪噪声分析 (真实数据)";
+    aaOptions.subtitle = subtitle;
+
+    // X轴配置
+    AAXAxis *xAxis = [[AAXAxis alloc] init];
+    xAxis.categories = freqCategories;
+    aaOptions.xAxis = xAxis;
+
+    // Y轴配置
+    AAYAxis *yAxis = [[AAYAxis alloc] init];
+    yAxis.title = [[AAAxisTitle alloc] init];
+    yAxis.title.text = @"噪声功率";
+    yAxis.min = @0;
+    aaOptions.yAxis = yAxis;
+
+    // 🔧 Tooltip 配置：半透明黑色背景 + 2位小数
+    AATooltip *tooltip = [[AATooltip alloc] init];
+    tooltip.enabled = @YES;
+    tooltip.useHTML = @YES;  // 🔥 关键：启用HTML格式
+    tooltip.valueDecimals = @2;  // 保留2位小数
+    tooltip.backgroundColor = @"rgba(0, 0, 0, 0.5)";  // 50%不透明度的黑色背景
+    tooltip.borderColor = @"rgba(0, 0, 0, 0.5)";  // 边框同色
+    tooltip.borderWidth = @1;
+    tooltip.shadow = @NO;  // 无阴影
+    tooltip.style = [[AAStyle alloc] init];
+    tooltip.style.color = @"#ffffff";  // 白色文字
+    aaOptions.tooltip = tooltip;
 
     // 创建数据系列 - 只添加有数据的系列
-    // 🔥 柱状图不需要 fillOpacity，移除该属性
-    // 🔧 为每个系列配置 tooltip：保留2位小数，半透明样式
-    AATooltip *seriesTooltip = [[AATooltip alloc] init];
-    seriesTooltip.valueDecimals = @2;  // 保留2位小数
-    seriesTooltip.backgroundColor = @"rgba(0, 0, 0, 0.75)";  // 半透明黑色背景
-
     NSMutableArray<AASeriesElement *> *series = [NSMutableArray array];
 
     if (rollNoise.count > 0) {
         AASeriesElement *rollSeries = [[AASeriesElement alloc] init];
-        rollSeries.name = @"Roll";  // 🔥 简化图例名称
+        rollSeries.name = @"Roll";
         rollSeries.data = rollNoise;
         rollSeries.color = @"#FF6B6B";
-        rollSeries.tooltip = seriesTooltip;
         [series addObject:rollSeries];
     }
 
     if (pitchNoise.count > 0) {
         AASeriesElement *pitchSeries = [[AASeriesElement alloc] init];
-        pitchSeries.name = @"Pitch";  // 🔥 简化图例名称
+        pitchSeries.name = @"Pitch";
         pitchSeries.data = pitchNoise;
         pitchSeries.color = @"#4ECDC4";
-        pitchSeries.tooltip = seriesTooltip;
         [series addObject:pitchSeries];
     }
 
     if (yawNoise.count > 0) {
         AASeriesElement *yawSeries = [[AASeriesElement alloc] init];
-        yawSeries.name = @"Yaw";  // 🔥 简化图例名称
+        yawSeries.name = @"Yaw";
         yawSeries.data = yawNoise;
         yawSeries.color = @"#95E1D3";
-        yawSeries.tooltip = seriesTooltip;
         [series addObject:yawSeries];
     }
 
-    chartModel.series = series;
+    aaOptions.series = series;
 
     NSLog(@"🔍 [噪声图] chartModel.series.count = %lu", (unsigned long)series.count);
     NSLog(@"🔍 [噪声图] 准备绘制图表...");
 
-    [chartView aa_drawChartWithChartModel:chartModel];
+    // 🔥 使用 AAOptions 绘制图表
+    [chartView aa_drawChartWithOptions:aaOptions];
 
     NSLog(@"✅ [噪声图] 图表绘制完成");
 }
