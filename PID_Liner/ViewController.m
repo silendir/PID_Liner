@@ -8,6 +8,7 @@
 #import "ViewController.h"
 #import "BlackboxDecoder.h"
 #import "CSVHistoryViewController.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 @interface ViewController ()
 @property (nonatomic, strong) BlackboxDecoder *decoder;
@@ -23,6 +24,10 @@
     NSLog(@"本类为:%@",[NSString stringWithUTF8String:object_getClassName(self)]);
     self.decoder = [[BlackboxDecoder alloc] init];
     self.selectedSessionIndex = -1; // 默认全部
+    self.isUsingImportedFile = NO;  // 默认使用内置文件
+
+    // 🔥 启动时清理沙盒中上次导入的BBL文件（保留CSV文件）
+    [self cleanupImportedBBLFiles];
 
     [self setupUI];
     [self loadBBLFile];
@@ -93,6 +98,19 @@
     _progressView.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:_progressView];
 
+    // ========== 导入BBL文件按钮 ==========
+    _importButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [_importButton setTitle:@"📂 导入BBL文件" forState:UIControlStateNormal];
+    _importButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    _importButton.backgroundColor = [UIColor clearColor];
+    [_importButton setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    _importButton.layer.borderWidth = 1;
+    _importButton.layer.borderColor = [UIColor systemGray3Color].CGColor;
+    _importButton.layer.cornerRadius = 8;
+    _importButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [_importButton addTarget:self action:@selector(importButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_importButton];
+
     // ========== 设置约束 ==========
     [NSLayoutConstraint activateConstraints:@[
         // Session选择按钮
@@ -112,10 +130,16 @@
         [_statusLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
         [_statusLabel.topAnchor constraintEqualToAnchor:_convertButton.bottomAnchor constant:20],
 
+        // 导入按钮（在状态标签下方）
+        [_importButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [_importButton.topAnchor constraintEqualToAnchor:_statusLabel.bottomAnchor constant:15],
+        [_importButton.widthAnchor constraintEqualToConstant:200],
+        [_importButton.heightAnchor constraintEqualToConstant:36],
+
         // 进度条
         [_progressView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:40],
         [_progressView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-40],
-        [_progressView.topAnchor constraintEqualToAnchor:_statusLabel.bottomAnchor constant:12],
+        [_progressView.topAnchor constraintEqualToAnchor:_importButton.bottomAnchor constant:15],
         [_progressView.heightAnchor constraintEqualToConstant:4],
 
         // 日志文本视图
@@ -135,12 +159,26 @@
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *documentsDir = [paths firstObject];
 
-    // 查找BBL文件
-    NSString *bblPath = [documentsDir stringByAppendingPathComponent:@"001.bbl"];
+    // 🔥 优先查找沙盒中的BBL文件（用户导入的）
+    NSString *bblPath = nil;
+    self.isUsingImportedFile = NO;
 
-    // 如果Documents目录没有，尝试从Bundle读取
-    if (![[NSFileManager defaultManager] fileExistsAtPath:bblPath]) {
+    // 查找Documents目录下所有.bbl文件
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *documentsFiles = [fm contentsOfDirectoryAtPath:documentsDir error:nil];
+    for (NSString *file in documentsFiles) {
+        if ([file.pathExtension isEqualToString:@"bbl"]) {
+            bblPath = [documentsDir stringByAppendingPathComponent:file];
+            self.isUsingImportedFile = YES;
+            NSLog(@"📂 找到沙盒BBL文件: %@", file);
+            break;
+        }
+    }
+
+    // 如果沙盒没有，使用Bundle默认文件
+    if (!bblPath) {
         bblPath = [[NSBundle mainBundle] pathForResource:@"001" ofType:@"bbl"];
+        self.isUsingImportedFile = NO;
     }
 
     if (!bblPath || ![[NSFileManager defaultManager] fileExistsAtPath:bblPath]) {
@@ -148,6 +186,7 @@
         [_sessionSelectButton setTitle:@"无可用文件" forState:UIControlStateNormal];
         _sessionSelectButton.enabled = NO;
         _convertButton.enabled = NO;
+        _importButton.enabled = NO;
         return;
     }
 
@@ -186,8 +225,14 @@
     _selectedSessionIndex = -1; // 默认全部
     [self updateSessionButtonTitle];
 
+    // 🔥 显示文件名，区分内置/导入
     NSString *fileName = [_currentBBLPath lastPathComponent];
-    _statusLabel.text = [NSString stringWithFormat:@"📄 %@\n共 %lu 个 Session 可选", fileName, (unsigned long)_sessions.count];
+    NSString *fileLabel = _isUsingImportedFile ?
+        [NSString stringWithFormat:@"📄 %@ (已导入)", fileName] :
+        [NSString stringWithFormat:@"📄 %@", fileName];
+
+    _statusLabel.text = [NSString stringWithFormat:@"%@\n共 %lu 个 Session 可选",
+                          fileLabel, (unsigned long)_sessions.count];
 
     // 显示Session信息
     NSMutableString *logText = [NSMutableString stringWithString:@"=== Session 列表 ===\n\n"];
@@ -208,6 +253,16 @@
         title = @"选择 Session ▼";
     }
     [_sessionSelectButton setTitle:title forState:UIControlStateNormal];
+}
+
+/// 更新当前BBL状态显示（刷新蓝/绿按钮指向）
+- (void)updateCurrentBBLStatus {
+    // 更新Session按钮标题
+    [self updateSessionButtonTitle];
+
+    // 确保按钮可用
+    _sessionSelectButton.enabled = _sessions.count > 0;
+    _convertButton.enabled = _sessions.count > 0;
 }
 
 #pragma mark - Button Actions
@@ -405,6 +460,175 @@
                           baseName, timestamp, (long)sessionIndex + 1];
 
     return fileName;
+}
+
+#pragma mark - Import BBL File
+
+/// 清理沙盒中导入的BBL文件（启动时调用，保留CSV文件）
+- (void)cleanupImportedBBLFiles {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDir = [paths firstObject];
+
+    NSError *error = nil;
+    NSArray *files = [fm contentsOfDirectoryAtPath:documentsDir error:&error];
+
+    if (error) {
+        NSLog(@"⚠️ 无法读取Documents目录: %@", error.localizedDescription);
+        return;
+    }
+
+    NSInteger cleanedCount = 0;
+    for (NSString *file in files) {
+        if ([file.pathExtension isEqualToString:@"bbl"]) {
+            NSString *filePath = [documentsDir stringByAppendingPathComponent:file];
+            if ([fm removeItemAtPath:filePath error:nil]) {
+                cleanedCount++;
+                NSLog(@"🧹 清理导入文件: %@", file);
+            }
+        }
+    }
+
+    if (cleanedCount > 0) {
+        NSLog(@"✅ 清理了 %ld 个导入的BBL文件", (long)cleanedCount);
+    }
+}
+
+/// 导入按钮点击
+- (void)importButtonTapped:(UIButton *)sender {
+    NSLog(@"importButtonTapped() - 打开文件选择器");
+
+    // 🔥 使用旧的 API（iOS 11+），接受所有文件类型
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.data"]
+                                                                inMode:UIDocumentPickerModeImport];
+
+    picker.delegate = self;
+    picker.modalPresentationStyle = UIModalPresentationPageSheet;
+
+    [self presentViewController:picker animated:YES completion:^{
+        NSLog(@"文件选择器已弹出");
+    }];
+}
+
+#pragma mark - UIDocumentPickerDelegate
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller
+didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+
+    NSURL *sourceURL = urls.firstObject;
+    if (!sourceURL) {
+        return;
+    }
+
+    NSString *fileName = sourceURL.lastPathComponent;
+    NSLog(@"📂 用户选择文件: %@", fileName);
+
+    // 🔥 获取文件扩展名（小写）
+    NSString *extension = [fileName.pathExtension lowercaseString];
+
+    // 🔥 只接受 .bbl 和 .csv 文件
+    if (![extension isEqualToString:@"bbl"] && ![extension isEqualToString:@"csv"]) {
+        NSLog(@"❌ 文件类型错误: %@ (只支持.bbl和.csv文件)", extension);
+        _statusLabel.text = [NSString stringWithFormat:@"❌ 文件类型错误\n只能导入 .bbl 或 .csv 文件\n您选择了: .%@", extension];
+        return;
+    }
+
+    // 安全访问资源
+    [sourceURL startAccessingSecurityScopedResource];
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDir = [paths firstObject];
+
+    // 🔥 保留原文件名，复制到沙盒
+    NSString *destFileName = sourceURL.lastPathComponent;
+    NSString *destPath = [documentsDir stringByAppendingPathComponent:destFileName];
+
+    // 如果目标文件已存在，先删除
+    if ([fm fileExistsAtPath:destPath]) {
+        [fm removeItemAtPath:destPath error:nil];
+    }
+
+    NSError *error = nil;
+    BOOL success = [fm copyItemAtPath:sourceURL.path toPath:destPath error:&error];
+
+    [sourceURL stopAccessingSecurityScopedResource];
+
+    if (!success) {
+        NSLog(@"❌ 文件复制失败: %@", error.localizedDescription);
+        _statusLabel.text = [NSString stringWithFormat:@"❌ 导入失败: %@", error.localizedDescription];
+        return;
+    }
+
+    NSLog(@"✅ 文件复制成功: %@", destFileName);
+
+    // 🔥 统一处理：BBL 自动转换，CSV 验证后添加到历史记录
+    if ([extension isEqualToString:@"bbl"]) {
+        // BBL 文件：设置为当前文件，用户可选择转换
+        _currentBBLPath = destPath;
+        _isUsingImportedFile = YES;
+        [self loadSessionList];
+        _statusLabel.text = [NSString stringWithFormat:@"✅ 已导入: %@\n请在上方选择 Session 后点击转换", destFileName];
+    } else if ([extension isEqualToString:@"csv"]) {
+        // CSV 文件：验证是否是有效的 BBL CSV
+        if ([self validateBBLCSV:destPath]) {
+            // ✅ 有效的 CSV，保留在沙盒，历史记录可见
+            // 重新显示当前BBL的状态，保持蓝/绿按钮正确
+            [self updateCurrentBBLStatus];
+            _statusLabel.text = [NSString stringWithFormat:@"✅ CSV 已导入，可在历史记录查看\n%@", destFileName];
+            NSLog(@"✅ 验证通过: 有效的 BBL CSV 文件");
+        } else {
+            // ❌ 无效的 CSV：保留文件，重新显示当前BBL状态，蓝/绿按钮保持正确
+            [self updateCurrentBBLStatus];
+            NSString *currentFile = [_currentBBLPath lastPathComponent];
+            _statusLabel.text = [NSString stringWithFormat:@"⚠️ 不是飞行数据CSV\n文件已保留但无法使用\n当前操作: %@ (%lu个Session)",
+                                  currentFile, (unsigned long)_sessions.count];
+            NSLog(@"❌ 验证失败: 不是 BBL 转换的 CSV，文件保留，当前操作对象不变");
+        }
+    }
+}
+
+/// 验证 CSV 文件是否是 BBL 转换的（检查头部特征列）
+- (BOOL)validateBBLCSV:(NSString *)filePath {
+    // 🔥 读取 CSV 文件，检查是否包含 BBL CSV 的特征列
+    NSError *error = nil;
+    NSString *content = [NSString stringWithContentsOfFile:filePath
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:&error];
+    if (error || !content) {
+        NSLog(@"❌ 无法读取 CSV 文件: %@", error.localizedDescription);
+        return NO;
+    }
+
+    // 🔥 获取第一行（表头）
+    NSArray *lines = [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    if (lines.count == 0) {
+        return NO;
+    }
+
+    NSString *headerLine = lines[0];
+    // 🔥 检查是否包含 BBL CSV 的特征列
+    // BBL CSV 包含: time (us/ms), rcCommand, setpoint, gyroADC, motor 等
+    BOOL hasTimeColumn = [headerLine containsString:@"time (us)"] ||
+                         [headerLine containsString:@"time (ms)"] ||
+                         [headerLine containsString:@"time[ms]"] ||
+                         [headerLine containsString:@"time[us]"];
+    BOOL hasDataColumn = [headerLine containsString:@"rcCommand"] ||
+                         [headerLine containsString:@"setpoint"] ||
+                         [headerLine containsString:@"gyroADC"] ||
+                         [headerLine containsString:@"motor["];
+
+    BOOL isValid = hasTimeColumn && hasDataColumn;
+
+    NSLog(@"📋 CSV 表头: %@", [headerLine substringToIndex:MIN(headerLine.length, 150)]);
+    NSLog(@"🔍 包含 time 列: %@, 包含数据列: %@", hasTimeColumn ? @"✅" : @"❌", hasDataColumn ? @"✅" : @"❌");
+
+    return isValid;
+}
+
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    NSLog(@"documentPickerWasCancelled() - 用户取消选择");
 }
 
 @end
