@@ -1571,4 +1571,102 @@ static double getMachFrequency(void) {
     return transposed;
 }
 
+#pragma mark - 响应质量过滤 (对应Python的resp_quality)
+
+/**
+ * 计算窗口响应与参考响应的平均绝对偏差
+ * 对应Python: (np.abs(spec_sm - resp_sm[0]).mean(axis=1))
+ *
+ * @param windowResp 单个窗口的阶跃响应数据
+ * @param referenceResp 参考响应（通常是初步计算的平均响应）
+ * @return 平均绝对偏差
+ */
++ (double)meanAbsoluteDeviation:(NSArray<NSNumber *> *)windowResp
+                     fromReference:(NSArray<NSNumber *> *)referenceResp {
+    if (!windowResp || !referenceResp || windowResp.count != referenceResp.count) {
+        return 0.0;
+    }
+
+    NSInteger n = MIN(windowResp.count, referenceResp.count);
+    double sumDeviation = 0.0;
+
+    for (NSInteger i = 0; i < n; i++) {
+        double windowVal = [windowResp[i] doubleValue];
+        double refVal = [referenceResp[i] doubleValue];
+        sumDeviation += fabs(windowVal - refVal);
+    }
+
+    return sumDeviation / n;
+}
+
+/**
+ * 计算响应质量mask
+ * 对应Python: resp_quality = -to_mask((abs(spec_sm - resp_sm[0]).mean(axis=1)).clip(0.5-1e-9, 0.5)) + 1
+ *
+ * 逻辑：
+ * - 计算每个窗口与参考响应的平均偏差
+ * - 偏差 <= 0.5: quality = 1.0 (保留)
+ * - 偏差 > 0.5: quality = 0.0 (过滤)
+ *
+ * @param stepResponse 所有窗口的阶跃响应
+ * @param referenceResp 参考响应（通常是初步计算的平均响应）
+ * @return 质量mask数组，1.0表示保留，0.0表示过滤
+ */
++ (NSArray<NSNumber *> *)calculateResponseQualityMask:(NSArray<NSArray<NSNumber *> *> *)stepResponse
+                                       referenceResponse:(NSArray<NSNumber *> *)referenceResp {
+    if (!stepResponse || stepResponse.count == 0 || !referenceResp) {
+        return @[];
+    }
+
+    double threshold = 0.5;  // Python使用的阈值
+    NSMutableArray<NSNumber *> *qualityMask = [NSMutableArray arrayWithCapacity:stepResponse.count];
+    NSInteger filteredCount = 0;
+
+    for (NSArray<NSNumber *> *windowResp in stepResponse) {
+        double deviation = [self meanAbsoluteDeviation:windowResp fromReference:referenceResp];
+        // Python: -to_mask(clip(..., 0.5-1e-9, 0.5)) + 1
+        // 简化: 偏差 <= threshold: quality=1, 偏差 > threshold: quality=0
+        double quality = (deviation <= threshold) ? 1.0 : 0.0;
+
+        [qualityMask addObject:@(quality)];
+
+        if (quality < 0.5) {
+            filteredCount++;
+            NSLog(@"⚠️ [质量过滤] 窗口[%ld] 偏差=%.3f > %.3f，已过滤",
+                  (long)(qualityMask.count - 1), deviation, threshold);
+        }
+    }
+
+    NSLog(@"🔍 [质量过滤] 总窗口=%lu, 过滤=%ld, 保留=%lu",
+          (unsigned long)stepResponse.count, (long)filteredCount,
+          (unsigned long)(stepResponse.count - filteredCount));
+
+    return [qualityMask copy];
+}
+
+/**
+ * 组合两个mask（按元素相乘）
+ * 对应Python: mask1 * mask2
+ *
+ * @param mask1 第一个mask
+ * @param mask2 第二个mask
+ * @return 组合后的mask
+ */
++ (NSArray<NSNumber *> *)combineMasks:(NSArray<NSNumber *> *)mask1
+                            withMask:(NSArray<NSNumber *> *)mask2 {
+    if (!mask1 || mask1.count == 0) return mask2 ?: @[];
+    if (!mask2 || mask2.count == 0) return mask1;
+
+    NSInteger count = MIN(mask1.count, mask2.count);
+    NSMutableArray<NSNumber *> *combined = [NSMutableArray arrayWithCapacity:count];
+
+    for (NSInteger i = 0; i < count; i++) {
+        double m1 = [mask1[i] doubleValue];
+        double m2 = [mask2[i] doubleValue];
+        [combined addObject:@(m1 * m2)];
+    }
+
+    return [combined copy];
+}
+
 @end

@@ -745,13 +745,33 @@
     NSArray<NSNumber *> *vertRange = @[@(-1.5), @(3.5)];
     // 🔥 使用实际采样率
     double sampleRate = _parsedData.sampleRate > 0 ? _parsedData.sampleRate : 8000.0;
+
+    // 🔥 新增：质量过滤机制（对应Python的resp_quality）
+    // 第一步：使用初步mask计算初始平均响应
+    NSArray<NSNumber *> *respLowInitial = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
+        responseResult.stepResponse
+        avgTime:responseResult.avgTime
+        dataMask:respLowMask  // 使用low mask
+        vertRange:vertRange
+        vertBins:1000
+        sampleRate:sampleRate];
+
+    // 第二步：计算响应质量mask（过滤偏离平均响应过大的窗口）
+    NSArray<NSNumber *> *qualityMask = [PIDTraceAnalyzer calculateResponseQualityMask:
+        responseResult.stepResponse
+        referenceResponse:respLowInitial];
+
+    // 第三步：组合low mask和quality mask
+    NSArray<NSNumber *> *respLowMaskCombined = [PIDTraceAnalyzer combineMasks:respLowMask withMask:qualityMask];
+
+    // 第四步：使用组合后的mask重新计算最终响应
     NSArray<NSNumber *> *respLow = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
         responseResult.stepResponse
         avgTime:responseResult.avgTime
-        dataMask:respLowMask  // 🔑 使用low mask
+        dataMask:respLowMaskCombined  // 🔑 使用low + quality组合mask
         vertRange:vertRange
         vertBins:1000
-        sampleRate:sampleRate];  // 🔥 传递实际采样率
+        sampleRate:sampleRate];
 
     // 🔍 调试：打印respLow的数据范围
     if (respLow && respLow.count > 0) {
@@ -762,7 +782,7 @@
             if (v < minVal) minVal = v;
             if (v > maxVal) maxVal = v;
         }
-        NSLog(@"🔍 [%@] respLow范围: [%.3f, %.3f]，起点=%.3f，终点=%.3f",
+        NSLog(@"🔍 [%@] respLow范围(质量过滤后): [%.3f, %.3f]，起点=%.3f，终点=%.3f",
               axisName, minVal, maxVal, [respLow[0] doubleValue], [respLow[respLow.count-1] doubleValue]);
     }
 
@@ -779,13 +799,34 @@
 
     if (highWindowCount >= 10) {  // 至少10个窗口
         NSLog(@"🔍 [%@] 开始计算高输入响应... (%ld窗口)", axisName, (long)highWindowCount);
+
+        // 🔥 新增：高输入响应也应用质量过滤
+        // 第一步：计算初始高输入响应
+        NSArray<NSNumber *> *respHighInitial = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
+            responseResult.stepResponse
+            avgTime:responseResult.avgTime
+            dataMask:respHighMask
+            vertRange:vertRange
+            vertBins:1000
+            sampleRate:sampleRate];
+
+        // 第二步：计算质量mask（使用同一个参考响应respLowInitial，因为所有窗口应该趋向同一个稳态响应）
+        NSArray<NSNumber *> *qualityMaskHigh = [PIDTraceAnalyzer calculateResponseQualityMask:
+            responseResult.stepResponse
+            referenceResponse:respLowInitial];
+
+        // 第三步：组合high mask和quality mask
+        NSArray<NSNumber *> *respHighMaskCombined = [PIDTraceAnalyzer combineMasks:respHighMask withMask:qualityMaskHigh];
+
+        // 第四步：使用组合后的mask重新计算最终高输入响应
         respHigh = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
             responseResult.stepResponse
             avgTime:responseResult.avgTime
-            dataMask:respHighMask  // 🔑 使用high mask
+            dataMask:respHighMaskCombined  // 🔑 使用high + quality组合mask
             vertRange:vertRange
             vertBins:1000
-            sampleRate:sampleRate];  // 🔥 传递实际采样率
+            sampleRate:sampleRate];
+
         hasHighData = YES;
 
         // 🔍 调试：打印respHigh的数据范围
