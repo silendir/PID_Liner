@@ -10,7 +10,6 @@
 #import "PIDCSVParser.h"
 #import "PIDTraceAnalyzer.h"
 #import "PIDDataModels.h"
-#import "PIDGaussianFilter.h"
 #import <objc/runtime.h>
 #import <AAChartKit/AAChartKit.h>
 
@@ -766,20 +765,15 @@
     NSArray<NSNumber *> *respLowMaskCombined = [PIDTraceAnalyzer combineMasks:respLowMask withMask:qualityMask];
 
     // 第四步：使用组合后的mask重新计算最终响应
-    NSArray<NSNumber *> *respLowRaw = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
+    // 🔥 加权平均内部已经应用了高斯平滑（对histogram2d），不需要额外平滑
+    // 额外平滑会导致边缘效应，使起点不为0
+    NSArray<NSNumber *> *respLow = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
         responseResult.stepResponse
         avgTime:responseResult.avgTime
         dataMask:respLowMaskCombined  // 🔑 使用low + quality组合mask
         vertRange:vertRange
         vertBins:1000
         sampleRate:sampleRate];
-
-    // 🔥 关键修复：对加权平均结果应用高斯平滑（匹配Python的绘图效果）
-    // Python的plt.plot虽然绘制直线，但加权平均结果本身已经通过histogram2d+gaussian_filter平滑
-    // iOS的加权平均结果仍可能有统计波动，需要额外平滑使曲线更平缓
-    PIDGaussianFilter *smoother = [[PIDGaussianFilter alloc] init];
-    // sigma=3提供适度平滑，避免过度平滑导致失真
-    NSArray<NSNumber *> *respLow = [smoother filter:respLowRaw sigma:3.0 mode:@"constant"];
 
     // 🔍 调试：打印respLow的数据范围
     if (respLow && respLow.count > 0) {
@@ -827,16 +821,14 @@
         NSArray<NSNumber *> *respHighMaskCombined = [PIDTraceAnalyzer combineMasks:respHighMask withMask:qualityMaskHigh];
 
         // 第四步：使用组合后的mask重新计算最终高输入响应
-        NSArray<NSNumber *> *respHighRaw = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
+        // 🔥 加权平均内部已经应用了高斯平滑，不需要额外平滑
+        respHigh = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:
             responseResult.stepResponse
             avgTime:responseResult.avgTime
             dataMask:respHighMaskCombined  // 🔑 使用high + quality组合mask
             vertRange:vertRange
             vertBins:1000
             sampleRate:sampleRate];
-
-        // 🔥 关键修复：对高输入响应也应用高斯平滑
-        respHigh = [smoother filter:respHighRaw sigma:3.0 mode:@"constant"];
 
         hasHighData = YES;
 
@@ -867,32 +859,58 @@
         }
     }
 
-    // 降采样到100个点用于显示
-    NSInteger displayPoints = 100;
+    // 🔥 使用 50 个显示点 + 分块平均降采样（保留精度）
+    // 观感最佳：50 点 + AAChartTypeLine
+    NSInteger displayPoints = 50;
     NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:displayPoints];
     NSMutableArray<NSNumber *> *displayLowData = [NSMutableArray arrayWithCapacity:displayPoints];
     NSMutableArray<NSNumber *> *displayHighData = hasHighData ? [NSMutableArray arrayWithCapacity:displayPoints] : nil;
 
     double duration = 0.5;  // 响应时长0.5秒
+    NSInteger pointsPerBlock = (respLow.count - 1) / (displayPoints - 1);
+
     for (NSInteger i = 0; i < displayPoints; i++) {
         double t = (i * duration) / (displayPoints - 1);
         [timeCategories addObject:[NSString stringWithFormat:@"%.3f", t]];
 
-        // 降采样低输入数据
-        NSInteger srcIndex = (i * respLow.count) / displayPoints;
-        if (srcIndex < respLow.count) {
-            [displayLowData addObject:respLow[srcIndex]];
+        if (i == 0) {
+            // 第一个点直接取原始值（确保起点为0）
+            [displayLowData addObject:respLow[0]];
+            if (hasHighData && respHigh && displayHighData) {
+                [displayHighData addObject:respHigh[0]];
+            }
         } else {
-            [displayLowData addObject:@0];
-        }
+            // 分块平均降采样
+            NSInteger startIdx = 1 + (i - 1) * pointsPerBlock;
+            NSInteger endIdx = MIN(1 + i * pointsPerBlock, respLow.count);
 
-        // 降采样高输入数据
-        if (hasHighData && respHigh && displayHighData) {
-            NSInteger highSrcIndex = (i * respHigh.count) / displayPoints;
-            if (highSrcIndex < respHigh.count) {
-                [displayHighData addObject:respHigh[highSrcIndex]];
+            if (startIdx < respLow.count && endIdx > startIdx) {
+                double sum = 0.0;
+                NSInteger count = 0;
+                for (NSInteger j = startIdx; j < endIdx; j++) {
+                    sum += [respLow[j] doubleValue];
+                    count++;
+                }
+                [displayLowData addObject:@(sum / count)];
             } else {
-                [displayHighData addObject:@0];
+                [displayLowData addObject:respLow[respLow.count - 1]];
+            }
+
+            if (hasHighData && respHigh && displayHighData) {
+                NSInteger startHigh = 1 + (i - 1) * pointsPerBlock;
+                NSInteger endHigh = MIN(1 + i * pointsPerBlock, respHigh.count);
+
+                if (startHigh < respHigh.count && endHigh > startHigh) {
+                    double sum = 0.0;
+                    NSInteger count = 0;
+                    for (NSInteger j = startHigh; j < endHigh; j++) {
+                        sum += [respHigh[j] doubleValue];
+                        count++;
+                    }
+                    [displayHighData addObject:@(sum / count)];
+                } else {
+                    [displayHighData addObject:respHigh[respHigh.count - 1]];
+                }
             }
         }
     }
@@ -997,8 +1015,8 @@
     // 🔥 使用 AAOptions 绘制图表
     [chartView aa_drawChartWithOptions:aaOptions];
 
-    NSLog(@"✅ %@阶跃响应图表配置完成: 低输入=%ld窗口, 高输入=%ld窗口, 显示点数=%lu",
-          axisName, (long)lowWindowCount, (long)highWindowCount, (unsigned long)displayPoints);
+    NSLog(@"✅ %@阶跃响应图表配置完成: 低输入=%ld窗口, 高输入=%ld窗口, 显示点数=%ld",
+          axisName, (long)lowWindowCount, (long)highWindowCount, (long)displayPoints);
 }
 
 /**
