@@ -6,6 +6,7 @@
 //
 
 #import "AppDelegate.h"
+#import <SVProgressHUD/SVProgressHUD.h>
 
 @interface AppDelegate ()
 
@@ -15,7 +16,11 @@
 
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    // Override point for customization after application launch.
+    // 🔥 配置 SVProgressHUD
+    [SVProgressHUD setDefaultStyle:SVProgressHUDStyleDark];  // 深色风格，适配各种背景
+    [SVProgressHUD setDefaultMaskType:SVProgressHUDMaskTypeClear];  // 清除遮罩类型
+    [SVProgressHUD setMinimumDismissTimeInterval:0.5];  // 最小显示时间
+
     return YES;
 }
 

@@ -12,6 +12,7 @@
 #import "PIDDataModels.h"
 #import <objc/runtime.h>
 #import <AAChartKit/AAChartKit.h>
+#import <SVProgressHUD/SVProgressHUD.h>
 
 @interface PIDAnalysisViewController () <UITabBarControllerDelegate>
 
@@ -35,6 +36,9 @@
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *retryButton;
+
+// 🔥 新增：响应图显示点数切换
+@property (nonatomic, assign) NSInteger responseDisplayPoints;  // 50 或 100
 
 @end
 
@@ -63,6 +67,14 @@
 
     self.title = @"PID分析";
     self.view.backgroundColor = [UIColor systemBackgroundColor];
+
+    // 🔥 从 UserDefaults 读取显示点数偏好，默认 50
+    NSInteger savedPoints = [[NSUserDefaults standardUserDefaults] integerForKey:@"responseDisplayPoints"];
+    // 范围检查：50 ~ 1000，默认 50
+    if (savedPoints < 50 || savedPoints > 1000) {
+        savedPoints = 50;
+    }
+    _responseDisplayPoints = savedPoints;
 
     [self setupUI];
     [self setupTabBarController];
@@ -192,6 +204,47 @@
     UIViewController *vc = [[UIViewController alloc] init];
     vc.view.backgroundColor = [UIColor systemBackgroundColor];
 
+    // 🔥 创建固定在顶部的滑块容器
+    UIView *sliderContainer = [[UIView alloc] init];
+    sliderContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    sliderContainer.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    sliderContainer.layer.cornerRadius = 8;
+    [vc.view addSubview:sliderContainer];
+
+    // 标题标签
+    UILabel *sliderLabel = [[UILabel alloc] init];
+    sliderLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    sliderLabel.font = [UIFont systemFontOfSize:13];
+    sliderLabel.text = [NSString stringWithFormat:@"显示精度: %ld 点", (long)_responseDisplayPoints];
+    sliderLabel.textAlignment = NSTextAlignmentCenter;
+    [sliderContainer addSubview:sliderLabel];
+
+    // 滑块
+    UISlider *slider = [[UISlider alloc] init];
+    slider.translatesAutoresizingMaskIntoConstraints = NO;
+    slider.minimumValue = 50;
+    slider.maximumValue = 1000;  // 🔥 从 4000 改为 1000
+    slider.value = _responseDisplayPoints;
+    // 🔥 值改变时只更新标签，不触发刷新
+    [slider addTarget:self action:@selector(responseDisplayPointsSliderChanged:) forControlEvents:UIControlEventValueChanged];
+    // 🔥 松手时立即显示 HUD 并刷新
+    [slider addTarget:self action:@selector(responseDisplayPointsSliderTouchUp:) forControlEvents:UIControlEventTouchUpInside];
+    [slider addTarget:self action:@selector(responseDisplayPointsSliderTouchUp:) forControlEvents:UIControlEventTouchUpOutside];
+    [sliderContainer addSubview:slider];
+
+    // 预设说明标签
+    UILabel *presetsLabel = [[UILabel alloc] init];
+    presetsLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    presetsLabel.font = [UIFont systemFontOfSize:11];
+    presetsLabel.text = @"50 ← 平滑 | 精确 → 1000";
+    presetsLabel.textColor = [UIColor secondaryLabelColor];
+    presetsLabel.textAlignment = NSTextAlignmentCenter;
+    [sliderContainer addSubview:presetsLabel];
+
+    // 保存控件引用
+    objc_setAssociatedObject(vc, "displayPointsSlider", slider, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(vc, "displayPointsSliderLabel", sliderLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     // 创建滚动视图以容纳三个图表
     UIScrollView *scrollView = [[UIScrollView alloc] init];
     scrollView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -245,9 +298,26 @@
         [contentView.bottomAnchor constraintEqualToAnchor:yawChartView.bottomAnchor constant:spacing]
     ]];
 
-    // 设置滚动视图约束
+    // 🔥 设置滑块容器约束（固定在顶部）
     [NSLayoutConstraint activateConstraints:@[
-        [scrollView.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor],
+        [sliderContainer.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:10],
+        [sliderContainer.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:15],
+        [sliderContainer.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-15],
+        [sliderContainer.heightAnchor constraintEqualToConstant:70],
+        [sliderLabel.topAnchor constraintEqualToAnchor:sliderContainer.topAnchor constant:8],
+        [sliderLabel.leadingAnchor constraintEqualToAnchor:sliderContainer.leadingAnchor constant:10],
+        [sliderLabel.trailingAnchor constraintEqualToAnchor:sliderContainer.trailingAnchor constant:-10],
+        [slider.topAnchor constraintEqualToAnchor:sliderLabel.bottomAnchor constant:4],
+        [slider.leadingAnchor constraintEqualToAnchor:sliderContainer.leadingAnchor constant:15],
+        [slider.trailingAnchor constraintEqualToAnchor:sliderContainer.trailingAnchor constant:-15],
+        [presetsLabel.topAnchor constraintEqualToAnchor:slider.bottomAnchor constant:2],
+        [presetsLabel.leadingAnchor constraintEqualToAnchor:sliderContainer.leadingAnchor constant:10],
+        [presetsLabel.trailingAnchor constraintEqualToAnchor:sliderContainer.trailingAnchor constant:-10],
+    ]];
+
+    // 设置滚动视图约束（从滑块容器下方开始）
+    [NSLayoutConstraint activateConstraints:@[
+        [scrollView.topAnchor constraintEqualToAnchor:sliderContainer.bottomAnchor constant:10],
         [scrollView.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor],
         [scrollView.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor],
         [scrollView.bottomAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.bottomAnchor],
@@ -859,9 +929,9 @@
         }
     }
 
-    // 🔥 使用 50 个显示点 + 分块平均降采样（保留精度）
-    // 观感最佳：50 点 + AAChartTypeLine
-    NSInteger displayPoints = 50;
+    // 🔥 使用可配置的显示点数 + 分块平均降采样（保留精度）
+    // 通过 UISegmentedControl 切换：50点(平滑) 或 100点(精确)
+    NSInteger displayPoints = _responseDisplayPoints;
     NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:displayPoints];
     NSMutableArray<NSNumber *> *displayLowData = [NSMutableArray arrayWithCapacity:displayPoints];
     NSMutableArray<NSNumber *> *displayHighData = hasHighData ? [NSMutableArray arrayWithCapacity:displayPoints] : nil;
@@ -1017,6 +1087,49 @@
 
     NSLog(@"✅ %@阶跃响应图表配置完成: 低输入=%ld窗口, 高输入=%ld窗口, 显示点数=%ld",
           axisName, (long)lowWindowCount, (long)highWindowCount, (long)displayPoints);
+}
+
+/**
+ * 🔥 滑块值改变时只更新标签（不触发刷新）
+ * @param sender UISlider 控件
+ */
+- (void)responseDisplayPointsSliderChanged:(UISlider *)sender {
+    // 使用四舍五入取整
+    NSInteger newPoints = (NSInteger)round(sender.value);
+
+    if (_responseDisplayPoints != newPoints) {
+        _responseDisplayPoints = newPoints;
+
+        // 保存到 UserDefaults
+        [[NSUserDefaults standardUserDefaults] setInteger:newPoints forKey:@"responseDisplayPoints"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+
+        // 更新标签显示
+        UILabel *sliderLabel = objc_getAssociatedObject(_responseViewController, "displayPointsSliderLabel");
+        sliderLabel.text = [NSString stringWithFormat:@"显示精度: %ld 点", (long)newPoints];
+
+        NSLog(@"🔄 滑块值改变: %ld", (long)newPoints);
+    }
+}
+
+/**
+ * 🔥 滑块松手时立即显示 HUD 并刷新
+ * @param sender UISlider 控件
+ */
+- (void)responseDisplayPointsSliderTouchUp:(UISlider *)sender {
+    NSLog(@"🎯 滑块松手，触发刷新: %ld 点", (long)_responseDisplayPoints);
+
+    // 🔥 松手那一刻立即显示 HUD
+    [SVProgressHUD showWithStatus:@"调整精度中..."];
+
+    // 🔥 延迟一小段时间让 HUD 渲染，然后执行刷新
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // 执行刷新
+        [self updateCharts];
+
+        // 🔥 刷新完成后隐藏 HUD
+        [SVProgressHUD dismiss];
+    });
 }
 
 /**

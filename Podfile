@@ -9,6 +9,10 @@ target 'PID_Liner' do
   # 用于绘制PID分析图表（折线图、面积图等）
   pod 'AAChartKit', :git => 'https://github.com/AAChartModel/AAChartKit.git'
 
+  # 🔥 HUD 加载指示器 - SVProgressHUD
+  # 用于图表刷新时的加载提示
+  pod 'SVProgressHUD'
+
 end
 
 post_install do |installer|

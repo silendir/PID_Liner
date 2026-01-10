@@ -1,8 +1,16 @@
 PODS:
   - AAChartKit (9.2.0)
+  - SVProgressHUD (2.3.1):
+    - SVProgressHUD/Core (= 2.3.1)
+  - SVProgressHUD/Core (2.3.1)
 
 DEPENDENCIES:
   - AAChartKit (from `https://github.com/AAChartModel/AAChartKit.git`)
+  - SVProgressHUD
+
+SPEC REPOS:
+  trunk:
+    - SVProgressHUD
 
 EXTERNAL SOURCES:
   AAChartKit:
@@ -15,7 +23,8 @@ CHECKOUT OPTIONS:
 
 SPEC CHECKSUMS:
   AAChartKit: e3384633481b9e9727a10859649bef7782467ec2
+  SVProgressHUD: 4837c74bdfe2e51e8821c397825996a8d7de6e22
 
-PODFILE CHECKSUM: 8f0cfd8684594eee2cac6cf9a3089029bdf09530
+PODFILE CHECKSUM: cc21f86f45ea70cf9dbfee5be9065e6484e9d94f
 
 COCOAPODS: 1.16.2
