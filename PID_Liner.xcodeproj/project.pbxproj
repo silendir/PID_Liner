@@ -57,15 +57,11 @@
 		};
 		F6273D9D2EC5DDFF00C75207 /* PID_LinerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PID_LinerTests;
 			sourceTree = "<group>";
 		};
 		F6273DA72EC5DDFF00C75207 /* PID_LinerUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PID_LinerUITests;
 			sourceTree = "<group>";
 		};
@@ -279,9 +275,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-PID_Liner/Pods-PID_Liner-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-PID_Liner/Pods-PID_Liner-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

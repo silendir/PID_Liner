@@ -7,6 +7,8 @@
 
 #import "CSVHistoryViewController.h"
 #import "PIDAnalysisViewController.h"
+#import "CSVAliasManager.h"
+#import "CSVRenameView.h"
 
 #pragma mark - CSVRecord Implementation
 
@@ -28,6 +30,9 @@
 
         // 获取文件信息
         [self loadFileInfo];
+
+        // 🔥 加载别名
+        [self updateDisplayName];
     }
     return self;
 }
@@ -96,6 +101,24 @@
     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
     formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss";
     return [formatter stringFromDate:_createTime];
+}
+
+/**
+ * 🔥 更新显示名称（从别名管理器加载）
+ */
+- (void)updateDisplayName {
+    NSString *alias = [[CSVAliasManager sharedManager] aliasForFileName:_fileName];
+
+    if (alias && alias.length > 0) {
+        // 有别名，使用别名（添加 .csv 后缀）
+        NSString *aliasWithExt = [alias stringByAppendingPathExtension:@"csv"];
+        _displayName = aliasWithExt;
+        _hasCustomName = YES;
+    } else {
+        // 无别名，使用原文件名
+        _displayName = _fileName;
+        _hasCustomName = NO;
+    }
 }
 
 @end
@@ -271,7 +294,8 @@
 
     CSVRecord *record = _csvRecords[indexPath.row];
 
-    config.text = record.fileName;
+    // 🔥 使用显示名称（别名或原文件名）
+    config.text = record.displayName;
     config.secondaryText = [NSString stringWithFormat:@"Session %ld | %@ | %ld 行\n%@",
                             (long)record.sessionIndex + 1,
                             [record formattedFileSize],
@@ -338,17 +362,7 @@
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
     trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 
-    // 删除操作
-    UIContextualAction *deleteAction = [UIContextualAction
-        contextualActionWithStyle:UIContextualActionStyleDestructive
-        title:@"删除"
-        handler:^(UIContextualAction *action, UIView *sourceView, void (^completionHandler)(BOOL)) {
-            [self deleteRecordAtIndexPath:indexPath];
-            completionHandler(YES);
-        }];
-    deleteAction.image = [UIImage systemImageNamed:@"trash"];
-
-    // 分享操作
+    // 🔥 分享操作（最左侧）
     UIContextualAction *shareAction = [UIContextualAction
         contextualActionWithStyle:UIContextualActionStyleNormal
         title:@"分享"
@@ -359,7 +373,29 @@
     shareAction.backgroundColor = [UIColor systemBlueColor];
     shareAction.image = [UIImage systemImageNamed:@"square.and.arrow.up"];
 
-    return [UISwipeActionsConfiguration configurationWithActions:@[deleteAction, shareAction]];
+    // 🔥 重命名操作（中间）
+    UIContextualAction *renameAction = [UIContextualAction
+        contextualActionWithStyle:UIContextualActionStyleNormal
+        title:@"重命名"
+        handler:^(UIContextualAction *action, UIView *sourceView, void (^completionHandler)(BOOL)) {
+            [self renameRecordAtIndexPath:indexPath];
+            completionHandler(YES);
+        }];
+    renameAction.backgroundColor = [UIColor systemOrangeColor];
+    renameAction.image = [UIImage systemImageNamed:@"pencil"];
+
+    // 删除操作（最右侧，红色）
+    UIContextualAction *deleteAction = [UIContextualAction
+        contextualActionWithStyle:UIContextualActionStyleDestructive
+        title:@"删除"
+        handler:^(UIContextualAction *action, UIView *sourceView, void (^completionHandler)(BOOL)) {
+            [self deleteRecordAtIndexPath:indexPath];
+            completionHandler(YES);
+        }];
+    deleteAction.image = [UIImage systemImageNamed:@"trash"];
+
+    // 顺序：分享 → 重命名 → 删除
+    return [UISwipeActionsConfiguration configurationWithActions:@[shareAction, renameAction, deleteAction]];
 }
 
 #pragma mark - Actions
@@ -388,8 +424,36 @@
     CSVRecord *record = _csvRecords[indexPath.row];
     NSURL *fileURL = [NSURL fileURLWithPath:record.filePath];
 
+    // 🔥 如果有别名，创建临时副本使用别名文件名
+    NSURL *shareURL = fileURL;
+    NSString *tempFilePath = nil;
+
+    if (record.hasCustomName) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+
+        // 创建临时文件路径
+        NSString *tempDir = NSTemporaryDirectory();
+        tempFilePath = [tempDir stringByAppendingPathComponent:record.displayName];
+
+        // 删除可能存在的旧临时文件
+        if ([fm fileExistsAtPath:tempFilePath]) {
+            [fm removeItemAtPath:tempFilePath error:nil];
+        }
+
+        // 复制文件到临时位置
+        NSError *error = nil;
+        [fm copyItemAtPath:record.filePath toPath:tempFilePath error:&error];
+
+        if (!error) {
+            shareURL = [NSURL fileURLWithPath:tempFilePath];
+            NSLog(@"📤 创建临时分享文件: %@", record.displayName);
+        } else {
+            NSLog(@"❌ 创建临时文件失败: %@", error.localizedDescription);
+        }
+    }
+
     UIActivityViewController *activityVC = [[UIActivityViewController alloc]
-        initWithActivityItems:@[fileURL]
+        initWithActivityItems:@[shareURL]
         applicationActivities:nil];
 
     // iPad适配
@@ -399,7 +463,70 @@
         activityVC.popoverPresentationController.sourceRect = cell.bounds;
     }
 
+    // 🔥 分享完成后清理临时文件
+    __block NSString *cleanupPath = tempFilePath;
+    [activityVC setCompletionWithItemsHandler:^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
+        if (cleanupPath) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                NSFileManager *fm = [NSFileManager defaultManager];
+                [fm removeItemAtPath:cleanupPath error:nil];
+                NSLog(@"🗑️ 清理临时分享文件");
+            });
+        }
+    }];
+
     [self presentViewController:activityVC animated:YES completion:nil];
+}
+
+/**
+ * 🔥 重命名 CSV 文件（显示别名弹窗）
+ */
+- (void)renameRecordAtIndexPath:(NSIndexPath *)indexPath {
+    CSVRecord *record = _csvRecords[indexPath.row];
+    [self showRenameAlertForRecord:record indexPath:indexPath];
+}
+
+/**
+ * 🔥 显示重命名弹窗 - 使用自定义 View
+ */
+- (void)showRenameAlertForRecord:(CSVRecord *)record indexPath:(NSIndexPath *)indexPath {
+    __weak typeof(self) weakSelf = self;
+
+    [CSVRenameView showWithRecord:record
+                        completion:^(NSString *alias) {
+        [weakSelf performRename:alias forRecord:record atIndexPath:indexPath];
+    }
+                   cancelCompletion:^{
+        // 取消，不做任何操作
+    }];
+}
+
+/**
+ * 🔥 执行重命名操作
+ * @param alias 用户输入的别名（可能为空）
+ * @param record 要重命名的记录
+ * @param indexPath 记录在列表中的位置
+ */
+- (void)performRename:(NSString *)alias forRecord:(CSVRecord *)record atIndexPath:(NSIndexPath *)indexPath {
+    if (alias.length > 0) {
+        // 🔥 有输入：设置别名（自动处理重复）
+        NSString *uniqueAlias = [[CSVAliasManager sharedManager] uniqueAliasWithBase:alias
+                                                                 excludingFileName:record.fileName];
+        [[CSVAliasManager sharedManager] setAlias:uniqueAlias forFileName:record.fileName];
+
+        NSLog(@"🏷️ 设置别名: %@ → %@", record.fileName, uniqueAlias);
+    } else {
+        // 🔥 输入为空：删除别名，还原原文件名
+        [[CSVAliasManager sharedManager] removeAliasForFileName:record.fileName];
+
+        NSLog(@"🏷️ 还原原名: %@", record.fileName);
+    }
+
+    // 更新记录的显示名称
+    [record updateDisplayName];
+
+    // 刷新对应 Cell
+    [_tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
 }
 
 - (void)showCSVPreview:(CSVRecord *)record {
