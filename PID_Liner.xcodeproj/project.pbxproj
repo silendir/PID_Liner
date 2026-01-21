@@ -358,9 +358,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6UZP8KCQ4U;
+				DEVELOPMENT_TEAM = F5522PDGEN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PID_Liner/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "PID-Liner";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
@@ -395,9 +396,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6UZP8KCQ4U;
+				DEVELOPMENT_TEAM = F5522PDGEN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PID_Liner/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "PID-Liner";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;

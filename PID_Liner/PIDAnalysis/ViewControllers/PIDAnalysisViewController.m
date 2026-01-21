@@ -36,6 +36,7 @@
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *retryButton;
+@property (nonatomic, strong) UIProgressView *progressView;  // 🔥 进度条
 
 // 🔥 新增：响应图显示点数切换
 @property (nonatomic, assign) NSInteger responseDisplayPoints;  // 50 或 100
@@ -121,6 +122,13 @@
     _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:_statusLabel];
 
+    // 🔥 进度条
+    _progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    _progressView.translatesAutoresizingMaskIntoConstraints = NO;
+    _progressView.progress = 0;
+    _progressView.hidden = YES;  // 初始隐藏
+    [self.view addSubview:_progressView];
+
     // 重试按钮（初始隐藏）
     _retryButton = [UIButton buttonWithType:UIButtonTypeSystem];
     [_retryButton setTitle:@"重试" forState:UIControlStateNormal];
@@ -133,13 +141,19 @@
     // 设置约束
     [NSLayoutConstraint activateConstraints:@[
         [_activityIndicator.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [_activityIndicator.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [_activityIndicator.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor constant:-30],
 
-        [_statusLabel.topAnchor constraintEqualToAnchor:_activityIndicator.bottomAnchor constant:20],
+        [_statusLabel.topAnchor constraintEqualToAnchor:_activityIndicator.bottomAnchor constant:16],
         [_statusLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:40],
         [_statusLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-40],
 
-        [_retryButton.topAnchor constraintEqualToAnchor:_statusLabel.bottomAnchor constant:20],
+        // 🔥 进度条约束
+        [_progressView.topAnchor constraintEqualToAnchor:_statusLabel.bottomAnchor constant:12],
+        [_progressView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:40],
+        [_progressView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-40],
+        [_progressView.heightAnchor constraintEqualToConstant:4],
+
+        [_retryButton.topAnchor constraintEqualToAnchor:_progressView.bottomAnchor constant:20],
         [_retryButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor]
     ]];
 }
@@ -367,6 +381,26 @@
     return vc;
 }
 
+#pragma mark - Progress
+
+/**
+ * 🔥 更新分析进度
+ * @param progress 进度值 (0.0 ~ 1.0)
+ * @param status 状态描述
+ */
+- (void)updateProgress:(float)progress status:(NSString *)status {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // 显示进度条
+        self.progressView.hidden = NO;
+        self.progressView.progress = progress;
+
+        // 更新状态文字
+        if (status) {
+            self.statusLabel.text = status;
+        }
+    });
+}
+
 #pragma mark - Analysis
 
 /**
@@ -374,13 +408,21 @@
  */
 - (void)parseAndAnalyze {
     [_activityIndicator startAnimating];
-    _statusLabel.text = @"正在解析CSV...";
+    _progressView.hidden = NO;
+    _progressView.progress = 0;
+    _statusLabel.text = @"正在解析 CSV 文件...";
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @try {
+            // 🔥 解析前更新进度 (0% → 10%)
+            [self updateProgress:0.05f status:@"正在读取 CSV 文件..."];
+
             // 解析CSV
             PIDCSVParser *parser = [PIDCSVParser parser];
             PIDCSVData *data = [parser parseCSV:self->_csvFilePath];
+
+            // 🔥 解析完成更新进度 (10% → 20%)
+            [self updateProgress:0.20f status:@"正在准备分析..."];
 
             dispatch_async(dispatch_get_main_queue(), ^{
                 self->_parsedData = data;
@@ -451,8 +493,18 @@
         NSArray<NSNumber *> *axisP1 = _parsedData.axisP1;
         NSArray<NSNumber *> *axisP2 = _parsedData.axisP2;
 
-        // Roll (轴0)
+        // 🔥 计数器，用于确定当前分析的是第几个轴
+        NSInteger axisCount = 0;
+        if (axisP0 && axisP0.count > 0) axisCount++;
+        if (axisP1 && axisP1.count > 0) axisCount++;
+        if (axisP2 && axisP2.count > 0) axisCount++;
+
+        // 🔥 分析进度范围：20% → 95%（每个轴约 25%）
+        float progressPerAxis = 0.75f / (axisCount > 0 ? axisCount : 3);
+
+        // Roll (轴0) - 20% → 45%
         if (axisP0 && axisP0.count > 0) {
+            [self updateProgress:0.20f status:@"正在分析 Roll 轴..."];
             [self analyzeAxis:0
                 withPValues:axisP0
                 analyzer:analyzer
@@ -460,10 +512,12 @@
                 overlap:overlap
                 responses:responses
                 spectrums:spectrums];
+            [self updateProgress:(0.20f + progressPerAxis) status:@"正在分析 Pitch 轴..."];
         }
 
-        // Pitch (轴1)
+        // Pitch (轴1) - 45% → 70%
         if (axisP1 && axisP1.count > 0) {
+            [self updateProgress:0.45f status:@"正在分析 Pitch 轴..."];
             [self analyzeAxis:1
                 withPValues:axisP1
                 analyzer:analyzer
@@ -471,10 +525,12 @@
                 overlap:overlap
                 responses:responses
                 spectrums:spectrums];
+            [self updateProgress:(0.45f + progressPerAxis) status:@"正在分析 Yaw 轴..."];
         }
 
-        // Yaw (轴2)
+        // Yaw (轴2) - 70% → 95%
         if (axisP2 && axisP2.count > 0) {
+            [self updateProgress:0.70f status:@"正在分析 Yaw 轴..."];
             [self analyzeAxis:2
                 withPValues:axisP2
                 analyzer:analyzer
@@ -482,6 +538,7 @@
                 overlap:overlap
                 responses:responses
                 spectrums:spectrums];
+            [self updateProgress:0.95f status:@"正在生成图表..."];
         }
 
         // 回到主线程更新UI
@@ -1343,9 +1400,17 @@
 #pragma mark - UI State
 
 - (void)showAnalysisComplete {
+    // 🔥 更新进度到 100%
+    _progressView.progress = 1.0;
+
     [_activityIndicator stopAnimating];
     _statusLabel.hidden = YES;
     _retryButton.hidden = YES;
+
+    // 🔥 隐藏进度条
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        _progressView.hidden = YES;
+    });
 
     // 显示Tab视图
     _tabBarController.view.hidden = NO;
