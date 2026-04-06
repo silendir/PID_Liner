@@ -57,15 +57,11 @@
 		};
 		F6273D9D2EC5DDFF00C75207 /* PID_LinerTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PID_LinerTests;
 			sourceTree = "<group>";
 		};
 		F6273DA72EC5DDFF00C75207 /* PID_LinerUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PID_LinerUITests;
 			sourceTree = "<group>";
 		};
@@ -279,9 +275,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-PID_Liner/Pods-PID_Liner-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-PID_Liner/Pods-PID_Liner-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -358,7 +358,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6UZP8KCQ4U;
+				DEVELOPMENT_TEAM = F5522PDGEN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PID_Liner/Info.plist;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -395,7 +395,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 6UZP8KCQ4U;
+				DEVELOPMENT_TEAM = F5522PDGEN;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PID_Liner/Info.plist;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
