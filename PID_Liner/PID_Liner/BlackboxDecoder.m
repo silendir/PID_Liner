@@ -64,6 +64,138 @@
 
 // 日志头实现
 @implementation BBLLogHeader
+
+#pragma mark - 便捷属性实现
+
+/// 从 configParameters 提取 PID 值
+- (NSDictionary *)currentPIDValues {
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    NSArray<NSString *> *axes = @[@"roll", @"pitch", @"yaw"];
+
+    for (NSString *axis in axes) {
+        NSMutableDictionary *axisPID = [NSMutableDictionary dictionary];
+
+        // 尝试多种可能的键名格式
+        // BF 4.5+: "roll_p", "roll_i", "roll_d", "roll_f"
+        // 旧格式: "rollPID: 42, 35, 20" (整个值包含逗号分隔的3个值)
+        NSString *pKey = [NSString stringWithFormat:@"%@_p", axis];
+        NSString *iKey = [NSString stringWithFormat:@"%@_i", axis];
+        NSString *dKey = [NSString stringWithFormat:@"%@_d", axis];
+        NSString *ffKey = [NSString stringWithFormat:@"%@_f", axis];
+        // BF 旧版本可能使用 d_min 和 d_max
+        NSString *dMinKey = [NSString stringWithFormat:@"d_min_%@", axis];
+        NSString *dMaxKey = [NSString stringWithFormat:@"%@_d_max", axis];
+
+        NSDictionary *params = self.configParameters;
+        if (!params) continue;
+
+        // P
+        NSString *pVal = params[pKey];
+        if (pVal) axisPID[@"p"] = @([pVal doubleValue]);
+
+        // I
+        NSString *iVal = params[iKey];
+        if (iVal) axisPID[@"i"] = @([iVal doubleValue]);
+
+        // D (d_min 在 BF 4.5 中是实际 D, d 在 BF 2025 中是基础 D)
+        NSString *dVal = params[dKey];
+        NSString *dMinVal = params[dMinKey];
+        NSString *dMaxVal = params[dMaxKey];
+        if (dVal) axisPID[@"d"] = @([dVal doubleValue]);
+        if (dMinVal) axisPID[@"d_min"] = @([dMinVal doubleValue]);
+        if (dMaxVal) axisPID[@"d_max"] = @([dMaxVal doubleValue]);
+
+        // FF
+        NSString *ffVal = params[ffKey];
+        if (ffVal) axisPID[@"ff"] = @([ffVal doubleValue]);
+
+        // 尝试旧格式: "rollPID: 42, 35, 20"
+        NSString *pidKey = [NSString stringWithFormat:@"%@PID", axis];
+        NSString *pidStr = params[pidKey];
+        if (pidStr && !axisPID[@"p"]) {
+            NSArray *parts = [pidStr componentsSeparatedByString:@","];
+            if (parts.count >= 1) axisPID[@"p"] = @([[parts[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] doubleValue]);
+            if (parts.count >= 2) axisPID[@"i"] = @([[parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] doubleValue]);
+            if (parts.count >= 3) axisPID[@"d"] = @([[parts[2] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] doubleValue]);
+        }
+
+        if (axisPID.count > 0) {
+            result[axis] = [axisPID copy];
+        }
+    }
+
+    return [result copy];
+}
+
+/// 从 configParameters 提取滤波器配置
+- (NSDictionary *)currentFilterValues {
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    NSDictionary *params = self.configParameters;
+    if (!params) return @{};
+
+    // D-term 滤波器
+    NSArray<NSString *> *filterKeys = @[
+        @"dterm_lpf1_hz", @"dterm_lpf2_hz",
+        @"dterm_lpf1_type", @"dterm_lpf2_type",
+        @"dterm_lpf1_static_hz", @"dterm_lpf2_static_hz",
+        @"dyn_lpf_dterm_min_hz", @"dyn_lpf_dterm_max_hz",
+        @"gyro_lpf1_hz", @"gyro_lpf1_type",
+        @"gyro_lpf2_hz", @"gyro_lpf2_type",
+        @"dyn_lpf_gyro_min_hz", @"dyn_lpf_gyro_max_hz"
+    ];
+
+    for (NSString *key in filterKeys) {
+        NSString *val = params[key];
+        if (val) {
+            result[key] = val;
+        }
+    }
+
+    return [result copy];
+}
+
+/// 从 firmwareRevision 解析固件版本代码
+- (NSInteger)firmwareVersionCode {
+    if (!self.firmwareRevision || self.firmwareRevision.length == 0) {
+        return 0;
+    }
+
+    NSString *rev = self.firmwareRevision;
+
+    // 尝试匹配 "Betaflight 4.5.0" -> 405
+    // 正则: 数字.数字
+    NSRegularExpression *regex = [NSRegularExpression
+        regularExpressionWithPattern:@"(\\d+)\\.(\\d+)"
+        options:0
+        error:nil];
+    NSTextCheckingResult *match = [regex firstMatchInString:rev
+        options:0
+        range:NSMakeRange(0, rev.length)];
+
+    if (match) {
+        NSString *major = [rev substringWithRange:[match rangeAtIndex:1]];
+        NSString *minor = [rev substringWithRange:[match rangeAtIndex:2]];
+        return [major integerValue] * 100 + [minor integerValue];
+    }
+
+    // 尝试 "Betaflight 2025.12" -> 202512
+    NSRegularExpression *yearRegex = [NSRegularExpression
+        regularExpressionWithPattern:@"(\\d{4})\\.(\\d+)"
+        options:0
+        error:nil];
+    NSTextCheckingResult *yearMatch = [yearRegex firstMatchInString:rev
+        options:0
+        range:NSMakeRange(0, rev.length)];
+
+    if (yearMatch) {
+        NSString *year = [rev substringWithRange:[yearMatch rangeAtIndex:1]];
+        NSString *month = [rev substringWithRange:[yearMatch rangeAtIndex:2]];
+        return [year integerValue] * 100 + [month integerValue];
+    }
+
+    return 0;
+}
+
 @end
 
 // 流读取器实现
@@ -872,6 +1004,41 @@
         self.logHeader.pIntervalStr = [[content substringFromIndex:11] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     } else if ([content hasPrefix:@"P ratio:"]) {
         self.logHeader.pRatioStr = [[content substringFromIndex:8] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    } else {
+        // 🔑 第2层：捕获所有未处理的配置行
+        // 格式1: "set roll_p = 42" (BF/INAV的set命令)
+        // 格式2: "rollPID: 42, 35, 20" (key:value)
+        // 格式3: "dterm_lpf1_hz: 110" (key:value)
+        if ([content hasPrefix:@"set "]) {
+            // 解析 "set key = value"
+            NSString *setLine = [content substringFromIndex:4]; // 跳过 "set "
+            NSRange eqRange = [setLine rangeOfString:@"="];
+            if (eqRange.location != NSNotFound) {
+                NSString *key = [[setLine substringToIndex:eqRange.location]
+                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                NSString *value = [[setLine substringFromIndex:eqRange.location + 1]
+                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                if (!self.logHeader.configParameters) {
+                    self.logHeader.configParameters = [NSMutableDictionary dictionary];
+                }
+                [(NSMutableDictionary *)self.logHeader.configParameters setObject:value forKey:key];
+            }
+        } else {
+            // 解析通用 key:value
+            NSRange colonRange = [content rangeOfString:@":"];
+            if (colonRange.location != NSNotFound && colonRange.location > 0) {
+                NSString *key = [[content substringToIndex:colonRange.location]
+                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                NSString *value = [[content substringFromIndex:colonRange.location + 1]
+                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                if (key.length > 0 && value.length > 0) {
+                    if (!self.logHeader.configParameters) {
+                        self.logHeader.configParameters = [NSMutableDictionary dictionary];
+                    }
+                    [(NSMutableDictionary *)self.logHeader.configParameters setObject:value forKey:key];
+                }
+            }
+        }
     }
 }
 

@@ -76,6 +76,26 @@
 
 @end
 
+#pragma mark - PIDResponseFeatures Implementation
+
+@implementation PIDResponseFeatures
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _overshoot = 0.0;
+        _riseTime = 0.0;
+        _settlingTime = 0.0;
+        _steadyState = 0.0;
+        _peakValue = 0.0;
+        _peakTime = 0.0;
+        _oscillationCount = 0;
+    }
+    return self;
+}
+
+@end
+
 #pragma mark - PIDSessionSummary Implementation
 
 @implementation PIDSessionSummary

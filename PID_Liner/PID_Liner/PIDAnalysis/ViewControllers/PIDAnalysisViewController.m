@@ -10,9 +10,13 @@
 #import "PIDCSVParser.h"
 #import "PIDTraceAnalyzer.h"
 #import "PIDDataModels.h"
+#import "PIDCurveDiagnostic.h"
+#import "PIDRecommendationEngine.h"
+#import "PIDCLIGenerator.h"
 #import <objc/runtime.h>
 #import <AAChartKit/AAChartKit.h>
 #import <SVProgressHUD/SVProgressHUD.h>
+#import <mach/mach_time.h>
 
 @interface PIDAnalysisViewController () <UITabBarControllerDelegate>
 
@@ -31,6 +35,15 @@
 @property (nonatomic, strong) PIDSpectrumResult *rollSpectrum;
 @property (nonatomic, strong) PIDSpectrumResult *pitchSpectrum;
 @property (nonatomic, strong) PIDSpectrumResult *yawSpectrum;
+
+// 🔑 第3~5层：诊断/推荐/CLI 数据
+@property (nonatomic, strong) PIDResponseFeatures *rollFeatures;
+@property (nonatomic, strong) PIDResponseFeatures *pitchFeatures;
+@property (nonatomic, strong) PIDResponseFeatures *yawFeatures;
+@property (nonatomic, strong) PIDTuningResult *rollTuningResult;
+@property (nonatomic, strong) PIDTuningResult *pitchTuningResult;
+@property (nonatomic, strong) PIDTuningResult *yawTuningResult;
+@property (nonatomic, copy) NSString *cliCommands;
 
 // UI状态
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
@@ -307,9 +320,30 @@
         objc_setAssociatedObject(vc, kChartViewKeys[i], chartView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 
-    // 设置内容视图底部约束（最后一个图表的底部）
+    // 设置内容视图底部约束（按钮的底部）
+    // 🔑 CLI复制按钮放在最下面
+    UIButton *cliCopyButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    cliCopyButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [cliCopyButton setTitle:@"📋 复制 CLI 调参命令" forState:UIControlStateNormal];
+    cliCopyButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    cliCopyButton.backgroundColor = [UIColor systemBlueColor];
+    [cliCopyButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    cliCopyButton.layer.cornerRadius = 10;
+    cliCopyButton.clipsToBounds = YES;
+    cliCopyButton.contentEdgeInsets = UIEdgeInsetsMake(12, 20, 12, 20);
+    cliCopyButton.hidden = YES;  // 初始隐藏，等诊断完成后显示
+    [cliCopyButton addTarget:self action:@selector(copyCLICommands) forControlEvents:UIControlEventTouchUpInside];
+    [contentView addSubview:cliCopyButton];
+
+    // 保存按钮引用
+    objc_setAssociatedObject(vc, "cliCopyButton", cliCopyButton, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     [NSLayoutConstraint activateConstraints:@[
-        [contentView.bottomAnchor constraintEqualToAnchor:yawChartView.bottomAnchor constant:spacing]
+        [cliCopyButton.topAnchor constraintEqualToAnchor:yawChartView.bottomAnchor constant:spacing],
+        [cliCopyButton.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
+        [cliCopyButton.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-20],
+        [cliCopyButton.heightAnchor constraintEqualToConstant:48],
+        [contentView.bottomAnchor constraintEqualToAnchor:cliCopyButton.bottomAnchor constant:spacing]
     ]];
 
     // 🔥 设置滑块容器约束（固定在顶部）
@@ -788,9 +822,18 @@
     }
 
     // 配置每个轴的图表
+    // 🔑 先执行诊断，生成预测曲线数据，再配置图表（这样图表可以一次性画出实线+虚线）
+    [self runDiagnosisPipeline];
+
     [self configureSingleAxisChart:0 responseResult:_rollResponse axisName:@"Roll" color:@"#FF6B6B"];
     [self configureSingleAxisChart:1 responseResult:_pitchResponse axisName:@"Pitch" color:@"#4ECDC4"];
     [self configureSingleAxisChart:2 responseResult:_yawResponse axisName:@"Yaw" color:@"#95E1D3"];
+
+    // 显示复制按钮
+    UIButton *cliButton = objc_getAssociatedObject(_responseViewController, "cliCopyButton");
+    if (cliButton && self.cliCommands.length > 0) {
+        cliButton.hidden = NO;
+    }
 }
 
 /**
@@ -902,6 +945,33 @@
         vertBins:1000
         sampleRate:sampleRate];
 
+    // 🔑 第1层验证：从曲线提取时域特征
+    PIDResponseFeatures *lowFeatures = [PIDTraceAnalyzer extractFeaturesFromResponse:respLow
+                                                                          sampleRate:sampleRate];
+    NSLog(@"📊 [%@ 低输入] 超调=%.1f%%, 上升=%.1fms, 建立=%.1fms, 震荡=%ld次, 稳态=%.3f, 峰值=%.3f",
+          axisName,
+          lowFeatures.overshoot * 100.0,
+          lowFeatures.riseTime,
+          lowFeatures.settlingTime,
+          (long)lowFeatures.oscillationCount,
+          lowFeatures.steadyState,
+          lowFeatures.peakValue);
+
+    // 🔑 存储特征到属性（供后续诊断使用）
+    switch (axisIndex) {
+        case 0: self.rollFeatures = lowFeatures; break;
+        case 1: self.pitchFeatures = lowFeatures; break;
+        case 2: self.yawFeatures = lowFeatures; break;
+    }
+
+    // 🔑 获取该轴的预测曲线结果（由 runDiagnosisPipeline 预先计算）
+    PIDTuningResult *tuningResult = nil;
+    switch (axisIndex) {
+        case 0: tuningResult = self.rollTuningResult; break;
+        case 1: tuningResult = self.pitchTuningResult; break;
+        case 2: tuningResult = self.yawTuningResult; break;
+    }
+
     // 🔍 调试：打印respLow的数据范围
     if (respLow && respLow.count > 0) {
         double minVal = [respLow[0] doubleValue];
@@ -959,6 +1029,20 @@
 
         hasHighData = YES;
 
+        // 🔑 第1层验证：高输入曲线特征提取
+        if (respHigh && respHigh.count > 10) {
+            PIDResponseFeatures *highFeatures = [PIDTraceAnalyzer extractFeaturesFromResponse:respHigh
+                                                                                    sampleRate:sampleRate];
+            NSLog(@"📊 [%@ 高输入] 超调=%.1f%%, 上升=%.1fms, 建立=%.1fms, 震荡=%ld次, 稳态=%.3f, 峰值=%.3f",
+                  axisName,
+                  highFeatures.overshoot * 100.0,
+                  highFeatures.riseTime,
+                  highFeatures.settlingTime,
+                  (long)highFeatures.oscillationCount,
+                  highFeatures.steadyState,
+                  highFeatures.peakValue);
+        }
+
         // 🔍 调试：打印respHigh的数据范围
         if (respHigh && respHigh.count > 0) {
             double minVal = [respHigh[0] doubleValue];
@@ -992,6 +1076,32 @@
     NSMutableArray<NSString *> *timeCategories = [NSMutableArray arrayWithCapacity:displayPoints];
     NSMutableArray<NSNumber *> *displayLowData = [NSMutableArray arrayWithCapacity:displayPoints];
     NSMutableArray<NSNumber *> *displayHighData = hasHighData ? [NSMutableArray arrayWithCapacity:displayPoints] : nil;
+
+    // 🔑 降采样预测曲线（与实线同样的 displayPoints）
+    NSArray<NSNumber *> *displayPredData = nil;
+    if (tuningResult && tuningResult.predictedCurve.count > 10) {
+        NSArray<NSNumber *> *predCurve = tuningResult.predictedCurve;
+        NSInteger pLen = predCurve.count;
+        NSInteger ppBlock = (pLen - 1) / (displayPoints - 1);
+        if (ppBlock < 1) ppBlock = 1;
+        NSMutableArray<NSNumber *> *predDisplay = [NSMutableArray arrayWithCapacity:displayPoints];
+        for (NSInteger j = 0; j < displayPoints; j++) {
+            if (j == 0) {
+                [predDisplay addObject:@0];
+            } else {
+                NSInteger si = 1 + (j - 1) * ppBlock;
+                NSInteger ei = MIN(1 + j * ppBlock, pLen);
+                if (si < pLen && ei > si) {
+                    double sum = 0; NSInteger cnt = 0;
+                    for (NSInteger k = si; k < ei; k++) { sum += [predCurve[k] doubleValue]; cnt++; }
+                    [predDisplay addObject:@(sum / cnt)];
+                } else {
+                    [predDisplay addObject:@([predCurve.lastObject doubleValue])];
+                }
+            }
+        }
+        displayPredData = [predDisplay copy];
+    }
 
     double duration = 0.5;  // 响应时长0.5秒
     NSInteger pointsPerBlock = (respLow.count - 1) / (displayPoints - 1);
@@ -1136,6 +1246,20 @@
     highMarker.radius = @0;
     highSeries.marker = highMarker;
     [series addObject:highSeries];  // 🔑 始终添加到图例中
+
+    // 🔑 预测虚线曲线（绿色虚线）
+    if (displayPredData) {
+        AASeriesElement *predSeries = [[AASeriesElement alloc] init];
+        predSeries.name = @"预测曲线 (CLI生效后)";
+        predSeries.data = displayPredData;
+        predSeries.color = @"#34C759";  // 绿色
+        predSeries.lineWidth = @2;
+        predSeries.dashStyle = @"Dash";  // 虚线
+        AAMarker *predMarker = [[AAMarker alloc] init];
+        predMarker.radius = @0;
+        predSeries.marker = predMarker;
+        [series addObject:predSeries];
+    }
 
     aaOptions.series = series;
 
@@ -1583,6 +1707,144 @@
     }
 
     return [cleaned copy];
+}
+
+#pragma mark - 第3~5层：诊断 → 推荐 → 虚线叠加 → CLI命令
+
+/**
+ * 执行诊断→推荐→生成预测曲线→生成CLI
+ * 在 configureSingleAxisChart 之前调用，预测曲线数据存到属性供图表使用
+ * 耗时 <10ms
+ */
+- (void)runDiagnosisPipeline {
+    // 检查是否至少有一轴特征
+    if (!self.rollFeatures && !self.pitchFeatures && !self.yawFeatures) {
+        NSLog(@"⚠️ [诊断] 无特征数据，跳过");
+        return;
+    }
+
+    uint64_t startTime = mach_absolute_time();
+
+    // ===== 第3层：诊断 =====
+    NSArray<PIDResponseFeatures *> *features = @[
+        self.rollFeatures ?: [[PIDResponseFeatures alloc] init],
+        self.pitchFeatures ?: [[PIDResponseFeatures alloc] init],
+        self.yawFeatures ?: [[PIDResponseFeatures alloc] init]
+    ];
+    PIDCurveDiagnostic *diagnostic = [PIDCurveDiagnostic diagnoseWithFeatures:features];
+    NSLog(@"📊 [诊断评分] 综合=%.0f分", diagnostic.overallScore);
+
+    // ===== 第2层：获取当前PID =====
+    // 尝试从BBL header获取（如果有）
+    PIDValues *currentPID = nil;
+    // TODO: 从 BlackboxDecoder.logHeader.currentPIDValues 提取，当前先用默认值
+    if (!currentPID) {
+        currentPID = [[PIDValues alloc] init];
+        currentPID.p = 42;
+        currentPID.i = 85;
+        currentPID.d = 35;
+        currentPID.ff = 65;
+    }
+
+    // ===== 第4层：推荐 + 预测曲线 =====
+    double sampleRate = _parsedData.sampleRate > 0 ? _parsedData.sampleRate : 8000.0;
+    PIDRecommendationEngine *engine = [[PIDRecommendationEngine alloc] init];
+
+    // 为每个有诊断的轴生成推荐
+    NSArray<PIDAxisDiagnosis *> *diagnoses = diagnostic.axisDiagnoses;
+    NSArray<PIDResponseResult *> *responses = @[_rollResponse, _pitchResponse, _yawResponse];
+
+    NSMutableArray<PIDTuningResult *> *tuningResults = [NSMutableArray arrayWithCapacity:3];
+
+    for (NSInteger i = 0; i < MIN(diagnoses.count, (NSUInteger)3); i++) {
+        PIDAxisDiagnosis *axisDiag = diagnoses[i];
+        PIDResponseResult *response = responses[i];
+
+        // 获取该轴的当前PID
+        PIDValues *axisPID = [self pidValuesForAxis:i fromCurrent:currentPID];
+
+        // 获取当前阶跃响应曲线（低输入）
+        NSArray<NSNumber *> *currentCurve = nil;
+        if (response && response.stepResponse.count > 0) {
+            // 使用加权平均计算低输入曲线（与图表一致）
+            NSDictionary *masks = [PIDTraceAnalyzer lowHighMask:response.maxInput threshold:500.0];
+            NSArray<NSNumber *> *lowMask = masks[@"low"];
+            NSDictionary *tooLowMasks = [PIDTraceAnalyzer lowHighMask:response.maxInput threshold:20.0];
+            NSArray<NSNumber *> *toolowMask = tooLowMasks[@"high"];
+
+            NSMutableArray<NSNumber *> *respLowMask = [NSMutableArray array];
+            for (NSInteger j = 0; j < MIN(lowMask.count, toolowMask.count); j++) {
+                [respLowMask addObject:@([lowMask[j] doubleValue] * [toolowMask[j] doubleValue])];
+            }
+
+            currentCurve = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:response.stepResponse
+                                                                        avgTime:response.avgTime
+                                                                       dataMask:respLowMask
+                                                                     vertRange:@[@(-1.5), @(3.5)]
+                                                                      vertBins:1000
+                                                                   sampleRate:sampleRate];
+        }
+
+        PIDTuningResult *result = [engine generateRecommendationWithDiagnosis:axisDiag
+                                                                    currentPID:axisPID
+                                                               currentResponse:currentCurve ?: @[]
+                                                                   sampleRate:sampleRate];
+        [tuningResults addObject:result];
+    }
+
+    self.rollTuningResult = tuningResults.count > 0 ? tuningResults[0] : nil;
+    self.pitchTuningResult = tuningResults.count > 1 ? tuningResults[1] : nil;
+    self.yawTuningResult = tuningResults.count > 2 ? tuningResults[2] : nil;
+
+    // ===== 第5层：生成 CLI 命令 =====
+    self.cliCommands = [PIDCLIGenerator generateCLICommands:self.rollTuningResult
+                                                pitchResult:self.pitchTuningResult
+                                                  yawResult:self.yawTuningResult
+                                                  currentPID:currentPID.toDictionary
+                                             firmwareVersion:0];  // TODO: 从BBL header获取
+
+    NSLog(@"📋 [CLI命令]\n%@", self.cliCommands);
+
+    // 性能统计
+    mach_timebase_info_data_t info;
+    mach_timebase_info(&info);
+    uint64_t endTime = mach_absolute_time();
+    double elapsedMs = (double)(endTime - startTime) * info.numer / info.denom / 1e6;
+    NSLog(@"⏱️ [诊断→推荐→CLI] 总耗时: %.1fms", elapsedMs);
+}
+
+/// 从统一PID提取单轴PID值
+- (PIDValues *)pidValuesForAxis:(NSInteger)axisIndex fromCurrent:(PIDValues *)current {
+    PIDValues *axisPID = [[PIDValues alloc] init];
+    // TODO: 如果有每轴不同的PID，从configParameters提取
+    axisPID.p = current.p;
+    axisPID.i = current.i;
+    axisPID.d = current.d;
+    axisPID.ff = current.ff;
+    return axisPID;
+}
+
+/// 将 NSNumber 数组转为 JS 数组字符串
+- (NSString *)jsArrayFromNumbers:(NSArray<NSNumber *> *)numbers {
+    NSMutableString *js = [NSMutableString stringWithString:@"["];
+    for (NSInteger i = 0; i < numbers.count; i++) {
+        if (i > 0) [js appendString:@","];
+        [js appendFormat:@"%.4f", [numbers[i] doubleValue]];
+    }
+    [js appendString:@"]"];
+    return [js copy];
+}
+
+/// 复制CLI命令到剪贴板
+- (void)copyCLICommands {
+    if (!self.cliCommands || self.cliCommands.length == 0) {
+        [SVProgressHUD showErrorWithStatus:@"暂无CLI命令"];
+        return;
+    }
+
+    [UIPasteboard generalPasteboard].string = self.cliCommands;
+    [SVProgressHUD showSuccessWithStatus:@"CLI命令已复制"];
+    NSLog(@"📋 CLI命令已复制到剪贴板 (%lu字符)", (unsigned long)self.cliCommands.length);
 }
 
 @end

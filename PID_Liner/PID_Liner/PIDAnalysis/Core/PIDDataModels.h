@@ -112,6 +112,21 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+#pragma mark - 阶跃响应特征（从曲线提取的时域指标）
+
+/// 从阶跃响应曲线提取的时域特征，用于诊断和评分
+@interface PIDResponseFeatures : NSObject
+
+@property (nonatomic, assign) double overshoot;      // 超调量 0~1 (如 0.23 = 23%)
+@property (nonatomic, assign) double riseTime;       // 上升时间 (ms, 从10%到90%稳态值)
+@property (nonatomic, assign) double settlingTime;   // 建立时间 (ms, 进入并保持±5%带)
+@property (nonatomic, assign) double steadyState;    // 稳态值（曲线最后10%均值）
+@property (nonatomic, assign) double peakValue;      // 峰值
+@property (nonatomic, assign) double peakTime;       // 峰值时间 (ms)
+@property (nonatomic, assign) NSInteger oscillationCount; // 震荡次数（穿越稳态线的次数）
+
+@end
+
 #pragma mark - Session分析摘要
 
 /**

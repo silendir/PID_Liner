@@ -799,6 +799,129 @@ static const double kP_SCALE_FACTOR = 0.032029;
     return sum / array.count;
 }
 
+#pragma mark - 特征提取
+
+/**
+ * 从阶跃响应曲线提取时域特征
+ *
+ * 算法：
+ * - steadyState = 曲线最后10%点的平均值
+ * - peakValue = 曲线最大绝对值
+ * - overshoot = (peakValue - steadyState) / steadyState
+ * - riseTime = 从 10% 稳态值到 90% 稳态值的时间 (ms)
+ * - settlingTime = 曲线进入并保持在 ±5% 稳态值带内的最晚时间 (ms)
+ * - oscillationCount = 穿越稳态线的次数
+ */
++ (PIDResponseFeatures *)extractFeaturesFromResponse:(NSArray<NSNumber *> *)stepResponse
+                                          sampleRate:(double)sampleRate {
+    PIDResponseFeatures *features = [[PIDResponseFeatures alloc] init];
+
+    if (!stepResponse || stepResponse.count < 10) {
+        NSLog(@"⚠️ [特征提取] 数据点不足: %lu", (unsigned long)stepResponse.count);
+        return features;
+    }
+
+    NSInteger n = stepResponse.count;
+
+    // 1. 稳态值 = 曲线最后10%点的平均值
+    NSInteger tailStart = (NSInteger)(n * 0.9);
+    double steadySum = 0.0;
+    for (NSInteger i = tailStart; i < n; i++) {
+        steadySum += [stepResponse[i] doubleValue];
+    }
+    double steadyState = steadySum / (n - tailStart);
+    features.steadyState = steadyState;
+
+    // 2. 峰值
+    double peakVal = 0.0;
+    NSInteger peakIndex = 0;
+    for (NSInteger i = 0; i < n; i++) {
+        double v = [stepResponse[i] doubleValue];
+        if (fabs(v) > fabs(peakVal)) {
+            peakVal = v;
+            peakIndex = i;
+        }
+    }
+    features.peakValue = peakVal;
+
+    // 3. 峰值时间 (ms)
+    // 时间轴: 0 ~ 0.5秒，共 n 个点
+    double dt = 0.5 / (n > 1 ? n - 1 : 1);
+    features.peakTime = peakIndex * dt * 1000.0;  // 转换为 ms
+
+    // 4. 超调量 = (峰值 - 稳态) / 稳态
+    if (fabs(steadyState) > 1e-9) {
+        features.overshoot = fabs(peakVal - steadyState) / fabs(steadyState);
+    } else {
+        features.overshoot = 0.0;
+    }
+
+    // 5. 上升时间 (ms): 从 10% 稳态值到 90% 稳态值
+    double target10 = steadyState * 0.1;
+    double target90 = steadyState * 0.9;
+    NSInteger rise10Index = -1;
+    NSInteger rise90Index = -1;
+
+    for (NSInteger i = 0; i < n; i++) {
+        double v = [stepResponse[i] doubleValue];
+        if (rise10Index < 0 && v >= target10) {
+            rise10Index = i;
+        }
+        if (rise10Index >= 0 && v >= target90) {
+            rise90Index = i;
+            break;
+        }
+    }
+
+    if (rise10Index >= 0 && rise90Index >= 0 && rise90Index > rise10Index) {
+        features.riseTime = (rise90Index - rise10Index) * dt * 1000.0;  // ms
+    } else {
+        features.riseTime = 0.0;
+    }
+
+    // 6. 建立时间 (ms): 进入并保持在 ±5% 稳态值带内的最晚时间
+    double band5 = fabs(steadyState) * 0.05;
+    NSInteger settlingIndex = n - 1;  // 默认：整个时长
+    BOOL entered = NO;
+
+    // 从后往前找：最后一个超出±5%带的位置
+    for (NSInteger i = n - 1; i >= 0; i--) {
+        double v = [stepResponse[i] doubleValue];
+        if (fabs(v - steadyState) > band5) {
+            settlingIndex = i;
+            entered = YES;
+            break;
+        }
+    }
+
+    if (entered) {
+        features.settlingTime = settlingIndex * dt * 1000.0;  // ms
+    } else {
+        features.settlingTime = 0.0;  // 一开始就在带内
+    }
+
+    // 7. 震荡次数 = 穿越稳态线的次数
+    NSInteger crossings = 0;
+    for (NSInteger i = 1; i < n; i++) {
+        double prev = [stepResponse[i - 1] doubleValue] - steadyState;
+        double curr = [stepResponse[i] doubleValue] - steadyState;
+        if ((prev > 0 && curr <= 0) || (prev <= 0 && curr > 0)) {
+            crossings++;
+        }
+    }
+    // 震荡次数 = 穿越次数 / 2（一个完整震荡包含上穿+下穿）
+    features.oscillationCount = crossings / 2;
+
+    NSLog(@"📊 [特征提取] 稳态=%.3f, 峰值=%.3f, 超调=%.1f%%, 上升时间=%.1fms, 建立时间=%.1fms, 震荡=%ld次",
+          steadyState, peakVal,
+          features.overshoot * 100.0,
+          features.riseTime,
+          features.settlingTime,
+          (long)features.oscillationCount);
+
+    return features;
+}
+
 #pragma mark - 数据预处理 (equalize_data)
 
 /**

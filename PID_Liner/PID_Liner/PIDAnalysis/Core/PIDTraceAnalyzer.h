@@ -234,6 +234,19 @@ NS_ASSUME_NONNULL_BEGIN
  */
 + (NSArray<NSNumber *> *)hanningWindowWithLength:(NSInteger)length;
 
+#pragma mark - 特征提取
+
+/**
+ * 从阶跃响应曲线提取时域特征
+ * 用于诊断和评分
+ *
+ * @param stepResponse 阶跃响应曲线（加权平均后的单条曲线）
+ * @param sampleRate 采样率 (Hz)
+ * @return 时域特征对象
+ */
++ (PIDResponseFeatures *)extractFeaturesFromResponse:(NSArray<NSNumber *> *)stepResponse
+                                          sampleRate:(double)sampleRate;
+
 #pragma mark - 数据预处理
 
 /**

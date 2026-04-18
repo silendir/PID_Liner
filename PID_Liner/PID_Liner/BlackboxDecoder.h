@@ -73,6 +73,14 @@ typedef NS_ENUM(NSInteger, BBLFrameType) {
 @property (nonatomic, assign) int pRatio;                   // P帧比率 (对应C程序的int)
 @property (nonatomic, assign) int looptime;                 // 循环时间 (对应C程序的int)
 @property (nonatomic, strong) NSDictionary *configParameters;
+
+// 🔑 第2层：从 configParameters 提取的便捷属性
+/// 当前 PID 值 {roll: {p:,i:,d:,ff:}, pitch:..., yaw:...}
+@property (nonatomic, readonly) NSDictionary *currentPIDValues;
+/// 当前滤波器配置 {dterm_lpf1_hz:, dterm_lpf2_hz:, ...}
+@property (nonatomic, readonly) NSDictionary *currentFilterValues;
+/// 固件版本代码 (405 = BF 4.5, 202512 = BF 2025.12)
+@property (nonatomic, readonly) NSInteger firmwareVersionCode;
 @end
 
 // ============================================================================
