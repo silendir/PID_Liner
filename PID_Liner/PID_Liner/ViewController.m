@@ -404,16 +404,22 @@
                 }
 
                 // 重命名文件
+                NSString *finalPath = nil;  // 最终CSV文件路径
                 if ([[NSFileManager defaultManager] moveItemAtPath:originalPath toPath:outputPath error:&error]) {
+                    finalPath = outputPath;
                     [generatedFiles addObject:csvFileName];
                     [logText appendFormat:@"   ✅ 生成: %@\n", csvFileName];
                     NSLog(@"✅ Session %ld 转换成功: %@", (long)i + 1, csvFileName);
                 } else {
                     // 如果重命名失败，使用原文件名
+                    finalPath = originalPath;
                     [generatedFiles addObject:originalFileName];
                     [logText appendFormat:@"   ✅ 生成: %@\n", originalFileName];
                     NSLog(@"⚠️ 重命名失败，使用原文件名: %@", error.localizedDescription);
                 }
+
+                // 🔧 注入 craftName 到CSV头部注释行
+                [self injectCraftNameToCSV:finalPath];
             } else {
                 allSuccess = NO;
                 [logText appendFormat:@"   ❌ 转换失败: %@\n", self.decoder.lastErrorMessage];
@@ -444,6 +450,37 @@
 }
 
 #pragma mark - Helper Methods
+
+/// 🔧 在CSV文件头部注入 craftName 注释行
+- (void)injectCraftNameToCSV:(NSString *)csvPath {
+    if (!csvPath) return;
+
+    NSString *craftName = self.decoder.logHeader.craftName;
+    if (!craftName.length) {
+        NSLog(@"⚠️ [CSV注入] craftName为空，跳过注入");
+        return;
+    }
+
+    NSError *error = nil;
+    NSString *content = [NSString stringWithContentsOfFile:csvPath
+                                                 encoding:NSUTF8StringEncoding
+                                                    error:&error];
+    if (error || !content) {
+        NSLog(@"⚠️ [CSV注入] 读取CSV失败: %@", error.localizedDescription);
+        return;
+    }
+
+    // 在文件头部插入 craftName 注释行
+    NSString *craftLine = [NSString stringWithFormat:@"# Craft name:%@\n", craftName];
+    NSString *newContent = [craftLine stringByAppendingString:content];
+
+    [newContent writeToFile:csvPath atomically:YES encoding:NSUTF8StringEncoding error:&error];
+    if (error) {
+        NSLog(@"⚠️ [CSV注入] 写入CSV失败: %@", error.localizedDescription);
+    } else {
+        NSLog(@"🔧 [CSV注入] 已注入 craftName: %@", craftName);
+    }
+}
 
 /// 生成CSV文件名：{源文件}_{日期}_{时间戳}_session{N}.csv
 - (NSString *)generateCSVFileName:(NSString *)bblPath sessionIndex:(NSInteger)sessionIndex {

@@ -94,6 +94,13 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (BOOL)validateCSVFormat:(NSString *)filePath;
 
+/**
+ * 从CSV文件头注释行提取 craftName（不解析全部数据）
+ * @param filePath CSV文件路径
+ * @return craftName，如果不存在返回nil
+ */
+- (nullable NSString *)extractCraftNameFromCSV:(NSString *)filePath;
+
 #pragma mark - 字段映射
 
 /**

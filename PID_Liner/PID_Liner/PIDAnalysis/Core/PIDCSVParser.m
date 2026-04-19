@@ -161,6 +161,12 @@ static const NSInteger kDefaultMaxRows = 100000;
     }
 }
 
+- (nullable NSString *)extractCraftNameFromCSV:(NSString *)filePath {
+    NSString *craftName = nil;
+    [self readFirstNonCommentLine:filePath error:nil extractedCraftName:&craftName];
+    return craftName;
+}
+
 - (nullable PIDCSVData *)parseCSV:(NSString *)filePath {
     return [self parseCSV:filePath progressHandler:nil];
 }
@@ -186,8 +192,11 @@ static const NSInteger kDefaultMaxRows = 100000;
             return nil;
         }
 
-        // 读取并解析表头
-        NSString *headerLine = [self readFirstLine:filePath error:nil];
+        // 读取并解析表头（跳过注释行，提取craftName）
+        NSString *parsedCraftName = nil;
+        NSString *headerLine = [self readFirstNonCommentLine:filePath
+                                                       error:nil
+                                        extractedCraftName:&parsedCraftName];
         NSArray<NSString *> *headers = [self parseCSVLine:headerLine];
         [self buildFieldIndexes:headers];
 
@@ -197,8 +206,9 @@ static const NSInteger kDefaultMaxRows = 100000;
         NSString *line;
         BOOL hasMoreData = YES;
 
-        // 跳过表头行
-        [fileHandle seekToFileOffset:headerLine.length + 1]; // +1 for newline
+        // 跳过注释行+表头行，计算总偏移量
+        NSUInteger headerOffset = [self headerOffsetForFile:filePath];
+        [fileHandle seekToFileOffset:headerOffset];
 
         while (hasMoreData && (self.config.maxRows == 0 || currentRow < self.config.maxRows)) {
             @autoreleasepool {
@@ -227,6 +237,7 @@ static const NSInteger kDefaultMaxRows = 100000;
         // 构建结果对象
         PIDCSVData *result = [self buildResult];
         result.dataLength = currentRow;
+        result.craftName = parsedCraftName;  // 🔧 传递 craftName
 
         // 计算采样率
         if (result.timeUs.count > 1) {
@@ -373,31 +384,74 @@ static const NSInteger kDefaultMaxRows = 100000;
  * 读取文件第一行
  */
 - (nullable NSString *)readFirstLine:(NSString *)filePath error:(NSError **)error {
-    NSFileHandle *fileHandle = [NSFileHandle fileHandleForReadingAtPath:filePath];
-    if (!fileHandle) {
+    return [self readFirstNonCommentLine:filePath error:error extractedCraftName:nil];
+}
+
+/**
+ * 读取文件第一个非注释行（跳过 # 开头的注释行）
+ * @param filePath 文件路径
+ * @param error 错误输出
+ * @param craftName 输出 craftName（如果CSV头包含 `# Craft name:XXX`）
+ */
+- (nullable NSString *)readFirstNonCommentLine:(NSString *)filePath
+                                         error:(NSError **)error
+                          extractedCraftName:(NSString **)craftName {
+    NSData *fileData = [NSData dataWithContentsOfFile:filePath];
+    if (!fileData || fileData.length == 0) {
         return nil;
     }
 
-    NSData *data = [fileHandle readDataOfLength:self.config.bufferSize];
-    [fileHandle closeFile];
+    // 按行拆分，找第一个非注释行
+    NSString *content = [[NSString alloc] initWithData:fileData encoding:NSUTF8StringEncoding];
+    if (!content) return nil;
 
-    if (!data || data.length == 0) {
-        return nil;
+    NSArray<NSString *> *lines = [content componentsSeparatedByString:@"\n"];
+    for (NSString *line in lines) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:
+                            [NSCharacterSet whitespaceCharacterSet]];
+        if (trimmed.length == 0) continue;
+
+        if ([trimmed hasPrefix:@"#"]) {
+            // 注释行 — 检查是否包含 craftName
+            if ([trimmed hasPrefix:@"# Craft name:"] && craftName) {
+                *craftName = [[trimmed substringFromIndex:13]
+                              stringByTrimmingCharactersInSet:
+                              [NSCharacterSet whitespaceCharacterSet]];
+            }
+            continue;
+        }
+
+        // 找到第一个非注释、非空行 = 表头行
+        return trimmed;
     }
+    return nil;
+}
 
-    // 查找第一个换行符
-    NSRange newlineRange = [data rangeOfData:[NSData dataWithBytes:"\n" length:1]
-                                        options:0
-                                          range:NSMakeRange(0, data.length)];
-    NSInteger lineLength;
-    if (newlineRange.location != NSNotFound) {
-        lineLength = newlineRange.location;
-    } else {
-        lineLength = data.length;
+/**
+ * 计算从文件开头到数据行开始的字节偏移（跳过注释行+表头行）
+ */
+- (NSUInteger)headerOffsetForFile:(NSString *)filePath {
+    NSData *fileData = [NSData dataWithContentsOfFile:filePath];
+    if (!fileData) return 0;
+
+    NSString *content = [[NSString alloc] initWithData:fileData encoding:NSUTF8StringEncoding];
+    if (!content) return 0;
+
+    NSUInteger byteOffset = 0;
+    NSArray<NSString *> *lines = [content componentsSeparatedByString:@"\n"];
+    for (NSString *line in lines) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:
+                            [NSCharacterSet whitespaceCharacterSet]];
+        NSUInteger lineBytes = [line lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 1; // +1 for \n
+        byteOffset += lineBytes;
+
+        if (trimmed.length == 0 || [trimmed hasPrefix:@"#"]) {
+            continue;  // 跳过空行和注释行
+        }
+        // 找到表头行，跳过它后返回偏移
+        break;
     }
-
-    NSData *lineData = [data subdataWithRange:NSMakeRange(0, lineLength)];
-    return [[NSString alloc] initWithData:lineData encoding:NSUTF8StringEncoding];
+    return byteOffset;
 }
 
 /**

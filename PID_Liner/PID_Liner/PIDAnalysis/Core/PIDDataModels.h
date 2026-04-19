@@ -61,6 +61,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) double sampleRate;                 // 采样率 (Hz)
 @property (nonatomic, assign) NSInteger dataLength;              // 数据长度
 
+// 元数据 (从CSV头注释行解析)
+@property (nonatomic, copy, nullable) NSString *craftName;       // 飞机名称 (BBL Header)
+
 /**
  * 获取指定轴的陀螺仪数据
  * @param axis 0=Roll, 1=Pitch, 2=Yaw

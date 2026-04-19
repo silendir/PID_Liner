@@ -13,10 +13,12 @@
 #import "PIDCurveDiagnostic.h"
 #import "PIDRecommendationEngine.h"
 #import "PIDCLIGenerator.h"
+#import "PIDTuningHistoryManager.h"
 #import <objc/runtime.h>
 #import <AAChartKit/AAChartKit.h>
 #import <SVProgressHUD/SVProgressHUD.h>
 #import <mach/mach_time.h>
+#import <WebKit/WebKit.h>
 
 @interface PIDAnalysisViewController () <UITabBarControllerDelegate>
 
@@ -45,6 +47,12 @@
 @property (nonatomic, strong) PIDTuningResult *yawTuningResult;
 @property (nonatomic, copy) NSString *cliCommands;
 
+// 🔑 迭代闭环调参历史
+@property (nonatomic, copy, nullable) NSString *currentCraftName;
+@property (nonatomic, strong) NSArray<PIDTuningRecord *> *tuningHistory;
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *hiddenIterationIndexes;  // 勾选控制：被隐藏的轮次索引
+@property (nonatomic, assign) BOOL hideCurrentPrediction;  // 是否隐藏本轮预测
+
 // UI状态
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
 @property (nonatomic, strong) UILabel *statusLabel;
@@ -62,6 +70,10 @@
     self = [super init];
     if (self) {
         _csvFilePath = [filePath copy];
+        _tuningHistory = @[];
+        _hiddenIterationIndexes = [NSMutableSet set];
+        _hideCurrentPrediction = NO;
+        [self loadTuningHistory];
     }
     return self;
 }
@@ -231,6 +243,33 @@
     UIViewController *vc = [[UIViewController alloc] init];
     vc.view.backgroundColor = [UIColor systemBackgroundColor];
 
+    // 🔑 迭代信息栏（显示在顶部）
+    UIView *infoBar = [[UIView alloc] init];
+    infoBar.translatesAutoresizingMaskIntoConstraints = NO;
+    infoBar.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    infoBar.layer.cornerRadius = 8;
+    infoBar.hidden = YES;  // 初始隐藏，等有历史时显示
+    [vc.view addSubview:infoBar];
+
+    UILabel *infoLabel = [[UILabel alloc] init];
+    infoLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    infoLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    infoLabel.textAlignment = NSTextAlignmentCenter;
+    infoLabel.textColor = [UIColor secondaryLabelColor];
+    [infoBar addSubview:infoLabel];
+
+    // 保存引用
+    objc_setAssociatedObject(vc, "iterationInfoLabel", infoLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    [NSLayoutConstraint activateConstraints:@[
+        [infoBar.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:5],
+        [infoBar.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:15],
+        [infoBar.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-15],
+        [infoBar.heightAnchor constraintEqualToConstant:32],
+        [infoLabel.centerXAnchor constraintEqualToAnchor:infoBar.centerXAnchor],
+        [infoLabel.centerYAnchor constraintEqualToAnchor:infoBar.centerYAnchor],
+    ]];
+
     // 🔥 创建固定在顶部的滑块容器
     UIView *sliderContainer = [[UIView alloc] init];
     sliderContainer.translatesAutoresizingMaskIntoConstraints = NO;
@@ -320,6 +359,16 @@
         objc_setAssociatedObject(vc, kChartViewKeys[i], chartView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 
+    // 🔑 虚线显隐控制容器（在图表和CLI按钮之间，初始隐藏）
+    UIStackView *toggleContainer = [[UIStackView alloc] init];
+    toggleContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    toggleContainer.axis = UILayoutConstraintAxisVertical;
+    toggleContainer.spacing = 4;
+    toggleContainer.alignment = UIStackViewAlignmentFill;
+    toggleContainer.hidden = YES;
+    [contentView addSubview:toggleContainer];
+    objc_setAssociatedObject(vc, "toggleContainer", toggleContainer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     // 设置内容视图底部约束（按钮的底部）
     // 🔑 CLI复制按钮放在最下面
     UIButton *cliCopyButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -339,7 +388,10 @@
     objc_setAssociatedObject(vc, "cliCopyButton", cliCopyButton, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     [NSLayoutConstraint activateConstraints:@[
-        [cliCopyButton.topAnchor constraintEqualToAnchor:yawChartView.bottomAnchor constant:spacing],
+        [toggleContainer.topAnchor constraintEqualToAnchor:yawChartView.bottomAnchor constant:spacing],
+        [toggleContainer.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
+        [toggleContainer.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-20],
+        [cliCopyButton.topAnchor constraintEqualToAnchor:toggleContainer.bottomAnchor constant:spacing],
         [cliCopyButton.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
         [cliCopyButton.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-20],
         [cliCopyButton.heightAnchor constraintEqualToConstant:48],
@@ -348,7 +400,7 @@
 
     // 🔥 设置滑块容器约束（固定在顶部）
     [NSLayoutConstraint activateConstraints:@[
-        [sliderContainer.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:10],
+        [sliderContainer.topAnchor constraintEqualToAnchor:infoBar.bottomAnchor constant:5],
         [sliderContainer.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:15],
         [sliderContainer.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-15],
         [sliderContainer.heightAnchor constraintEqualToConstant:70],
@@ -834,6 +886,20 @@
     if (cliButton && self.cliCommands.length > 0) {
         cliButton.hidden = NO;
     }
+
+    // 🔑 显示迭代信息栏
+    [self updateIterationInfoBar];
+    UILabel *infoLabel = objc_getAssociatedObject(_responseViewController, "iterationInfoLabel");
+    UIView *infoBar = infoLabel.superview;
+    if (infoBar && self.currentCraftName.length) {
+        infoBar.hidden = NO;
+    }
+
+    // 🔑 收敛检测 — 更新CLI按钮状态
+    [self checkConvergenceAndUpdateCLIButton];
+
+    // 🔑 更新虚线显隐勾选控件
+    [self updateToggleControls];
 }
 
 /**
@@ -1246,6 +1312,49 @@
     highMarker.radius = @0;
     highSeries.marker = highMarker;
     [series addObject:highSeries];  // 🔑 始终添加到图例中
+
+    // 🔑 历史轮次虚线叠加（最多5轮，各色+各线型）
+    NSArray<NSString *> *historyColors = @[@"#AF52DE", @"#FF2D55", @"#00C7BE", @"#FFCC00", @"#A2845E"];
+    NSArray<NSString *> *historyDashStyles = @[@"Dot", @"ShortDash", @"LongDash", @"DashDot", @"ShortDashDot"];
+
+    for (NSInteger h = 0; h < (NSInteger)self.tuningHistory.count && h < 5; h++) {
+        PIDTuningRecord *record = self.tuningHistory[h];
+        PIDAxisTuningSnapshot *snapshot = [record snapshotForAxis:axisIndex];
+        if (!snapshot || !snapshot.predictedCurve || snapshot.predictedCurve.count < 10) continue;
+
+        // 降采样历史预测曲线
+        NSArray<NSNumber *> *histCurve = snapshot.predictedCurve;
+        NSInteger hLen = histCurve.count;
+        NSInteger hBlock = (hLen - 1) / (displayPoints - 1);
+        if (hBlock < 1) hBlock = 1;
+        NSMutableArray<NSNumber *> *histDisplay = [NSMutableArray arrayWithCapacity:displayPoints];
+        for (NSInteger j = 0; j < displayPoints; j++) {
+            if (j == 0) {
+                [histDisplay addObject:@0];
+            } else {
+                NSInteger si = 1 + (j - 1) * hBlock;
+                NSInteger ei = MIN(1 + j * hBlock, hLen);
+                if (si < hLen && ei > si) {
+                    double sum = 0; NSInteger cnt = 0;
+                    for (NSInteger k = si; k < ei; k++) { sum += [histCurve[k] doubleValue]; cnt++; }
+                    [histDisplay addObject:@(sum / cnt)];
+                } else {
+                    [histDisplay addObject:@([histCurve.lastObject doubleValue])];
+                }
+            }
+        }
+
+        AASeriesElement *histSeries = [[AASeriesElement alloc] init];
+        histSeries.name = [NSString stringWithFormat:@"第%ld轮预测", (long)record.iteration];
+        histSeries.data = histDisplay;
+        histSeries.color = historyColors[h % 5];
+        histSeries.lineWidth = @1.5;
+        histSeries.dashStyle = historyDashStyles[h % 5];
+        AAMarker *histMarker = [[AAMarker alloc] init];
+        histMarker.radius = @0;
+        histSeries.marker = histMarker;
+        [series addObject:histSeries];
+    }
 
     // 🔑 预测虚线曲线（绿色虚线）
     if (displayPredData) {
@@ -1805,12 +1914,365 @@
 
     NSLog(@"📋 [CLI命令]\n%@", self.cliCommands);
 
+    // ===== 保存本轮调参记录 =====
+    [self saveCurrentTuningRecord:currentPID];
+
     // 性能统计
     mach_timebase_info_data_t info;
     mach_timebase_info(&info);
     uint64_t endTime = mach_absolute_time();
     double elapsedMs = (double)(endTime - startTime) * info.numer / info.denom / 1e6;
     NSLog(@"⏱️ [诊断→推荐→CLI] 总耗时: %.1fms", elapsedMs);
+}
+
+#pragma mark - 迭代闭环调参历史
+
+/// 加载调参历史（从CSV中提取craftName，查找对应历史文件）
+- (void)loadTuningHistory {
+    if (!self.csvFilePath.length) return;
+
+    // 如果 csvData 已经设置了 craftName（从 CSV 注释行解析），直接使用
+    if (self.csvData.craftName.length) {
+        self.currentCraftName = self.csvData.craftName;
+    }
+
+    // 如果 csvData 还没有，尝试从 CSV 文件直接解析 craftName
+    if (!self.currentCraftName.length) {
+        PIDCSVParser *parser = [PIDCSVParser parser];
+        NSString *craftName = [parser extractCraftNameFromCSV:self.csvFilePath];
+        if (craftName.length) {
+            self.currentCraftName = craftName;
+        }
+    }
+
+    if (!self.currentCraftName.length) {
+        NSLog(@"ℹ️ [调参历史] craftName为空，无历史记录");
+        return;
+    }
+
+    // 加载历史记录
+    PIDTuningHistoryManager *mgr = [PIDTuningHistoryManager sharedManager];
+    self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
+    NSLog(@"📂 [调参历史] %@ 已加载 %lu 轮记录",
+          self.currentCraftName, (unsigned long)self.tuningHistory.count);
+}
+
+/// 更新顶部信息栏
+- (void)updateIterationInfoBar {
+    UILabel *infoLabel = objc_getAssociatedObject(_responseViewController, "iterationInfoLabel");
+    if (!infoLabel) return;
+
+    NSInteger iteration = self.tuningHistory.count + 1;  // 本轮 = 已有轮数 + 1
+    NSString *craftName = self.currentCraftName ?: @"未知飞机";
+
+    if (self.tuningHistory.count == 0) {
+        infoLabel.text = [NSString stringWithFormat:@"🔄 第1轮调参 · %@", craftName];
+    } else {
+        // 计算准确度（基于上一轮的预测 vs 本轮的实际）
+        PIDTuningRecord *lastRecord = self.tuningHistory.lastObject;
+        double accuracy = lastRecord.accuracy * 100;
+        infoLabel.text = [NSString stringWithFormat:@"🔄 第%ld轮调参 · %@ · 预测准确度 %.0f%%",
+                          (long)iteration, craftName, accuracy];
+    }
+}
+
+/// 🔧 收敛检测 — 更新CLI按钮状态
+- (void)checkConvergenceAndUpdateCLIButton {
+    UIButton *cliButton = objc_getAssociatedObject(_responseViewController, "cliCopyButton");
+    if (!cliButton) return;
+
+    // 需要至少2轮才能判断收敛（第1轮没有上轮预测对比）
+    if (self.tuningHistory.count < 1) return;
+
+    PIDTuningRecord *currentRecord = self.tuningHistory.lastObject;
+    if (!currentRecord) return;
+
+    // 收敛条件：准确度 > 85%（即平均误差 < 15%）
+    BOOL converged = currentRecord.accuracy >= 0.85;
+
+    if (converged) {
+        [cliButton setTitle:@"✅ 已收敛 — 复制最终CLI" forState:UIControlStateNormal];
+        cliButton.backgroundColor = [UIColor systemGreenColor];
+
+        // 更新信息栏
+        UILabel *infoLabel = objc_getAssociatedObject(_responseViewController, "iterationInfoLabel");
+        if (infoLabel) {
+            NSString *craftName = self.currentCraftName ?: @"未知飞机";
+            infoLabel.text = [NSString stringWithFormat:@"✅ 调参已收敛 · %@ · 准确度 %.0f%% — 建议停止微调",
+                              craftName, currentRecord.accuracy * 100];
+            infoLabel.textColor = [UIColor systemGreenColor];
+        }
+
+        NSLog(@"🎯 [收敛] 调参已收敛！准确度 %.0f%%", currentRecord.accuracy * 100);
+    }
+}
+
+/// 🔧 更新虚线显隐勾选控件
+- (void)updateToggleControls {
+    UIStackView *container = objc_getAssociatedObject(_responseViewController, "toggleContainer");
+    if (!container) return;
+
+    // 清空现有子视图
+    for (UIView *sub in container.arrangedSubviews) {
+        [container removeArrangedSubview:sub];
+        [sub removeFromSuperview];
+    }
+
+    // 颜色池
+    NSArray<NSString *> *colors = @[@"#AF52DE", @"#FF2D55", @"#00C7BE", @"#FFCC00", @"#A2845E"];
+    BOOL hasAnyToggle = NO;
+
+    // 本轮预测开关
+    if (self.rollTuningResult || self.pitchTuningResult || self.yawTuningResult) {
+        UIButton *currentToggle = [self createToggleButtonWithTitle:@"● 本轮预测"
+                                                            tag:-1
+                                                           isOn:!self.hideCurrentPrediction];
+        [currentToggle setTitleColor:[self colorFromHex:@"#34C759"] forState:UIControlStateSelected]; // 绿色
+        [container addArrangedSubview:currentToggle];
+        hasAnyToggle = YES;
+    }
+
+    // 历史轮次开关
+    for (NSInteger h = 0; h < (NSInteger)self.tuningHistory.count && h < 5; h++) {
+        PIDTuningRecord *record = self.tuningHistory[h];
+        NSString *colorHex = colors[h % 5];
+        NSString *title = [NSString stringWithFormat:@"● 第%ld轮预测 (%.0f%%)",
+                           (long)record.iteration, record.accuracy * 100];
+        BOOL isOn = ![self.hiddenIterationIndexes containsObject:@(h)];
+
+        UIButton *toggle = [self createToggleButtonWithTitle:title
+                                                        tag:(int)h
+                                                       isOn:isOn];
+        // 设置颜色标记
+        [toggle setTitleColor:[self colorFromHex:colorHex] forState:UIControlStateSelected];
+        [container addArrangedSubview:toggle];
+        hasAnyToggle = YES;
+    }
+
+    container.hidden = !hasAnyToggle;
+}
+
+/// 创建勾选按钮
+- (UIButton *)createToggleButtonWithTitle:(NSString *)title tag:(int)tag isOn:(BOOL)isOn {
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+    btn.tag = tag;
+    btn.titleLabel.font = [UIFont systemFontOfSize:13];
+    btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    btn.contentEdgeInsets = UIEdgeInsetsMake(4, 10, 4, 10);
+
+    // selected=YES → 有颜色标记 → 曲线显示
+    // selected=NO  → 灰色文字 → 曲线隐藏
+    [btn setTitle:title forState:UIControlStateSelected];
+    [btn setTitle:title forState:UIControlStateNormal];
+    [btn setTitleColor:[UIColor lightGrayColor] forState:UIControlStateNormal];
+    btn.selected = isOn;
+
+    [btn addTarget:self action:@selector(toggleButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    return btn;
+}
+
+/// 勾选按钮回调 — 只切换 Highcharts series 可见性，不重算不重绘
+- (void)toggleButtonTapped:(UIButton *)sender {
+    sender.selected = !sender.selected;
+
+    // 计算 series 索引：低输入(0) + 高输入(1) + 历史轮次(2..N) + 本轮预测(最后)
+    // 每个 toggle 对应的 seriesIndex:
+    //   历史轮次 h → seriesIndex = 2 + h（但有隐藏的历史轮次会跳过，所以需要动态计算）
+    //
+    // 更可靠的方式：用 Highcharts series name 匹配
+
+    NSString *seriesName = nil;
+    if (sender.tag == -1) {
+        // 本轮预测
+        self.hideCurrentPrediction = !sender.selected;
+        seriesName = @"预测曲线 (CLI生效后)";
+    } else {
+        // 历史轮次
+        NSInteger h = sender.tag;
+        if (sender.selected) {
+            [self.hiddenIterationIndexes removeObject:@(h)];
+        } else {
+            [self.hiddenIterationIndexes addObject:@(h)];
+        }
+        if (h < (NSInteger)self.tuningHistory.count) {
+            seriesName = [NSString stringWithFormat:@"第%ld轮预测", (long)self.tuningHistory[h].iteration];
+        }
+    }
+
+    if (!seriesName) return;
+
+    // 遍历三个图表，通过 JS 隐藏/显示对应的 series
+    static char const *const kChartViewKeys[] = {"aaChartView0", "aaChartView1", "aaChartView2"};
+    NSString *jsAction = sender.selected ? @"show()" : @"hide()";
+
+    for (NSInteger i = 0; i < 3; i++) {
+        AAChartView *chartView = objc_getAssociatedObject(_responseViewController, kChartViewKeys[i]);
+        if (!chartView) continue;
+
+        NSString *js = [NSString stringWithFormat:
+            @"var chart = Highcharts.charts[0];"
+            @"if (chart) {"
+            @"  for (var i = 0; i < chart.series.length; i++) {"
+            @"    if (chart.series[i].name === '%@') {"
+            @"      chart.series[i].%@;"
+            @"      break;"
+            @"    }"
+            @"  }"
+            @"}",
+            seriesName, jsAction];
+
+        [(WKWebView *)chartView evaluateJavaScript:js completionHandler:nil];
+    }
+}
+
+/// HEX颜色转UIColor
+- (UIColor *)colorFromHex:(NSString *)hex {
+    unsigned int rgb = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:hex];
+    [scanner setScanLocation:1];
+    [scanner scanHexInt:&rgb];
+    return [UIColor colorWithRed:((rgb >> 16) & 0xFF) / 255.0
+                           green:((rgb >> 8) & 0xFF) / 255.0
+                            blue:(rgb & 0xFF) / 255.0
+                           alpha:1.0];
+}
+
+/// 🔧 保存本轮调参记录到历史文件
+- (void)saveCurrentTuningRecord:(PIDValues *)currentPID {
+    if (!self.currentCraftName.length) {
+        NSLog(@"⚠️ [调参历史] craftName为空，跳过保存");
+        return;
+    }
+
+    PIDTuningHistoryManager *mgr = [PIDTuningHistoryManager sharedManager];
+    NSInteger iteration = [mgr nextIterationForCraft:self.currentCraftName];
+
+    // 计算修正系数（对比上一轮预测 vs 本轮实际）
+    double gainCorrection = 1.0;
+    double dampingCorrection = 1.0;
+    double freqCorrection = 1.0;
+    double accuracy = 0.0;
+
+    if (self.tuningHistory.count > 0) {
+        PIDTuningRecord *lastRecord = self.tuningHistory.lastObject;
+        [self computeCorrectionFactorsFromLastRecord:lastRecord
+                                       gainCorrection:&gainCorrection
+                                    dampingCorrection:&dampingCorrection
+                                       freqCorrection:&freqCorrection
+                                             accuracy:&accuracy];
+    }
+
+    // 构建记录
+    PIDTuningRecord *record = [[PIDTuningRecord alloc] init];
+    record.craftName = self.currentCraftName;
+    record.iteration = iteration;
+    record.createdAt = [NSDate date];
+    record.csvFileName = [self.csvFilePath lastPathComponent];
+    record.cliCommands = self.cliCommands;
+    record.gainCorrection = gainCorrection;
+    record.dampingCorrection = dampingCorrection;
+    record.freqCorrection = freqCorrection;
+    record.accuracy = accuracy;
+
+    // 三轴快照
+    record.rollSnapshot = [self buildSnapshotForAxis:0 currentPID:currentPID];
+    record.pitchSnapshot = [self buildSnapshotForAxis:1 currentPID:currentPID];
+    record.yawSnapshot = [self buildSnapshotForAxis:2 currentPID:currentPID];
+
+    // 保存
+    [mgr saveRecord:record];
+
+    // 更新内存中的历史
+    self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
+}
+
+/// 🔧 计算修正系数和准确度
+- (void)computeCorrectionFactorsFromLastRecord:(PIDTuningRecord *)lastRecord
+                               gainCorrection:(double *)outGain
+                            dampingCorrection:(double *)outDamping
+                               freqCorrection:(double *)outFreq
+                                     accuracy:(double *)outAccuracy {
+    double totalError = 0;
+    int errorCount = 0;
+
+    // 按轴对比预测 vs 实际
+    for (NSInteger axis = 0; axis < 3; axis++) {
+        PIDAxisTuningSnapshot *lastSnapshot = [lastRecord snapshotForAxis:axis];
+        if (!lastSnapshot || !lastSnapshot.predictedFeatures) continue;
+
+        PIDResponseFeatures *predicted = lastSnapshot.predictedFeatures;
+        PIDResponseFeatures *actual = nil;
+        switch (axis) {
+            case 0: actual = self.rollFeatures; break;
+            case 1: actual = self.pitchFeatures; break;
+            case 2: actual = self.yawFeatures; break;
+        }
+        if (!actual) continue;
+
+        // 超调量误差
+        if (predicted.overshoot > 0.001) {
+            double error = fabs(actual.overshoot - predicted.overshoot) / predicted.overshoot;
+            totalError += MIN(error, 1.0);
+            errorCount++;
+        }
+
+        // 上升时间误差
+        if (predicted.riseTime > 1.0) {
+            double error = fabs(actual.riseTime - predicted.riseTime) / predicted.riseTime;
+            totalError += MIN(error, 1.0);
+            errorCount++;
+        }
+
+        // 建立时间误差
+        if (predicted.settlingTime > 1.0) {
+            double error = fabs(actual.settlingTime - predicted.settlingTime) / predicted.settlingTime;
+            totalError += MIN(error, 1.0);
+            errorCount++;
+        }
+    }
+
+    // 准确度 = 1 - 平均误差
+    *outAccuracy = errorCount > 0 ? (1.0 - totalError / errorCount) : 0.0;
+
+    // 修正系数：基于上一轮的修正系数和本轮误差调整
+    // 简化模型：如果预测偏高（误差>0），降低修正系数
+    double errorRatio = errorCount > 0 ? totalError / errorCount : 0;
+    *outGain = lastRecord.gainCorrection * (1.0 - errorRatio * 0.3);
+    *outDamping = lastRecord.dampingCorrection * (1.0 - errorRatio * 0.3);
+    *outFreq = lastRecord.freqCorrection * (1.0 - errorRatio * 0.3);
+
+    // 限制在合理范围 [0.3, 2.0]
+    *outGain = MAX(0.3, MIN(2.0, *outGain));
+    *outDamping = MAX(0.3, MIN(2.0, *outDamping));
+    *outFreq = MAX(0.3, MIN(2.0, *outFreq));
+}
+
+/// 🔧 构建单轴快照
+- (PIDAxisTuningSnapshot *)buildSnapshotForAxis:(NSInteger)axisIndex currentPID:(PIDValues *)currentPID {
+    PIDAxisTuningSnapshot *snapshot = [[PIDAxisTuningSnapshot alloc] init];
+    snapshot.originalPID = [self pidValuesForAxis:axisIndex fromCurrent:currentPID];
+
+    // 实际特征
+    PIDResponseFeatures *actualFeatures = nil;
+    PIDTuningResult *tuningResult = nil;
+    switch (axisIndex) {
+        case 0: actualFeatures = self.rollFeatures; tuningResult = self.rollTuningResult; break;
+        case 1: actualFeatures = self.pitchFeatures; tuningResult = self.pitchTuningResult; break;
+        case 2: actualFeatures = self.yawFeatures; tuningResult = self.yawTuningResult; break;
+    }
+    snapshot.actualFeatures = actualFeatures;
+
+    if (tuningResult) {
+        snapshot.recommendedPID = tuningResult.recommendedPID;
+        snapshot.predictedCurve = tuningResult.predictedCurve;
+        // 预测特征
+        PIDResponseFeatures *predFeatures = [[PIDResponseFeatures alloc] init];
+        predFeatures.overshoot = tuningResult.predictedOvershoot;
+        predFeatures.riseTime = tuningResult.predictedRiseTime;
+        snapshot.predictedFeatures = predFeatures;
+    }
+
+    return snapshot;
 }
 
 /// 从统一PID提取单轴PID值
