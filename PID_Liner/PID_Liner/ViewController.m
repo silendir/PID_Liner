@@ -474,6 +474,13 @@
     NSString *craftLine = [NSString stringWithFormat:@"# Craft name:%@\n", craftName];
     NSString *newContent = [craftLine stringByAppendingString:content];
 
+    // 同时注入飞行时间（BBL header 的真实飞行时刻）
+    int64_t flightTimeUs = self.decoder.logHeader.startDatetimeUs;
+    if (flightTimeUs > 0) {
+        NSString *timeLine = [NSString stringWithFormat:@"# Flight time:%lld\n", flightTimeUs];
+        newContent = [timeLine stringByAppendingString:newContent];
+    }
+
     [newContent writeToFile:csvPath atomically:YES encoding:NSUTF8StringEncoding error:&error];
     if (error) {
         NSLog(@"⚠️ [CSV注入] 写入CSV失败: %@", error.localizedDescription);

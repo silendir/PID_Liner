@@ -163,7 +163,7 @@ static const NSInteger kDefaultMaxRows = 100000;
 
 - (nullable NSString *)extractCraftNameFromCSV:(NSString *)filePath {
     NSString *craftName = nil;
-    [self readFirstNonCommentLine:filePath error:nil extractedCraftName:&craftName];
+    [self readFirstNonCommentLine:filePath error:nil extractedCraftName:&craftName extractedFlightTime:nil];
     return craftName;
 }
 
@@ -194,9 +194,11 @@ static const NSInteger kDefaultMaxRows = 100000;
 
         // 读取并解析表头（跳过注释行，提取craftName）
         NSString *parsedCraftName = nil;
+        NSString *parsedFlightTimeStr = nil;
         NSString *headerLine = [self readFirstNonCommentLine:filePath
                                                        error:nil
-                                        extractedCraftName:&parsedCraftName];
+                                        extractedCraftName:&parsedCraftName
+                                        extractedFlightTime:&parsedFlightTimeStr];
         NSArray<NSString *> *headers = [self parseCSVLine:headerLine];
         [self buildFieldIndexes:headers];
 
@@ -238,6 +240,14 @@ static const NSInteger kDefaultMaxRows = 100000;
         PIDCSVData *result = [self buildResult];
         result.dataLength = currentRow;
         result.craftName = parsedCraftName;  // 🔧 传递 craftName
+
+        // 🔧 传递 flightTime（从 # Flight time:XXX 微秒时间戳转换）
+        if (parsedFlightTimeStr.length > 0) {
+            int64_t flightTimeUs = [parsedFlightTimeStr longLongValue];
+            if (flightTimeUs > 0) {
+                result.flightTime = [NSDate dateWithTimeIntervalSince1970:flightTimeUs / 1000000.0];
+            }
+        }
 
         // 计算采样率
         if (result.timeUs.count > 1) {
@@ -384,7 +394,7 @@ static const NSInteger kDefaultMaxRows = 100000;
  * 读取文件第一行
  */
 - (nullable NSString *)readFirstLine:(NSString *)filePath error:(NSError **)error {
-    return [self readFirstNonCommentLine:filePath error:error extractedCraftName:nil];
+    return [self readFirstNonCommentLine:filePath error:error extractedCraftName:nil extractedFlightTime:nil];
 }
 
 /**
@@ -392,10 +402,12 @@ static const NSInteger kDefaultMaxRows = 100000;
  * @param filePath 文件路径
  * @param error 错误输出
  * @param craftName 输出 craftName（如果CSV头包含 `# Craft name:XXX`）
+ * @param flightTimeStr 输出飞行时间字符串（如果CSV头包含 `# Flight time:XXX`）
  */
 - (nullable NSString *)readFirstNonCommentLine:(NSString *)filePath
                                          error:(NSError **)error
-                          extractedCraftName:(NSString **)craftName {
+                          extractedCraftName:(NSString **)craftName
+                       extractedFlightTime:(NSString **)flightTimeStr {
     NSData *fileData = [NSData dataWithContentsOfFile:filePath];
     if (!fileData || fileData.length == 0) {
         return nil;
@@ -412,11 +424,16 @@ static const NSInteger kDefaultMaxRows = 100000;
         if (trimmed.length == 0) continue;
 
         if ([trimmed hasPrefix:@"#"]) {
-            // 注释行 — 检查是否包含 craftName
+            // 注释行 — 提取 craftName 和 flightTime
             if ([trimmed hasPrefix:@"# Craft name:"] && craftName) {
                 *craftName = [[trimmed substringFromIndex:13]
                               stringByTrimmingCharactersInSet:
                               [NSCharacterSet whitespaceCharacterSet]];
+            }
+            if ([trimmed hasPrefix:@"# Flight time:"] && flightTimeStr) {
+                *flightTimeStr = [[trimmed substringFromIndex:14]
+                                  stringByTrimmingCharactersInSet:
+                                  [NSCharacterSet whitespaceCharacterSet]];
             }
             continue;
         }

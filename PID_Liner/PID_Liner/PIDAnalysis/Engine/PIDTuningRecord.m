@@ -84,6 +84,8 @@
     if (self.pitchSnapshot) d[@"pitchSnapshot"] = [self.pitchSnapshot toDictionary];
     if (self.yawSnapshot) d[@"yawSnapshot"] = [self.yawSnapshot toDictionary];
     if (self.cliCommands) d[@"cliCommands"] = self.cliCommands;
+    if (self.csvFingerprint) d[@"csvFingerprint"] = self.csvFingerprint;
+    if (self.flightTime) d[@"flightTime"] = @([self.flightTime timeIntervalSince1970]);
     d[@"gainCorrection"] = @(self.gainCorrection);
     d[@"dampingCorrection"] = @(self.dampingCorrection);
     d[@"freqCorrection"] = @(self.freqCorrection);
@@ -110,6 +112,10 @@
         r.yawSnapshot = [PIDAxisTuningSnapshot fromDictionary:dict[@"yawSnapshot"]];
     }
     r.cliCommands = dict[@"cliCommands"];
+    r.csvFingerprint = dict[@"csvFingerprint"];
+    if (dict[@"flightTime"]) {
+        r.flightTime = [NSDate dateWithTimeIntervalSince1970:[dict[@"flightTime"] doubleValue]];
+    }
     r.gainCorrection = [dict[@"gainCorrection"] doubleValue];
     r.dampingCorrection = [dict[@"dampingCorrection"] doubleValue];
     r.freqCorrection = [dict[@"freqCorrection"] doubleValue];

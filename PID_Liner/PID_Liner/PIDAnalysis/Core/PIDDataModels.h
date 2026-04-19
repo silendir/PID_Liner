@@ -63,6 +63,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 // 元数据 (从CSV头注释行解析)
 @property (nonatomic, copy, nullable) NSString *craftName;       // 飞机名称 (BBL Header)
+@property (nonatomic, strong, nullable) NSDate *flightTime;      // 真实飞行时间 (BBL Header)
 
 /**
  * 获取指定轴的陀螺仪数据

@@ -14,13 +14,16 @@
 #import "PIDRecommendationEngine.h"
 #import "PIDCLIGenerator.h"
 #import "PIDTuningHistoryManager.h"
+#import "BlackboxDecoder.h"
 #import <objc/runtime.h>
 #import <AAChartKit/AAChartKit.h>
 #import <SVProgressHUD/SVProgressHUD.h>
 #import <mach/mach_time.h>
 #import <WebKit/WebKit.h>
+#import <MobileCoreServices/MobileCoreServices.h>
+#import <CommonCrypto/CommonDigest.h>
 
-@interface PIDAnalysisViewController () <UITabBarControllerDelegate>
+@interface PIDAnalysisViewController () <UITabBarControllerDelegate, UIDocumentPickerDelegate>
 
 // Tab控制器
 @property (nonatomic, strong) UITabBarController *tabBarController;
@@ -258,16 +261,39 @@
     infoLabel.textColor = [UIColor secondaryLabelColor];
     [infoBar addSubview:infoLabel];
 
+    // 🔑 "!" 说明按钮
+    UIButton *infoHelpButton = [UIButton buttonWithType:UIButtonTypeInfoLight];
+    infoHelpButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [infoHelpButton addTarget:self action:@selector(showRenameInfoAlert) forControlEvents:UIControlEventTouchUpInside];
+    [infoBar addSubview:infoHelpButton];
+
+    // 🔑 改名按钮（craftName旁边的编辑图标）
+    UIButton *renameButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    renameButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [renameButton setImage:[UIImage systemImageNamed:@"pencil"] forState:UIControlStateNormal];
+    renameButton.tintColor = [UIColor secondaryLabelColor];
+    renameButton.titleLabel.font = [UIFont systemFontOfSize:12];
+    [renameButton addTarget:self action:@selector(renameCraftNameTapped) forControlEvents:UIControlEventTouchUpInside];
+    [infoBar addSubview:renameButton];
+
     // 保存引用
     objc_setAssociatedObject(vc, "iterationInfoLabel", infoLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(vc, "renameButton", renameButton, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     [NSLayoutConstraint activateConstraints:@[
         [infoBar.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:5],
         [infoBar.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:15],
         [infoBar.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-15],
         [infoBar.heightAnchor constraintEqualToConstant:32],
-        [infoLabel.centerXAnchor constraintEqualToAnchor:infoBar.centerXAnchor],
+        [infoLabel.leadingAnchor constraintEqualToAnchor:infoBar.leadingAnchor constant:8],
         [infoLabel.centerYAnchor constraintEqualToAnchor:infoBar.centerYAnchor],
+        [infoHelpButton.leadingAnchor constraintEqualToAnchor:infoLabel.trailingAnchor constant:4],
+        [infoHelpButton.centerYAnchor constraintEqualToAnchor:infoBar.centerYAnchor],
+        [renameButton.leadingAnchor constraintEqualToAnchor:infoHelpButton.trailingAnchor constant:4],
+        [renameButton.trailingAnchor constraintEqualToAnchor:infoBar.trailingAnchor constant:-8],
+        [renameButton.centerYAnchor constraintEqualToAnchor:infoBar.centerYAnchor],
+        [renameButton.widthAnchor constraintEqualToConstant:28],
+        [renameButton.heightAnchor constraintEqualToConstant:28],
     ]];
 
     // 🔥 创建固定在顶部的滑块容器
@@ -387,6 +413,20 @@
     // 保存按钮引用
     objc_setAssociatedObject(vc, "cliCopyButton", cliCopyButton, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
+    // 🔑 导入新一轮 BBL 按钮（在CLI按钮下方）
+    UIButton *importNextButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    importNextButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [importNextButton setTitle:@"📂 导入新一轮 BBL" forState:UIControlStateNormal];
+    importNextButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    importNextButton.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    [importNextButton setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    importNextButton.layer.cornerRadius = 10;
+    importNextButton.clipsToBounds = YES;
+    importNextButton.contentEdgeInsets = UIEdgeInsetsMake(10, 20, 10, 20);
+    [importNextButton addTarget:self action:@selector(importNextBBLTapped) forControlEvents:UIControlEventTouchUpInside];
+    [contentView addSubview:importNextButton];
+    objc_setAssociatedObject(vc, "importNextButton", importNextButton, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     [NSLayoutConstraint activateConstraints:@[
         [toggleContainer.topAnchor constraintEqualToAnchor:yawChartView.bottomAnchor constant:spacing],
         [toggleContainer.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
@@ -395,7 +435,11 @@
         [cliCopyButton.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
         [cliCopyButton.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-20],
         [cliCopyButton.heightAnchor constraintEqualToConstant:48],
-        [contentView.bottomAnchor constraintEqualToAnchor:cliCopyButton.bottomAnchor constant:spacing]
+        [importNextButton.topAnchor constraintEqualToAnchor:cliCopyButton.bottomAnchor constant:12],
+        [importNextButton.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
+        [importNextButton.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-20],
+        [importNextButton.heightAnchor constraintEqualToConstant:44],
+        [contentView.bottomAnchor constraintEqualToAnchor:importNextButton.bottomAnchor constant:spacing]
     ]];
 
     // 🔥 设置滑块容器约束（固定在顶部）
@@ -887,11 +931,11 @@
         cliButton.hidden = NO;
     }
 
-    // 🔑 显示迭代信息栏
+    // 🔑 显示迭代信息栏（始终显示，让用户可以改名）
     [self updateIterationInfoBar];
     UILabel *infoLabel = objc_getAssociatedObject(_responseViewController, "iterationInfoLabel");
     UIView *infoBar = infoLabel.superview;
-    if (infoBar && self.currentCraftName.length) {
+    if (infoBar) {
         infoBar.hidden = NO;
     }
 
@@ -1947,6 +1991,7 @@
 
     if (!self.currentCraftName.length) {
         NSLog(@"ℹ️ [调参历史] craftName为空，无历史记录");
+        // 仍然显示信息栏，让用户可以通过改名手动设置
         return;
     }
 
@@ -2169,6 +2214,8 @@
     record.createdAt = [NSDate date];
     record.csvFileName = [self.csvFilePath lastPathComponent];
     record.cliCommands = self.cliCommands;
+    record.csvFingerprint = [self csvFingerprintForFile:self.csvFilePath];
+    record.flightTime = self.parsedData.flightTime; // BBL真实飞行时间
     record.gainCorrection = gainCorrection;
     record.dampingCorrection = dampingCorrection;
     record.freqCorrection = freqCorrection;
@@ -2179,11 +2226,8 @@
     record.pitchSnapshot = [self buildSnapshotForAxis:1 currentPID:currentPID];
     record.yawSnapshot = [self buildSnapshotForAxis:2 currentPID:currentPID];
 
-    // 保存
-    [mgr saveRecord:record];
-
-    // 更新内存中的历史
-    self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
+    // 保存（含飞行时间排序校验）
+    [self checkFlightTimeOrderingAndSave:record manager:mgr];
 }
 
 /// 🔧 计算修正系数和准确度
@@ -2307,6 +2351,370 @@
     [UIPasteboard generalPasteboard].string = self.cliCommands;
     [SVProgressHUD showSuccessWithStatus:@"CLI命令已复制"];
     NSLog(@"📋 CLI命令已复制到剪贴板 (%lu字符)", (unsigned long)self.cliCommands.length);
+}
+
+#pragma mark - 导入新一轮 BBL
+
+/// 点击"导入新一轮 BBL"按钮
+- (void)importNextBBLTapped {
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.data"]
+                                                              inMode:UIDocumentPickerModeImport];
+    picker.delegate = self;
+    picker.modalPresentationStyle = UIModalPresentationPageSheet;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+/// UIDocumentPicker 回调 — 选中文件后自动转换并跳转
+- (void)documentPicker:(UIDocumentPickerViewController *)controller
+didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    if (urls.count == 0) return;
+
+    NSURL *selectedURL = urls.firstObject;
+    NSString *extension = selectedURL.pathExtension.lowercaseString;
+
+    // 只接受 .bbl 文件
+    if (![extension isEqualToString:@"bbl"]) {
+        [SVProgressHUD showErrorWithStatus:@"请选择 .bbl 文件"];
+        return;
+    }
+
+    // 将文件拷贝到 Documents 目录（picker 给的是临时路径）
+    NSString *docsDir = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *fileName = selectedURL.lastPathComponent;
+    NSString *destPath = [docsDir stringByAppendingPathComponent:fileName];
+
+    // 如果已存在同名文件，加序号避免覆盖
+    if ([[NSFileManager defaultManager] fileExistsAtPath:destPath]) {
+        NSString *baseName = [fileName stringByDeletingPathExtension];
+        NSString *ext = [fileName pathExtension];
+        NSInteger idx = 1;
+        do {
+            destPath = [docsDir stringByAppendingPathComponent:
+                        [NSString stringWithFormat:@"%@_%ld.%@", baseName, (long)idx, ext]];
+            idx++;
+        } while ([[NSFileManager defaultManager] fileExistsAtPath:destPath]);
+    }
+
+    NSError *copyError = nil;
+    [[NSFileManager defaultManager] copyItemAtPath:selectedURL.path toPath:destPath error:&copyError];
+    if (copyError) {
+        [SVProgressHUD showErrorWithStatus:@"文件导入失败"];
+        NSLog(@"❌ [导入BBL] 复制失败: %@", copyError.localizedDescription);
+        return;
+    }
+
+    NSLog(@"✅ [导入BBL] 文件已拷贝: %@", destPath);
+    [SVProgressHUD showWithStatus:@"正在转换 BBL..."];
+
+    // 后台线程：列出 Session → 转换第一个 Session → 注入 craftName
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
+        decoder.outputDirectory = docsDir;
+
+        NSArray<BBLSessionInfo *> *sessions = [decoder listLogs:destPath];
+        if (sessions.count == 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [SVProgressHUD showErrorWithStatus:@"BBL文件无有效Session"];
+            });
+            return;
+        }
+
+        // 转换第一个 Session
+        BBLSessionInfo *firstSession = sessions.firstObject;
+        int result = [decoder decodeFlightLog:destPath logIndex:firstSession.logIndex];
+
+        if (result != 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [SVProgressHUD showErrorWithStatus:@"BBL转换失败"];
+            });
+            return;
+        }
+
+        // 重命名输出文件（解码器生成的文件名 → 带时间戳的文件名）
+        NSString *originalFileName = [NSString stringWithFormat:@"%@.%02d.csv",
+            [[destPath lastPathComponent] stringByDeletingPathExtension], firstSession.logIndex + 1];
+        NSString *originalPath = [docsDir stringByAppendingPathComponent:originalFileName];
+
+        // 生成带时间戳的新文件名
+        NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+        fmt.dateFormat = @"yyyyMMdd_HHmmss";
+        NSString *timestamp = [fmt stringFromDate:[NSDate date]];
+        NSString *baseName = [[destPath lastPathComponent] stringByDeletingPathExtension];
+        NSString *csvFileName = [NSString stringWithFormat:@"%@_%@_session1.csv", baseName, timestamp];
+        NSString *outputPath = [docsDir stringByAppendingPathComponent:csvFileName];
+
+        // 如果目标已存在先删除
+        if ([[NSFileManager defaultManager] fileExistsAtPath:outputPath]) {
+            [[NSFileManager defaultManager] removeItemAtPath:outputPath error:nil];
+        }
+
+        NSString *finalPath = originalPath;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:originalPath]) {
+            NSError *renameErr = nil;
+            if ([[NSFileManager defaultManager] moveItemAtPath:originalPath toPath:outputPath error:&renameErr]) {
+                finalPath = outputPath;
+            } else {
+                NSLog(@"⚠️ [导入BBL] 重命名失败，使用原路径: %@", renameErr.localizedDescription);
+            }
+        }
+
+        // 注入 craftName + flight time
+        NSString *craftName = decoder.logHeader.craftName;
+        int64_t flightTimeUs = decoder.logHeader.startDatetimeUs;
+        [self injectFlightDataToCSV:finalPath craftName:craftName flightTimeUs:flightTimeUs];
+
+        // 计算新CSV指纹
+        NSString *newFingerprint = [self csvFingerprintForFile:finalPath];
+
+        // 检查是否与上一轮数据完全相同
+        BOOL isDuplicateData = NO;
+        NSString *duplicateRoundInfo = nil;
+        if (craftName.length) {
+            PIDTuningHistoryManager *mgr = [PIDTuningHistoryManager sharedManager];
+            PIDTuningRecord *latestRecord = [mgr latestRecordForCraft:craftName];
+            if (latestRecord && latestRecord.csvFingerprint.length && newFingerprint.length) {
+                if ([latestRecord.csvFingerprint isEqualToString:newFingerprint]) {
+                    isDuplicateData = YES;
+                    duplicateRoundInfo = [NSString stringWithFormat:@"第%ld轮", (long)latestRecord.iteration];
+                }
+            }
+        }
+
+        // 清理导入的 BBL 临时文件
+        [[NSFileManager defaultManager] removeItemAtPath:destPath error:nil];
+
+        // 主线程：指纹校验 → 跳转
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [SVProgressHUD dismiss];
+
+            if (isDuplicateData) {
+                // ⚠️ 弹窗警告
+                NSString *msg = [NSString stringWithFormat:
+                    @"检测到本轮数据与%@完全相同。\n您是否已按照上轮CLI命令修改PID并重新飞行？",
+                    duplicateRoundInfo];
+                UIAlertController *alert = [UIAlertController
+                    alertControllerWithTitle:@"⚠️ 数据重复"
+                    message:msg
+                    preferredStyle:UIAlertControllerStyleAlert];
+
+                [alert addAction:[UIAlertAction actionWithTitle:@"重新选文件"
+                    style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+                        // 取消，重新弹出文件选择器
+                        [self importNextBBLTapped];
+                    }]];
+
+                [alert addAction:[UIAlertAction actionWithTitle:@"继续分析"
+                    style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+                        // 用户确认继续
+                        [self pushNewAnalysisWithCSVPath:finalPath];
+                    }]];
+
+                [self presentViewController:alert animated:YES completion:nil];
+            } else {
+                // 数据不同，直接跳转
+                [self pushNewAnalysisWithCSVPath:finalPath];
+            }
+        });
+    });
+}
+
+/// 跳转到新的分析页面
+- (void)pushNewAnalysisWithCSVPath:(NSString *)csvPath {
+    PIDAnalysisViewController *newVC = [[PIDAnalysisViewController alloc] initWithCSVFilePath:csvPath];
+    [self.navigationController pushViewController:newVC animated:YES];
+    NSLog(@"✅ [导入BBL] 跳转新一轮分析: %@", csvPath.lastPathComponent);
+}
+
+/// 文件选择取消
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    // 用户取消，不做任何事
+}
+
+/// 在CSV头部注入 craftName + flight time 注释行
+- (void)injectFlightDataToCSV:(NSString *)csvPath craftName:(NSString *)craftName flightTimeUs:(int64_t)flightTimeUs {
+    if (!csvPath) return;
+
+    NSError *error = nil;
+    NSString *content = [NSString stringWithContentsOfFile:csvPath encoding:NSUTF8StringEncoding error:&error];
+    if (error || !content) return;
+
+    // 避免重复注入
+    if ([content containsString:@"# Craft name:"]) return;
+
+    NSMutableString *header = [NSMutableString string];
+    if (flightTimeUs > 0) {
+        [header appendFormat:@"# Flight time:%lld\n", flightTimeUs];
+    }
+    if (craftName.length) {
+        [header appendFormat:@"# Craft name:%@\n", craftName];
+    }
+
+    if (header.length == 0) return;
+    NSString *newContent = [header stringByAppendingString:content];
+    [newContent writeToFile:csvPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+/// 计算CSV文件指纹（数据点数 + 前100行数据哈希）
+- (NSString *)csvFingerprintForFile:(NSString *)csvPath {
+    if (!csvPath) return nil;
+
+    NSError *error = nil;
+    NSString *content = [NSString stringWithContentsOfFile:csvPath encoding:NSUTF8StringEncoding error:&error];
+    if (error || !content.length) return nil;
+
+    NSArray<NSString *> *lines = [content componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+
+    // 统计有效数据行（跳过注释行和空行）
+    NSInteger dataLineCount = 0;
+    NSMutableString *sampleData = [NSMutableString string];
+    NSInteger sampleLimit = 100;
+
+    for (NSString *line in lines) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (trimmed.length == 0 || [trimmed hasPrefix:@"#"]) continue;
+
+        dataLineCount++;
+        if (dataLineCount <= sampleLimit) {
+            [sampleData appendString:trimmed];
+            [sampleData appendString:@"\n"];
+        }
+    }
+
+    // 指纹格式: "数据行数|sampleData的hash"
+    NSString *hash = [self md5HashOfString:sampleData];
+    return [NSString stringWithFormat:@"%ld|%@", (long)dataLineCount, hash];
+}
+
+/// MD5 哈希（用于指纹计算）
+- (NSString *)md5HashOfString:(NSString *)string {
+    if (!string) return @"";
+    const char *cStr = [string UTF8String];
+    unsigned char digest[CC_MD5_DIGEST_LENGTH];
+    CC_MD5(cStr, (CC_LONG)strlen(cStr), digest);
+
+    NSMutableString *output = [NSMutableString stringWithCapacity:CC_MD5_DIGEST_LENGTH * 2];
+    for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++) {
+        [output appendFormat:@"%02x", digest[i]];
+    }
+    return output;
+}
+
+#pragma mark - 改名 & 说明
+
+/// "!" 按钮弹出改名说明
+- (void)showRenameInfoAlert {
+    NSString *message = @"飞机名称(craftName)用于匹配同一架飞机的调参历史。\n\n"
+        @"如果两次飞行的 craftName 不同（在 Betaflight 中修改过名称），"
+        @"系统会将其视为不同飞机，调参记录无法自动关联。\n\n"
+        @"点击旁边的 ✏️ 按钮可以手动修改名称，将当前分析归入已有的调参档案。"
+        @"改名后系统会重新加载历史记录并更新迭代轮次。";
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"关于飞机名称"
+        message:message
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+/// 改名按钮点击 — 弹出输入框修改 craftName
+- (void)renameCraftNameTapped {
+    NSString *currentName = self.currentCraftName ?: @"";
+
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"修改飞机名称"
+        message:@"改名后系统将重新匹配调参历史，迭代轮次会相应变化。"
+        preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.text = currentName;
+        textField.placeholder = @"输入飞机名称";
+        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        UITextField *textField = alert.textFields.firstObject;
+        NSString *newName = [textField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (newName.length == 0) {
+            [SVProgressHUD showErrorWithStatus:@"名称不能为空"];
+            return;
+        }
+        if ([newName isEqualToString:self.currentCraftName]) {
+            return; // 没变化
+        }
+
+        NSLog(@"✏️ [改名] %@ → %@", self.currentCraftName, newName);
+        self.currentCraftName = newName;
+
+        // 重新加载历史
+        [self loadTuningHistory];
+
+        // 刷新 UI
+        [self updateIterationInfoBar];
+        [self updateToggleControls];
+
+        // 重新渲染图表（历史虚线可能变了）
+        if (self.parsedData) {
+            [self configureResponseCharts];
+        }
+    }]];
+
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+#pragma mark - 飞行时间排序校验
+
+/// 检查新记录的飞行时间是否比上一轮更早，如果是则弹窗警告
+- (void)checkFlightTimeOrderingAndSave:(PIDTuningRecord *)record
+                                manager:(PIDTuningHistoryManager *)mgr {
+    // 只在有历史记录时检查
+    if (self.tuningHistory.count == 0 || !record.flightTime) {
+        [mgr saveRecord:record];
+        self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
+        return;
+    }
+
+    PIDTuningRecord *lastRecord = self.tuningHistory.lastObject;
+    if (!lastRecord.flightTime) {
+        // 上一轮没有飞行时间，无法对比，直接保存
+        [mgr saveRecord:record];
+        self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
+        return;
+    }
+
+    // 新记录的飞行时间比上一轮更早 → 警告
+    if ([record.flightTime compare:lastRecord.flightTime] == NSOrderedAscending) {
+        NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+        fmt.dateFormat = @"yyyy-MM-dd HH:mm";
+        NSString *lastTime = [fmt stringFromDate:lastRecord.flightTime];
+        NSString *newTime = [fmt stringFromDate:record.flightTime];
+
+        NSString *msg = [NSString stringWithFormat:
+            @"本轮飞行时间 (%@) 早于上一轮 (%@)。\n\n"
+            @"这通常意味着您导入了一份旧的飞行数据。"
+            @"确定要将其加入调参历史吗？",
+            newTime, lastTime];
+
+        UIAlertController *alert = [UIAlertController
+            alertControllerWithTitle:@"⚠️ 飞行时间异常"
+            message:msg
+            preferredStyle:UIAlertControllerStyleAlert];
+
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消加入" style:UIAlertActionStyleCancel handler:nil]];
+
+        [alert addAction:[UIAlertAction actionWithTitle:@"确定加入" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [mgr saveRecord:record];
+            self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
+        }]];
+
+        [self presentViewController:alert animated:YES completion:nil];
+    } else {
+        // 时间正常，直接保存
+        [mgr saveRecord:record];
+        self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
+    }
 }
 
 @end

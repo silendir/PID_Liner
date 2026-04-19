@@ -46,6 +46,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) double dampingCorrection;        // D变化对ζ的修正乘数
 @property (nonatomic, assign) double freqCorrection;           // FF变化对ωn的修正乘数
 
+/// CSV数据指纹（用于检测重复导入同一份数据）
+@property (nonatomic, copy, nullable) NSString *csvFingerprint; // 格式: "dataLength|md5前100行"
+
+/// 飞行时间（从BBL header读取的真实飞行时刻）
+@property (nonatomic, strong, nullable) NSDate *flightTime;
+
 /// 收敛状态
 @property (nonatomic, assign) double accuracy;                 // 本轮预测准确度 [0,1]
 @property (nonatomic, assign) BOOL isConverged;                // 是否已收敛
