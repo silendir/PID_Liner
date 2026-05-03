@@ -13,6 +13,7 @@
 @interface ViewController ()
 @property (nonatomic, strong) BlackboxDecoder *decoder;
 @property (nonatomic, strong) UINavigationController *navController;
+@property (nonatomic, copy, nullable) NSString *pendingMotorKV;  // 用户确认的电机KV值
 @end
 
 @implementation ViewController
@@ -323,7 +324,49 @@
 
 - (void)convertButtonTapped:(UIButton *)sender {
     NSLog(@"convertButtonTapped() - 开始转换");
-    [self convertBBLToCSV];
+
+    // 从 session header 读取已有的 motor_kv（如果有）
+    NSString *existingKV = nil;
+    if (_selectedSessionIndex >= 0 && _selectedSessionIndex < (NSInteger)_sessions.count) {
+        BBLSessionInfo *session = _sessions[_selectedSessionIndex];
+        existingKV = session.header.configParameters[@"motor_kv"];
+    }
+    // 如果选了"全部session"，取第一个
+    if (!existingKV && _sessions.count > 0) {
+        existingKV = _sessions[0].header.configParameters[@"motor_kv"];
+    }
+
+    NSString *defaultKV = existingKV ?: @"";
+    NSString *hint = existingKV ? @"确认电机KV值（从飞控读取）" : @"输入电机KV值（见电机规格）";
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"电机 KV 值"
+        message:hint
+        preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.keyboardType = UIKeyboardTypeNumberPad;
+        textField.placeholder = @"如: 2300";
+        textField.text = defaultKV;
+    }];
+
+    UIAlertAction *confirm = [UIAlertAction actionWithTitle:@"确认转换"
+        style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) {
+            UITextField *tf = alert.textFields.firstObject;
+            self.pendingMotorKV = tf.text.integerValue > 0 ? [tf.text copy] : nil;
+            [self convertBBLToCSV];
+        }];
+
+    UIAlertAction *skip = [UIAlertAction actionWithTitle:@"跳过"
+        style:UIAlertActionStyleCancel
+        handler:^(UIAlertAction *action) {
+            self.pendingMotorKV = nil;
+            [self convertBBLToCSV];
+        }];
+
+    [alert addAction:skip];
+    [alert addAction:confirm];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)historyButtonTapped {
@@ -451,15 +494,9 @@
 
 #pragma mark - Helper Methods
 
-/// 🔧 在CSV文件头部注入 craftName 注释行
+/// 🔧 在CSV文件头部注入 BBL 元数据注释行（craftName、flightTime、firmwareVersion、PID）
 - (void)injectCraftNameToCSV:(NSString *)csvPath {
     if (!csvPath) return;
-
-    NSString *craftName = self.decoder.logHeader.craftName;
-    if (!craftName.length) {
-        NSLog(@"⚠️ [CSV注入] craftName为空，跳过注入");
-        return;
-    }
 
     NSError *error = nil;
     NSString *content = [NSString stringWithContentsOfFile:csvPath
@@ -470,22 +507,59 @@
         return;
     }
 
-    // 在文件头部插入 craftName 注释行
-    NSString *craftLine = [NSString stringWithFormat:@"# Craft name:%@\n", craftName];
-    NSString *newContent = [craftLine stringByAppendingString:content];
+    NSString *newContent = content;
 
-    // 同时注入飞行时间（BBL header 的真实飞行时刻）
+    // 注入当前PID值（从BBL header configParameters提取）
+    NSDictionary *pidValues = self.decoder.logHeader.currentPIDValues;
+    if (pidValues.count > 0) {
+        for (NSString *axis in @[@"roll", @"pitch", @"yaw"]) {
+            NSDictionary *axisPID = pidValues[axis];
+            if (!axisPID) continue;
+            // 格式: # PID roll:42,85,35,65 (p,i,d,ff)
+            int p = [axisPID[@"p"] intValue];
+            int i = [axisPID[@"i"] intValue];
+            int d = [axisPID[@"d"] intValue];
+            int ff = [axisPID[@"ff"] intValue];
+            if (p > 0 || i > 0 || d > 0 || ff > 0) {
+                NSString *pidLine = [NSString stringWithFormat:@"# PID %@:%d,%d,%d,%d\n", axis, p, i, d, ff];
+                newContent = [pidLine stringByAppendingString:newContent];
+            }
+        }
+    }
+
+    // 注入固件版本代码（如 405 = BF 4.5）
+    NSInteger fwVersion = self.decoder.logHeader.firmwareVersionCode;
+    if (fwVersion > 0) {
+        NSString *fwLine = [NSString stringWithFormat:@"# Firmware version:%ld\n", (long)fwVersion];
+        newContent = [fwLine stringByAppendingString:newContent];
+    }
+
+    // 注入电机KV值（用户确认/手动输入）
+    if (self.pendingMotorKV.length > 0) {
+        NSString *kvLine = [NSString stringWithFormat:@"# Motor KV:%@\n", self.pendingMotorKV];
+        newContent = [kvLine stringByAppendingString:newContent];
+    }
+
+    // 注入飞行时间（BBL header 的真实飞行时刻）
     int64_t flightTimeUs = self.decoder.logHeader.startDatetimeUs;
     if (flightTimeUs > 0) {
         NSString *timeLine = [NSString stringWithFormat:@"# Flight time:%lld\n", flightTimeUs];
         newContent = [timeLine stringByAppendingString:newContent];
     }
 
+    // 注入 craftName 注释行
+    NSString *craftName = self.decoder.logHeader.craftName;
+    if (craftName.length > 0) {
+        NSString *craftLine = [NSString stringWithFormat:@"# Craft name:%@\n", craftName];
+        newContent = [craftLine stringByAppendingString:newContent];
+    }
+
     [newContent writeToFile:csvPath atomically:YES encoding:NSUTF8StringEncoding error:&error];
     if (error) {
         NSLog(@"⚠️ [CSV注入] 写入CSV失败: %@", error.localizedDescription);
     } else {
-        NSLog(@"🔧 [CSV注入] 已注入 craftName: %@", craftName);
+        NSLog(@"🔧 [CSV注入] 已注入元数据: craftName=%@, fwVersion=%ld",
+              craftName, (long)fwVersion);
     }
 }
 

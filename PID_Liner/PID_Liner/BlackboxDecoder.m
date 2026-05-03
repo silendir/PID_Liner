@@ -778,7 +778,31 @@
         return -1;
     }
 
-    // 步骤5: 清理资源
+    // 步骤5: 提取BBL元数据（固件版本、craftName等）
+    BBLMetadata metadata;
+    memset(&metadata, 0, sizeof(metadata));
+    DecodeStatus metaStatus = blackbox_extract_metadata([filename UTF8String], &metadata);
+    if (metaStatus == DECODE_SUCCESS) {
+        if (!self.logHeader) {
+            self.logHeader = [[BBLLogHeader alloc] init];
+        }
+        if (metadata.firmwareVersion[0] != '\0') {
+            self.logHeader.firmwareRevision =
+                [[NSString alloc] initWithUTF8String:metadata.firmwareVersion];
+        }
+        if (metadata.craftName[0] != '\0') {
+            self.logHeader.craftName =
+                [[NSString alloc] initWithUTF8String:metadata.craftName];
+        }
+        self.logHeader.looptime = metadata.looptime;
+        NSLog(@"🔧 [元数据] firmwareRevision=%@, craftName=%@, looptime=%d",
+              self.logHeader.firmwareRevision, self.logHeader.craftName, metadata.looptime);
+        blackbox_free_metadata(&metadata);
+    } else {
+        NSLog(@"⚠️ [元数据] 提取失败，状态码: %d", (int)metaStatus);
+    }
+
+    // 步骤6: 清理解码结果资源
     blackbox_free_decode_result(&result);
 
     // 返回0表示成功 (对应C程序)
@@ -891,6 +915,10 @@
     NSMutableString *headerString = [NSMutableString string];
     NSMutableArray *fieldNames = [NSMutableArray array];
 
+    // 临时设置 logHeader，让 parseHeaderLine: 可以写入
+    BBLLogHeader *prevHeader = self.logHeader;
+    self.logHeader = header;
+
     while (!reader.eof) {
         uint8_t byte = [reader readByte];
 
@@ -898,18 +926,12 @@
             NSString *line = [headerString copy];
             [headerString setString:@""];
 
-            // 解析头部行
+            // 解析头部行 — 复用 parseHeaderLine: 解析所有字段
             if ([line hasPrefix:@"H "]) {
-                // 解析基本信息
-                NSString *content = [line substringFromIndex:2];
-                if ([content hasPrefix:@"Product:"]) {
-                    header.product = [[content substringFromIndex:8] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                }
+                [self parseHeaderLine:line];
             } else if ([line hasPrefix:@"Field I "]) {
-                // 记录字段定义
                 [fieldNames addObject:line];
             } else if (line.length == 0) {
-                // 空行表示Header结束
                 break;
             }
         } else {
@@ -917,10 +939,13 @@
         }
     }
 
+    // 恢复原来的 logHeader
+    self.logHeader = prevHeader;
+
     header.fieldNames = [fieldNames copy];
 
-    NSLog(@"✅ Header解析完成: Product=%@, Fields=%lu",
-          header.product, (unsigned long)fieldNames.count);
+    NSLog(@"✅ Header解析完成: Product=%@, CraftName=%@, Firmware=%@, Fields=%lu",
+          header.product, header.craftName, header.firmwareRevision, (unsigned long)fieldNames.count);
 
     return header.product.length > 0 ? header : nil;
 }

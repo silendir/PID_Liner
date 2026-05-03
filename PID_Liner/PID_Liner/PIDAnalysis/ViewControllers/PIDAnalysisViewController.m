@@ -14,6 +14,7 @@
 #import "PIDRecommendationEngine.h"
 #import "PIDCLIGenerator.h"
 #import "PIDTuningHistoryManager.h"
+#import "IterationChainManager.h"
 #import "BlackboxDecoder.h"
 #import <objc/runtime.h>
 #import <AAChartKit/AAChartKit.h>
@@ -55,6 +56,8 @@
 @property (nonatomic, strong) NSArray<PIDTuningRecord *> *tuningHistory;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *hiddenIterationIndexes;  // 勾选控制：被隐藏的轮次索引
 @property (nonatomic, assign) BOOL hideCurrentPrediction;  // 是否隐藏本轮预测
+@property (nonatomic, assign) BOOL isIterationMode;        // 🔑 是否为迭代调参模式（仅从分析页内部导入新BBL时为YES）
+@property (nonatomic, copy, nullable) NSString *currentChainId;  // 🔑 当前迭代链ID
 
 // UI状态
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
@@ -76,7 +79,8 @@
         _tuningHistory = @[];
         _hiddenIterationIndexes = [NSMutableSet set];
         _hideCurrentPrediction = NO;
-        [self loadTuningHistory];
+        _isIterationMode = NO;
+        // 🔑 不自动加载调参历史 — 从历史页进入的是独立分析
     }
     return self;
 }
@@ -580,6 +584,9 @@
         return;
     }
 
+    // 🔑 parsedData 已可用，尝试从CSV头恢复迭代链关联
+    [self tryRestoreChainAssociation];
+
     [_activityIndicator startAnimating];
     _statusLabel.text = @"正在分析PID数据...";
     _retryButton.hidden = YES;
@@ -686,6 +693,15 @@
             }
 
             [self updateCharts];
+
+            // 🔑 保存本轮调参记录（仅执行一次，不在runDiagnosisPipeline里重复保存）
+            {
+                PIDValues *currentPID = [self currentPIDFromParsedData];
+                if (currentPID) {
+                    [self saveCurrentTuningRecord:currentPID];
+                }
+            }
+
             [self showAnalysisComplete];
         });
 
@@ -1397,6 +1413,8 @@
         AAMarker *histMarker = [[AAMarker alloc] init];
         histMarker.radius = @0;
         histSeries.marker = histMarker;
+        // 🔑 应用隐藏状态（toggle按钮控制的显隐）
+        histSeries.visible = ![self.hiddenIterationIndexes containsObject:@(h)];
         [series addObject:histSeries];
     }
 
@@ -1411,6 +1429,8 @@
         AAMarker *predMarker = [[AAMarker alloc] init];
         predMarker.radius = @0;
         predSeries.marker = predMarker;
+        // 🔑 应用隐藏状态（toggle按钮控制的显隐）
+        predSeries.visible = !self.hideCurrentPrediction;
         [series addObject:predSeries];
     }
 
@@ -1888,16 +1908,8 @@
     NSLog(@"📊 [诊断评分] 综合=%.0f分", diagnostic.overallScore);
 
     // ===== 第2层：获取当前PID =====
-    // 尝试从BBL header获取（如果有）
-    PIDValues *currentPID = nil;
-    // TODO: 从 BlackboxDecoder.logHeader.currentPIDValues 提取，当前先用默认值
-    if (!currentPID) {
-        currentPID = [[PIDValues alloc] init];
-        currentPID.p = 42;
-        currentPID.i = 85;
-        currentPID.d = 35;
-        currentPID.ff = 65;
-    }
+    // 优先从 BBL Header CSV 注释行获取实际PID值
+    PIDValues *currentPID = [self currentPIDFromParsedData];
 
     // ===== 第4层：推荐 + 预测曲线 =====
     double sampleRate = _parsedData.sampleRate > 0 ? _parsedData.sampleRate : 8000.0;
@@ -1950,16 +1962,14 @@
     self.yawTuningResult = tuningResults.count > 2 ? tuningResults[2] : nil;
 
     // ===== 第5层：生成 CLI 命令 =====
+    NSInteger fwVersion = _parsedData.firmwareVersionCode;
     self.cliCommands = [PIDCLIGenerator generateCLICommands:self.rollTuningResult
                                                 pitchResult:self.pitchTuningResult
                                                   yawResult:self.yawTuningResult
                                                   currentPID:currentPID.toDictionary
-                                             firmwareVersion:0];  // TODO: 从BBL header获取
+                                             firmwareVersion:fwVersion];
 
     NSLog(@"📋 [CLI命令]\n%@", self.cliCommands);
-
-    // ===== 保存本轮调参记录 =====
-    [self saveCurrentTuningRecord:currentPID];
 
     // 性能统计
     mach_timebase_info_data_t info;
@@ -1971,7 +1981,33 @@
 
 #pragma mark - 迭代闭环调参历史
 
-/// 加载调参历史（从CSV中提取craftName，查找对应历史文件）
+/// 🔧 尝试恢复迭代链关联（仅从CSV头的Chain ID标记恢复）
+/// 🔑 只有通过"导入下一轮"生成的CSV才会带 # Chain ID: 标记
+/// 首次BBL→CSV的CSV不带此标记，不会被错误关联
+- (void)tryRestoreChainAssociation {
+    if (self.currentChainId.length) return; // 已有链，不需要恢复
+    if (!self.csvFilePath.length) return;
+
+    // 🔑 唯一恢复方式：从CSV头读取 Chain ID（只有"导入下一轮"的CSV才有）
+    if (self.parsedData.chainId.length) {
+        NSString *csvChainId = self.parsedData.chainId;
+        IterationChain *chain = [[IterationChainManager sharedManager] chainForId:csvChainId];
+        if (chain) {
+            self.currentChainId = csvChainId;
+            self.tuningHistory = [chain.records copy];
+            self.isIterationMode = YES;
+            NSLog(@"🔄 [迭代链] CSV头恢复: 链%@ (%lu轮, 第%ld轮导入)",
+                  chain.chainId, (unsigned long)chain.records.count,
+                  (long)self.parsedData.chainIteration);
+            return;
+        }
+    }
+
+    NSLog(@"ℹ️ [迭代链] CSV无Chain标记，作为独立分析");
+}
+
+/// 加载调参历史（从迭代链中加载）
+/// 🔑 仅在迭代模式下调用，从历史页进入时不会调用
 - (void)loadTuningHistory {
     if (!self.csvFilePath.length) return;
 
@@ -1990,15 +2026,25 @@
     }
 
     if (!self.currentCraftName.length) {
-        NSLog(@"ℹ️ [调参历史] craftName为空，无历史记录");
-        // 仍然显示信息栏，让用户可以通过改名手动设置
+        NSLog(@"ℹ️ [迭代链] craftName为空，无历史记录");
         return;
     }
 
-    // 加载历史记录
+    // 🔑 从迭代链加载历史记录
+    if (self.currentChainId.length) {
+        IterationChain *chain = [[IterationChainManager sharedManager] chainForId:self.currentChainId];
+        if (chain) {
+            self.tuningHistory = [chain.records copy];
+            NSLog(@"📂 [迭代链] 链%@ 已加载 %lu 轮记录",
+                  chain.chainId, (unsigned long)self.tuningHistory.count);
+            return;
+        }
+    }
+
+    // 兼容旧数据：如果 chainId 不存在，从旧的 PIDTuningHistoryManager 加载
     PIDTuningHistoryManager *mgr = [PIDTuningHistoryManager sharedManager];
     self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
-    NSLog(@"📂 [调参历史] %@ 已加载 %lu 轮记录",
+    NSLog(@"📂 [调参历史-兼容] %@ 已加载 %lu 轮记录",
           self.currentCraftName, (unsigned long)self.tuningHistory.count);
 }
 
@@ -2006,6 +2052,13 @@
 - (void)updateIterationInfoBar {
     UILabel *infoLabel = objc_getAssociatedObject(_responseViewController, "iterationInfoLabel");
     if (!infoLabel) return;
+
+    // 🔑 非迭代模式：隐藏迭代信息栏
+    if (!self.isIterationMode) {
+        infoLabel.hidden = YES;
+        return;
+    }
+    infoLabel.hidden = NO;
 
     NSInteger iteration = self.tuningHistory.count + 1;  // 本轮 = 已有轮数 + 1
     NSString *craftName = self.currentCraftName ?: @"未知飞机";
@@ -2052,10 +2105,17 @@
     }
 }
 
-/// 🔧 更新虚线显隐勾选控件
+/// 🔧 更新虚线显隐勾选控件（非迭代模式时隐藏）
 - (void)updateToggleControls {
     UIStackView *container = objc_getAssociatedObject(_responseViewController, "toggleContainer");
     if (!container) return;
+
+    // 🔑 非迭代模式：隐藏勾选控件
+    if (!self.isIterationMode) {
+        container.hidden = YES;
+        return;
+    }
+    container.hidden = NO;
 
     // 清空现有子视图
     for (UIView *sub in container.arrangedSubviews) {
@@ -2182,15 +2242,31 @@
                            alpha:1.0];
 }
 
-/// 🔧 保存本轮调参记录到历史文件
+/// 🔧 保存本轮调参记录到历史文件（含指纹去重）
+/// 🔑 仅在迭代模式（从分析页内部导入新BBL）时才保存，独立分析不保存
+/// 🔧 确保迭代链存在并保存记录（所有分析完成后调用，防止切app丢数据）
 - (void)saveCurrentTuningRecord:(PIDValues *)currentPID {
-    if (!self.currentCraftName.length) {
-        NSLog(@"⚠️ [调参历史] craftName为空，跳过保存");
+    if (!self.isIterationMode) {
+        NSLog(@"ℹ️ [迭代链] 非迭代模式，跳过保存（独立分析）");
         return;
     }
 
-    PIDTuningHistoryManager *mgr = [PIDTuningHistoryManager sharedManager];
-    NSInteger iteration = [mgr nextIterationForCraft:self.currentCraftName];
+    if (!self.currentCraftName.length) {
+        NSLog(@"⚠️ [迭代链] craftName为空，跳过保存");
+        return;
+    }
+
+    if (!self.currentChainId.length) {
+        NSLog(@"⚠️ [迭代链] chainId为空，跳过保存");
+        return;
+    }
+
+    [self saveCurrentRecordToChain:self.currentChainId currentPID:currentPID];
+}
+
+/// 🔧 构建并保存调参记录到指定迭代链
+- (void)saveCurrentRecordToChain:(NSString *)chainId currentPID:(PIDValues *)currentPID {
+    IterationChainManager *chainMgr = [IterationChainManager sharedManager];
 
     // 计算修正系数（对比上一轮预测 vs 本轮实际）
     double gainCorrection = 1.0;
@@ -2210,12 +2286,12 @@
     // 构建记录
     PIDTuningRecord *record = [[PIDTuningRecord alloc] init];
     record.craftName = self.currentCraftName;
-    record.iteration = iteration;
+    record.iteration = 0; // 由 IterationChainManager.appendRecord 自动设置
     record.createdAt = [NSDate date];
     record.csvFileName = [self.csvFilePath lastPathComponent];
     record.cliCommands = self.cliCommands;
     record.csvFingerprint = [self csvFingerprintForFile:self.csvFilePath];
-    record.flightTime = self.parsedData.flightTime; // BBL真实飞行时间
+    record.flightTime = self.parsedData.flightTime;
     record.gainCorrection = gainCorrection;
     record.dampingCorrection = dampingCorrection;
     record.freqCorrection = freqCorrection;
@@ -2226,8 +2302,8 @@
     record.pitchSnapshot = [self buildSnapshotForAxis:1 currentPID:currentPID];
     record.yawSnapshot = [self buildSnapshotForAxis:2 currentPID:currentPID];
 
-    // 保存（含飞行时间排序校验）
-    [self checkFlightTimeOrderingAndSave:record manager:mgr];
+    // 🔑 飞行时间排序校验后追加到迭代链
+    [self checkFlightTimeAndAppendToChain:chainId record:record chainMgr:chainMgr];
 }
 
 /// 🔧 计算修正系数和准确度
@@ -2321,13 +2397,45 @@
 
 /// 从统一PID提取单轴PID值
 - (PIDValues *)pidValuesForAxis:(NSInteger)axisIndex fromCurrent:(PIDValues *)current {
-    PIDValues *axisPID = [[PIDValues alloc] init];
-    // TODO: 如果有每轴不同的PID，从configParameters提取
-    axisPID.p = current.p;
-    axisPID.i = current.i;
-    axisPID.d = current.d;
-    axisPID.ff = current.ff;
-    return axisPID;
+    // 优先从 BBL Header 每轴配置获取
+    NSArray<NSString *> *axisNames = @[@"roll", @"pitch", @"yaw"];
+    if (axisIndex >= 0 && axisIndex < axisNames.count) {
+        NSString *axisName = axisNames[axisIndex];
+        NSDictionary *axisPID = _parsedData.currentPIDFromHeader[axisName];
+        if (axisPID) {
+            PIDValues *v = [[PIDValues alloc] init];
+            v.p = [axisPID[@"p"] doubleValue];
+            v.i = [axisPID[@"i"] doubleValue];
+            v.d = [axisPID[@"d"] doubleValue];
+            v.ff = [axisPID[@"ff"] doubleValue];
+            return v;
+        }
+    }
+    // 降级使用传入的默认值
+    return current;
+}
+
+/// 从 _parsedData.currentPIDFromHeader 构建 Roll 轴 PIDValues（用于推荐引擎默认输入）
+- (PIDValues *)currentPIDFromParsedData {
+    NSDictionary *pidConfig = _parsedData.currentPIDFromHeader;
+    if (pidConfig && pidConfig.count > 0) {
+        // 取 roll 轴作为默认（推荐引擎会按轴分别获取）
+        NSDictionary *rollPID = pidConfig[@"roll"];
+        if (rollPID) {
+            PIDValues *v = [[PIDValues alloc] init];
+            v.p = [rollPID[@"p"] doubleValue];
+            v.i = [rollPID[@"i"] doubleValue];
+            v.d = [rollPID[@"d"] doubleValue];
+            v.ff = [rollPID[@"ff"] doubleValue];
+            NSLog(@"🔧 [PID] 使用BBL Header实际PID: p=%.1f i=%.1f d=%.1f ff=%.1f", v.p, v.i, v.d, v.ff);
+            return v;
+        }
+    }
+    // 降级默认值
+    PIDValues *v = [[PIDValues alloc] init];
+    v.p = 42; v.i = 85; v.d = 35; v.ff = 65;
+    NSLog(@"⚠️ [PID] 无BBL Header PID数据，使用降级默认值");
+    return v;
 }
 
 /// 将 NSNumber 数组转为 JS 数组字符串
@@ -2507,23 +2615,60 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
                 [alert addAction:[UIAlertAction actionWithTitle:@"继续分析"
                     style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
                         // 用户确认继续
-                        [self pushNewAnalysisWithCSVPath:finalPath];
+                        [self reloadWithNewCSVPath:finalPath];
                     }]];
 
                 [self presentViewController:alert animated:YES completion:nil];
             } else {
                 // 数据不同，直接跳转
-                [self pushNewAnalysisWithCSVPath:finalPath];
+                [self reloadWithNewCSVPath:finalPath];
             }
         });
     });
 }
 
-/// 跳转到新的分析页面
-- (void)pushNewAnalysisWithCSVPath:(NSString *)csvPath {
-    PIDAnalysisViewController *newVC = [[PIDAnalysisViewController alloc] initWithCSVFilePath:csvPath];
-    [self.navigationController pushViewController:newVC animated:YES];
-    NSLog(@"✅ [导入BBL] 跳转新一轮分析: %@", csvPath.lastPathComponent);
+/// 🔧 在当前页面加载新一轮CSV数据（不创建新页面实例）
+/// 🔑 为当前分析创建/关联迭代链，刷新界面显示新数据
+- (void)reloadWithNewCSVPath:(NSString *)csvPath {
+    // 🔑 确保迭代链存在
+    if (!self.currentChainId.length) {
+        // 当前页面没有链（首次分析），为当前CSV创建一条新链作为第1轮
+        NSString *craftName = self.currentCraftName ?: self.parsedData.craftName;
+        if (craftName.length) {
+            IterationChain *newChain = [[IterationChainManager sharedManager]
+                createChainWithCraftName:craftName
+                                 csvPath:self.csvFilePath
+                            sessionIndex:0];
+            self.currentChainId = newChain.chainId;
+
+            // 如果当前分析有结果，先保存为第1轮
+            if (self.rollTuningResult) {
+                PIDValues *currentPID = [self currentPIDFromParsedData];
+                if (currentPID) {
+                    [self saveCurrentRecordToChain:self.currentChainId currentPID:currentPID];
+                }
+            }
+
+            NSLog(@"🔗 [迭代链] 首次迭代创建链: %@", self.currentChainId);
+        }
+    }
+
+    // 🔑 补注链标记（首次迭代时 injectFlightDataToCSV 尚无 chainId，此处补救）
+    [self injectChainMarkersToCSV:csvPath];
+
+    // 🔑 切换到迭代模式
+    self.isIterationMode = YES;
+
+    // 🔑 更新CSV路径，重新解析和分析
+    self.csvFilePath = csvPath;
+
+    // 重新加载调参历史（链已更新）
+    [self loadTuningHistory];
+
+    // 重新解析CSV并分析
+    [self parseAndAnalyze];
+
+    NSLog(@"✅ [导入BBL] 当前页面加载新一轮数据（链%@）: %@", self.currentChainId, csvPath.lastPathComponent);
 }
 
 /// 文件选择取消
@@ -2550,8 +2695,36 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         [header appendFormat:@"# Craft name:%@\n", craftName];
     }
 
+    // 🔑 注入迭代链标记（如果当前有链ID）
+    if (self.currentChainId.length) {
+        IterationChain *chain = [[IterationChainManager sharedManager] chainForId:self.currentChainId];
+        NSInteger iteration = chain ? chain.currentIteration : 1;
+        [header appendFormat:@"# Chain ID:%@\n", self.currentChainId];
+        [header appendFormat:@"# Chain Iteration:%ld\n", (long)iteration];
+    }
+
     if (header.length == 0) return;
     NSString *newContent = [header stringByAppendingString:content];
+    [newContent writeToFile:csvPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+/// 🔑 补注链标记到CSV（仅在链已创建但CSV缺少标记时使用）
+- (void)injectChainMarkersToCSV:(NSString *)csvPath {
+    if (!csvPath || !self.currentChainId.length) return;
+
+    NSError *error = nil;
+    NSString *content = [NSString stringWithContentsOfFile:csvPath encoding:NSUTF8StringEncoding error:&error];
+    if (error || !content) return;
+
+    // 已有链标记，跳过
+    if ([content containsString:@"# Chain ID:"]) return;
+
+    IterationChain *chain = [[IterationChainManager sharedManager] chainForId:self.currentChainId];
+    NSInteger iteration = chain ? chain.currentIteration : 1;
+
+    NSString *chainMarkers = [NSString stringWithFormat:@"# Chain ID:%@\n# Chain Iteration:%ld\n",
+        self.currentChainId, (long)iteration];
+    NSString *newContent = [chainMarkers stringByAppendingString:content];
     [newContent writeToFile:csvPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
@@ -2715,6 +2888,66 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         [mgr saveRecord:record];
         self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
     }
+}
+
+/// 🔧 飞行时间排序校验后追加到迭代链
+- (void)checkFlightTimeAndAppendToChain:(NSString *)chainId
+                                  record:(PIDTuningRecord *)record
+                               chainMgr:(IterationChainManager *)chainMgr {
+    // 只在有历史记录时检查
+    if (self.tuningHistory.count == 0 || !record.flightTime) {
+        [chainMgr appendRecord:record toChain:chainId];
+        [self reloadChainHistory:chainId];
+        return;
+    }
+
+    PIDTuningRecord *lastRecord = self.tuningHistory.lastObject;
+    if (!lastRecord.flightTime) {
+        [chainMgr appendRecord:record toChain:chainId];
+        [self reloadChainHistory:chainId];
+        return;
+    }
+
+    // 新记录的飞行时间比上一轮更早 → 弹窗提醒（不阻止）
+    if ([record.flightTime compare:lastRecord.flightTime] == NSOrderedAscending) {
+        NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+        fmt.dateFormat = @"yyyy-MM-dd HH:mm";
+        NSString *lastTime = [fmt stringFromDate:lastRecord.flightTime];
+        NSString *newTime = [fmt stringFromDate:record.flightTime];
+
+        NSString *msg = [NSString stringWithFormat:
+            @"本轮飞行时间 (%@) 早于上一轮 (%@)。\n\n"
+            @"可能是时间戳未录入或错误。确定要加入迭代链吗？",
+            newTime, lastTime];
+
+        UIAlertController *alert = [UIAlertController
+            alertControllerWithTitle:@"⚠️ 飞行时间异常"
+            message:msg
+            preferredStyle:UIAlertControllerStyleAlert];
+
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消加入" style:UIAlertActionStyleCancel handler:nil]];
+
+        [alert addAction:[UIAlertAction actionWithTitle:@"确定加入" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [chainMgr appendRecord:record toChain:chainId];
+            [self reloadChainHistory:chainId];
+        }]];
+
+        [self presentViewController:alert animated:YES completion:nil];
+    } else {
+        // 时间正常，直接追加
+        [chainMgr appendRecord:record toChain:chainId];
+        [self reloadChainHistory:chainId];
+    }
+}
+
+/// 重新加载迭代链历史到 tuningHistory
+- (void)reloadChainHistory:(NSString *)chainId {
+    IterationChain *chain = [[IterationChainManager sharedManager] chainForId:chainId];
+    if (chain) {
+        self.tuningHistory = [chain.records copy];
+    }
+    [self updateIterationInfoBar];
+    [self updateToggleControls];
 }
 
 @end

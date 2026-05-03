@@ -111,8 +111,21 @@ static NSString *const kHistoryDirectoryName = @"PIDTuningHistory";
     // 加载现有记录
     NSMutableArray<PIDTuningRecord *> *records = [[self recordsForCraft:record.craftName] mutableCopy];
 
-    // 追加新记录
-    [records addObject:record];
+    // 检查同 iteration 是否已存在（指纹命中时更新而非追加）
+    BOOL replaced = NO;
+    for (NSInteger i = 0; i < (NSInteger)records.count; i++) {
+        if (records[i].iteration == record.iteration) {
+            records[i] = record;
+            replaced = YES;
+            NSLog(@"🔄 [调参历史] 更新第%ld轮记录 (%@)", (long)record.iteration, record.craftName);
+            break;
+        }
+    }
+
+    // 不存在则追加
+    if (!replaced) {
+        [records addObject:record];
+    }
 
     // FIFO淘汰：超过最大轮数则删除最旧的
     while (records.count > kMaxIterations) {

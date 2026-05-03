@@ -27,10 +27,17 @@ static const double kMaxChangeRatio = 0.30;  // 单次最大变更30%
     [output appendFormat:@"# PID_Liner 推荐调整 (%@)\n", fwName];
     [output appendFormat:@"# 固件版本代码: %ld\n\n", (long)versionCode];
 
-    // 判断D-term命名规则
-    // BF 4.5 及之前: d_min_roll = 基础D, d_roll = D_max
-    // BF 2025+ (版本 >= 202500): d_roll = 基础D, d_max_roll = D_max
+    // BF CLI 参数命名 (4.0+): {term}_{axis} 格式
+    // D-term: BF 4.3-4.5 → d_min_roll=基础D, d_roll=峰值D
+    //         BF 2025+   → d_roll=基础D, d_max_roll=峰值D
+    // 参考: memory/bf-cli-params.md
     BOOL useNewNaming = (versionCode >= 202500);
+
+    // 低于 4.3 的版本不支持自动调参 (无完整PID参数)
+    if (versionCode > 0 && versionCode < 403) {
+        [output appendString:@"# ⚠️ 固件版本低于 4.3，不建议自动调参\n"];
+        return [output copy];
+    }
 
     // Roll 轴
     if (rollResult && rollResult.recommendedPID) {
@@ -114,30 +121,30 @@ static const double kMaxChangeRatio = 0.30;  // 单次最大变更30%
         [output appendFormat:@"# %@\n", result.reasoning];
     }
 
-    // P
+    // P — 格式: {term}_{axis} → p_roll
     if (orig.p > 0 && fabs(rec.p - orig.p) > 0.5) {
-        [output appendFormat:@"set %@_p = %d\n", axis, (int)round(rec.p)];
+        [output appendFormat:@"set p_%@ = %d\n", axis, (int)round(rec.p)];
     }
 
-    // I
+    // I — 格式: i_roll
     if (orig.i > 0 && fabs(rec.i - orig.i) > 0.5) {
-        [output appendFormat:@"set %@_i = %d\n", axis, (int)round(rec.i)];
+        [output appendFormat:@"set i_%@ = %d\n", axis, (int)round(rec.i)];
     }
 
     // D (命名取决于固件版本)
     if (orig.d > 0 && fabs(rec.d - orig.d) > 0.5) {
         if (useNewNaming) {
             // BF 2025+: d_roll = 基础D
-            [output appendFormat:@"set %@_d = %d\n", axis, (int)round(rec.d)];
+            [output appendFormat:@"set d_%@ = %d\n", axis, (int)round(rec.d)];
         } else {
-            // BF 4.5: d_min_roll = 基础D
+            // BF 4.3-4.5: d_min_roll = 基础D (d_roll 是峰值D)
             [output appendFormat:@"set d_min_%@ = %d\n", axis, (int)round(rec.d)];
         }
     }
 
-    // FF
+    // FF — 格式: f_roll
     if (orig.ff > 0 && fabs(rec.ff - orig.ff) > 0.5) {
-        [output appendFormat:@"set %@_f = %d\n", axis, (int)round(rec.ff)];
+        [output appendFormat:@"set f_%@ = %d\n", axis, (int)round(rec.ff)];
     }
 }
 

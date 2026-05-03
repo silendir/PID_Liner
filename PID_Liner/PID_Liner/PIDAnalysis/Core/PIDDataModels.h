@@ -64,6 +64,13 @@ NS_ASSUME_NONNULL_BEGIN
 // 元数据 (从CSV头注释行解析)
 @property (nonatomic, copy, nullable) NSString *craftName;       // 飞机名称 (BBL Header)
 @property (nonatomic, strong, nullable) NSDate *flightTime;      // 真实飞行时间 (BBL Header)
+@property (nonatomic, assign) NSInteger firmwareVersionCode;     // 固件版本代码 (如 405 = BF 4.5)
+@property (nonatomic, strong, nullable) NSDictionary *currentPIDFromHeader;  // BBL Header原始PID {roll:{p,i,d,ff}, pitch:..., yaw:...}
+@property (nonatomic, assign) NSInteger motorKV;                  // 电机KV值 (用户确认)
+
+// 迭代链标记 (从CSV头注释行解析，二轮+导入时写入)
+@property (nonatomic, copy, nullable) NSString *chainId;            // 迭代链ID (UUID)
+@property (nonatomic, assign) NSInteger chainIteration;             // 在链中的第几轮 (0=首次无链)
 
 /**
  * 获取指定轴的陀螺仪数据

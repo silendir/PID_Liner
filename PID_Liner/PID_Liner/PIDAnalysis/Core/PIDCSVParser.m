@@ -163,7 +163,7 @@ static const NSInteger kDefaultMaxRows = 100000;
 
 - (nullable NSString *)extractCraftNameFromCSV:(NSString *)filePath {
     NSString *craftName = nil;
-    [self readFirstNonCommentLine:filePath error:nil extractedCraftName:&craftName extractedFlightTime:nil];
+    [self readFirstNonCommentLine:filePath error:nil extractedCraftName:&craftName extractedFlightTime:nil extractedFwVersion:nil extractedPIDConfig:nil extractedMotorKV:nil extractedChainId:nil extractedChainIteration:nil];
     return craftName;
 }
 
@@ -192,13 +192,23 @@ static const NSInteger kDefaultMaxRows = 100000;
             return nil;
         }
 
-        // 读取并解析表头（跳过注释行，提取craftName）
+        // 读取并解析表头（跳过注释行，提取元数据）
         NSString *parsedCraftName = nil;
         NSString *parsedFlightTimeStr = nil;
+        NSInteger parsedFwVersion = 0;
+        NSDictionary *parsedPIDConfig = nil;
+        NSInteger parsedMotorKV = 0;
+        NSString *parsedChainId = nil;
+        NSInteger parsedChainIteration = 0;
         NSString *headerLine = [self readFirstNonCommentLine:filePath
                                                        error:nil
                                         extractedCraftName:&parsedCraftName
-                                        extractedFlightTime:&parsedFlightTimeStr];
+                                        extractedFlightTime:&parsedFlightTimeStr
+                                        extractedFwVersion:&parsedFwVersion
+                                          extractedPIDConfig:&parsedPIDConfig
+                                            extractedMotorKV:&parsedMotorKV
+                                              extractedChainId:&parsedChainId
+                                        extractedChainIteration:&parsedChainIteration];
         NSArray<NSString *> *headers = [self parseCSVLine:headerLine];
         [self buildFieldIndexes:headers];
 
@@ -248,6 +258,13 @@ static const NSInteger kDefaultMaxRows = 100000;
                 result.flightTime = [NSDate dateWithTimeIntervalSince1970:flightTimeUs / 1000000.0];
             }
         }
+
+        // 🔧 传递固件版本、PID配置和电机KV
+        result.firmwareVersionCode = parsedFwVersion;
+        result.currentPIDFromHeader = parsedPIDConfig;
+        result.motorKV = parsedMotorKV;
+        result.chainId = parsedChainId;
+        result.chainIteration = parsedChainIteration;
 
         // 计算采样率
         if (result.timeUs.count > 1) {
@@ -394,7 +411,7 @@ static const NSInteger kDefaultMaxRows = 100000;
  * 读取文件第一行
  */
 - (nullable NSString *)readFirstLine:(NSString *)filePath error:(NSError **)error {
-    return [self readFirstNonCommentLine:filePath error:error extractedCraftName:nil extractedFlightTime:nil];
+    return [self readFirstNonCommentLine:filePath error:error extractedCraftName:nil extractedFlightTime:nil extractedFwVersion:nil extractedPIDConfig:nil extractedMotorKV:nil extractedChainId:nil extractedChainIteration:nil];
 }
 
 /**
@@ -407,7 +424,12 @@ static const NSInteger kDefaultMaxRows = 100000;
 - (nullable NSString *)readFirstNonCommentLine:(NSString *)filePath
                                          error:(NSError **)error
                           extractedCraftName:(NSString **)craftName
-                       extractedFlightTime:(NSString **)flightTimeStr {
+                       extractedFlightTime:(NSString **)flightTimeStr
+                   extractedFwVersion:(NSInteger *)fwVersionOut
+                     extractedPIDConfig:(NSDictionary **)pidConfigOut
+                        extractedMotorKV:(NSInteger *)motorKVOut
+                          extractedChainId:(NSString **)chainIdOut
+                    extractedChainIteration:(NSInteger *)chainIterationOut {
     NSData *fileData = [NSData dataWithContentsOfFile:filePath];
     if (!fileData || fileData.length == 0) {
         return nil;
@@ -417,6 +439,9 @@ static const NSInteger kDefaultMaxRows = 100000;
     NSString *content = [[NSString alloc] initWithData:fileData encoding:NSUTF8StringEncoding];
     if (!content) return nil;
 
+    // 用于收集PID配置
+    NSMutableDictionary *pidConfig = [NSMutableDictionary dictionary];
+
     NSArray<NSString *> *lines = [content componentsSeparatedByString:@"\n"];
     for (NSString *line in lines) {
         NSString *trimmed = [line stringByTrimmingCharactersInSet:
@@ -424,7 +449,7 @@ static const NSInteger kDefaultMaxRows = 100000;
         if (trimmed.length == 0) continue;
 
         if ([trimmed hasPrefix:@"#"]) {
-            // 注释行 — 提取 craftName 和 flightTime
+            // 注释行 — 提取元数据
             if ([trimmed hasPrefix:@"# Craft name:"] && craftName) {
                 *craftName = [[trimmed substringFromIndex:13]
                               stringByTrimmingCharactersInSet:
@@ -435,10 +460,63 @@ static const NSInteger kDefaultMaxRows = 100000;
                                   stringByTrimmingCharactersInSet:
                                   [NSCharacterSet whitespaceCharacterSet]];
             }
+            // 固件版本: # Firmware version:405
+            if ([trimmed hasPrefix:@"# Firmware version:"] && fwVersionOut) {
+                NSString *verStr = [[trimmed substringFromIndex:19]
+                                   stringByTrimmingCharactersInSet:
+                                   [NSCharacterSet whitespaceCharacterSet]];
+                *fwVersionOut = [verStr integerValue];
+            }
+            // 电机KV: # Motor KV:2300
+            if ([trimmed hasPrefix:@"# Motor KV:"] && motorKVOut) {
+                NSString *kvStr = [[trimmed substringFromIndex:11]
+                                  stringByTrimmingCharactersInSet:
+                                  [NSCharacterSet whitespaceCharacterSet]];
+                *motorKVOut = [kvStr integerValue];
+            }
+            // 迭代链标记: # Chain ID:uuid-string
+            if ([trimmed hasPrefix:@"# Chain ID:"] && chainIdOut) {
+                *chainIdOut = [[trimmed substringFromIndex:11]
+                               stringByTrimmingCharactersInSet:
+                               [NSCharacterSet whitespaceCharacterSet]];
+            }
+            // 迭代轮次: # Chain Iteration:2
+            if ([trimmed hasPrefix:@"# Chain Iteration:"] && chainIterationOut) {
+                NSString *iterStr = [[trimmed substringFromIndex:18]
+                                    stringByTrimmingCharactersInSet:
+                                    [NSCharacterSet whitespaceCharacterSet]];
+                *chainIterationOut = [iterStr integerValue];
+            }
+            // PID配置: # PID roll:42,85,35,65 (p,i,d,ff)
+            if ([trimmed hasPrefix:@"# PID "]) {
+                NSString *pidLine = [trimmed substringFromIndex:6]; // "roll:42,85,35,65"
+                NSRange colonRange = [pidLine rangeOfString:@":"];
+                if (colonRange.location != NSNotFound) {
+                    NSString *axis = [[pidLine substringToIndex:colonRange.location]
+                                     stringByTrimmingCharactersInSet:
+                                     [NSCharacterSet whitespaceCharacterSet]];
+                    NSString *values = [[pidLine substringFromIndex:colonRange.location + 1]
+                                       stringByTrimmingCharactersInSet:
+                                       [NSCharacterSet whitespaceCharacterSet]];
+                    NSArray<NSString *> *parts = [values componentsSeparatedByString:@","];
+                    if (parts.count >= 4) {
+                        pidConfig[axis] = @{
+                            @"p": @([parts[0] doubleValue]),
+                            @"i": @([parts[1] doubleValue]),
+                            @"d": @([parts[2] doubleValue]),
+                            @"ff": @([parts[3] doubleValue])
+                        };
+                    }
+                }
+            }
             continue;
         }
 
         // 找到第一个非注释、非空行 = 表头行
+        // 传递收集的PID配置
+        if (pidConfigOut && pidConfig.count > 0) {
+            *pidConfigOut = [pidConfig copy];
+        }
         return trimmed;
     }
     return nil;
