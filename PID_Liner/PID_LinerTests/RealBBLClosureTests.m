@@ -94,16 +94,19 @@
 
     double sampleRate = data.sampleRate > 0 ? data.sampleRate : 8000.0;
 
-    // 3. stackFromData（Roll 轴，windowSize=8000 overlap=0.9375 pGain=45）
+    // 3. stackFromData（Roll 轴）
+    //    🔑 windowSize 必须匹配 sampleRate（1秒窗口）：ViewController 硬编码 8000 是假设 8kHz
+    //    本测试用真实 sampleRate（如 1024Hz→1024 点），避免窗口/采样率不匹配导致振荡
+    NSInteger windowSize = (NSInteger)sampleRate;
     PIDStackData *stackData = [PIDStackData stackFromData:data
                                                 axisIndex:0
-                                               windowSize:8000
+                                               windowSize:windowSize
                                                  overlap:0.9375
                                                     pGain:45.0];
     XCTAssertGreaterThan(stackData.windowCount, 0, @"堆叠窗口为空");
 
     // 4. Hanning 窗 + stackResponse
-    NSArray<NSNumber *> *window = [PIDTraceAnalyzer hanningWindowWithLength:8000];
+    NSArray<NSNumber *> *window = [PIDTraceAnalyzer hanningWindowWithLength:windowSize];
     PIDTraceAnalyzer *analyzer = [[PIDTraceAnalyzer alloc] init];
     PIDResponseResult *response = [analyzer stackResponse:stackData window:window];
     XCTAssertGreaterThan(response.stepResponse.count, 0, @"stepResponse为空");
@@ -143,10 +146,21 @@
           (long)response.stepResponse.count, (long)usePoints, sampleRate, steadyState,
           K, wn, wn / (2 * M_PI), zeta, rmse);
 
+    // avgCurve 形状诊断（判断 RMSE 是测试对齐问题还是模型局限）
+    double avgMin = INFINITY, avgMax = -INFINITY;
+    for (NSNumber *v in avgCurve) {
+        double dv = v.doubleValue;
+        if (dv < avgMin) avgMin = dv;
+        if (dv > avgMax) avgMax = dv;
+    }
+    double avgFirst = avgCurve.firstObject.doubleValue;
+    double avgLast = avgCurve.lastObject.doubleValue;
+
     // 决策门（归一化 RMSE）
     XCTAssertLessThan(rmse, 0.05,
-        @"真实BBL归一化RMSE=%.4f 超标 (K=%.3f ωn=%.1f ζ=%.3f steady=%.1f) → 二阶不够拟合",
-        rmse, K, wn, zeta, steadyState);
+        @"RMSE=%.4f (K=%.3f ωn=%.1fHz ζ=%.3f) avg[min=%.2f max=%.2f first=%.2f last=%.2f steady=%.1f] sr=%.0f pts=%ld",
+        rmse, K, wn / (2 * M_PI), zeta, avgMin, avgMax, avgFirst, avgLast,
+        steadyState, sampleRate, (long)usePoints);
 }
 
 @end
