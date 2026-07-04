@@ -345,8 +345,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				98C4FB1845524089BFBA073F /* IterationChain.m in Sources */,
-				C15D2FD31BAD40B280C5BFC1 /* IterationChainManager.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

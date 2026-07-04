@@ -133,4 +133,8 @@
     }
 }
 
+- (BOOL)usesSliderFormat {
+    return [self.cliCommands containsString:@"simplified_"];
+}
+
 @end

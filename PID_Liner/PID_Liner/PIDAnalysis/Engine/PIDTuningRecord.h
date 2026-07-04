@@ -41,6 +41,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// CLI命令文本
 @property (nonatomic, copy, nullable) NSString *cliCommands;
 
+/// CLI 命令是否为 Slider 格式（包含 simplified_ 前缀）
+@property (nonatomic, readonly) BOOL usesSliderFormat;
+
 /// 修正系数 (从历史误差累积)
 @property (nonatomic, assign) double gainCorrection;           // P变化对K的修正乘数
 @property (nonatomic, assign) double dampingCorrection;        // D变化对ζ的修正乘数

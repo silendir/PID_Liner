@@ -2,22 +2,21 @@
 //  PIDCLIGenerator.m
 //  PID_Liner
 //
-//  第5层：CLI 命令生成
+//  第5层：CLI 命令生成（BF Slider 倍率输出）
 //
 
 #import "PIDCLIGenerator.h"
+#import "BFSliderMapper.h"
 
-/// PID参数安全范围
-static const double kPIDMaxValue = 200.0;
-static const double kPIDMinValue = 0.0;
-static const double kMaxChangeRatio = 0.30;  // 单次最大变更30%
+/// 单次最大变更比例（降级路径用）
+static const double kMaxChangeRatio = 0.30;
 
 @implementation PIDCLIGenerator
 
 + (NSString *)generateCLICommands:(nullable PIDTuningResult *)rollResult
                       pitchResult:(nullable PIDTuningResult *)pitchResult
                         yawResult:(nullable PIDTuningResult *)yawResult
-                        currentPID:(nullable NSDictionary *)currentPID
+                       currentPID:(nullable NSDictionary *)currentPID
                    firmwareVersion:(NSInteger)versionCode {
 
     NSMutableString *output = [NSMutableString string];
@@ -25,52 +24,58 @@ static const double kMaxChangeRatio = 0.30;  // 单次最大变更30%
     // 头部注释
     NSString *fwName = [self firmwareNameForVersion:versionCode];
     [output appendFormat:@"# PID_Liner 推荐调整 (%@)\n", fwName];
-    [output appendFormat:@"# 固件版本代码: %ld\n\n", (long)versionCode];
+    [output appendFormat:@"# 固件版本代码: %ld\n", (long)versionCode];
 
     // BF CLI 参数命名 (4.0+): {term}_{axis} 格式
-    // D-term: BF 4.3-4.5 → d_min_roll=基础D, d_roll=峰值D
-    //         BF 2025+   → d_roll=基础D, d_max_roll=峰值D
-    // 参考: memory/bf-cli-params.md
     BOOL useNewNaming = (versionCode >= 202500);
 
-    // 低于 4.3 的版本不支持自动调参 (无完整PID参数)
+    // 低于 4.3 的版本不支持自动调参
     if (versionCode > 0 && versionCode < 403) {
         [output appendString:@"# ⚠️ 固件版本低于 4.3，不建议自动调参\n"];
         return [output copy];
     }
 
-    // Roll 轴
+    // 提取三轴推荐 PID
+    PIDValues *rollPID  = rollResult.recommendedPID;
+    PIDValues *pitchPID = pitchResult.recommendedPID;
+    PIDValues *yawPID   = yawResult.recommendedPID;
+
+    if (!rollPID && !pitchPID && !yawPID) {
+        [output appendString:@"# 无推荐参数\n"];
+        return [output copy];
+    }
+
+    // ── 尝试 Slider 模式输出 ──
+    if (rollPID && pitchPID && yawPID) {
+        NSString *sliderOutput = [self generateSliderOutput:rollResult
+                                                pitchResult:pitchResult
+                                                  yawResult:yawResult
+                                               firmwareVersion:versionCode
+                                                 useNewNaming:useNewNaming];
+        if (sliderOutput) {
+            [output appendString:sliderOutput];
+            return [output copy];
+        }
+    }
+
+    // ── 降级: 直接 PID 值输出（某轴缺失或 Slider 反算失败） ──
+    [output appendString:@"# ⚠️ Slider 反算不可用，使用直接 PID 值\n"];
+    [output appendString:@"# 建议先执行: set simplified_pids_mode = OFF\n\n"];
+
     if (rollResult && rollResult.recommendedPID) {
         [output appendString:@"# Roll 轴\n"];
-        [self appendCommandsForAxis:@"roll"
-                             result:rollResult
-                              output:output
-                        useNewNaming:useNewNaming];
+        [self appendLegacyCommandsForAxis:@"roll" result:rollResult output:output useNewNaming:useNewNaming];
     }
-
-    // Pitch 轴
     if (pitchResult && pitchResult.recommendedPID) {
         [output appendString:@"\n# Pitch 轴\n"];
-        [self appendCommandsForAxis:@"pitch"
-                             result:pitchResult
-                              output:output
-                        useNewNaming:useNewNaming];
+        [self appendLegacyCommandsForAxis:@"pitch" result:pitchResult output:output useNewNaming:useNewNaming];
     }
-
-    // Yaw 轴
     if (yawResult && yawResult.recommendedPID) {
         [output appendString:@"\n# Yaw 轴\n"];
-        [self appendCommandsForAxis:@"yaw"
-                             result:yawResult
-                              output:output
-                        useNewNaming:useNewNaming];
+        [self appendLegacyCommandsForAxis:@"yaw" result:yawResult output:output useNewNaming:useNewNaming];
     }
 
-    // 保存命令
     [output appendString:@"\nsave\n"];
-
-    NSLog(@"📋 [CLI生成] 命令长度=%lu字符", (unsigned long)output.length);
-
     return [output copy];
 }
 
@@ -78,7 +83,6 @@ static const double kMaxChangeRatio = 0.30;  // 单次最大变更30%
                  newValues:(PIDValues *)newValues {
     if (!oldValues || !newValues) return YES;
 
-    // 检查单次变更比例
     double changes[] = {
         oldValues.p > 0 ? fabs(newValues.p - oldValues.p) / oldValues.p : 0,
         oldValues.i > 0 ? fabs(newValues.i - oldValues.i) / oldValues.i : 0,
@@ -94,61 +98,114 @@ static const double kMaxChangeRatio = 0.30;  // 单次最大变更30%
         }
     }
 
-    // 检查范围
-    if (newValues.p < kPIDMinValue || newValues.p > kPIDMaxValue ||
-        newValues.i < kPIDMinValue || newValues.i > kPIDMaxValue ||
-        newValues.d < kPIDMinValue || newValues.d > kPIDMaxValue ||
-        newValues.ff < kPIDMinValue || newValues.ff > kPIDMaxValue) {
-        NSLog(@"⚠️ [CLI安全] 参数超出安全范围 [0, %.0f]", kPIDMaxValue);
-        return NO;
-    }
-
     return YES;
 }
 
-#pragma mark - 私有方法
+#pragma mark - Slider 输出
 
-/// 为单轴生成CLI命令
-+ (void)appendCommandsForAxis:(NSString *)axis
-                       result:(PIDTuningResult *)result
-                        output:(NSMutableString *)output
-                  useNewNaming:(BOOL)useNewNaming {
+/// 尝试生成 Slider 格式输出，失败返回 nil
++ (nullable NSString *)generateSliderOutput:(PIDTuningResult *)rollResult
+                               pitchResult:(PIDTuningResult *)pitchResult
+                                 yawResult:(PIDTuningResult *)yawResult
+                            firmwareVersion:(NSInteger)versionCode
+                              useNewNaming:(BOOL)useNewNaming {
+    PIDValues *rollPID  = rollResult.recommendedPID;
+    PIDValues *pitchPID = pitchResult.recommendedPID;
+    PIDValues *yawPID   = yawResult.recommendedPID;
+
+    // 反算 Slider
+    BFSliderValues *sliders = [BFSliderMapper mapFromRollPID:rollPID
+                                                    pitchPID:pitchPID
+                                                      yawPID:yawPID
+                                             firmwareVersion:versionCode];
+    if (!sliders) return nil;
+
+    // 安全验证
+    if (![BFSliderMapper validateSliderValues:sliders]) {
+        NSLog(@"⚠️ [CLI] Slider 值超出安全范围，降级");
+        return nil;
+    }
+
+    // 精度验证（±2 tolerance，因为 round 后可能有累积误差）
+    if (![BFSliderMapper verifyReverseMapping:sliders
+                               expectedRollPID:rollPID
+                              expectedPitchPID:pitchPID
+                                expectedYawPID:yawPID
+                             firmwareVersion:versionCode
+                                  tolerance:2.0]) {
+        NSLog(@"⚠️ [CLI] Slider 反算精度不足，降级");
+        return nil;
+    }
+
+    NSMutableString *output = [NSMutableString string];
+
+    // 注释: PID 真值参考
+    PIDValues *fwdRoll  = [BFSliderMapper forwardMapRoll:sliders firmwareVersion:versionCode];
+    PIDValues *fwdPitch = [BFSliderMapper forwardMapPitch:sliders firmwareVersion:versionCode];
+    PIDValues *fwdYaw   = [BFSliderMapper forwardMapYaw:sliders firmwareVersion:versionCode];
+
+    [output appendFormat:@"\n# PID真值(参考): Roll P=%d I=%d D=%d FF=%d | Pitch P=%d I=%d D=%d FF=%d | Yaw P=%d I=%d D=%d FF=%d\n",
+        (int)fwdRoll.p, (int)fwdRoll.i, (int)fwdRoll.d, (int)fwdRoll.ff,
+        (int)fwdPitch.p, (int)fwdPitch.i, (int)fwdPitch.d, (int)fwdPitch.ff,
+        (int)fwdYaw.p, (int)fwdYaw.i, (int)fwdYaw.d, (int)fwdYaw.ff];
+
+    // 推理注释
+    if (rollResult.reasoning.length > 0) {
+        [output appendFormat:@"# Roll: %@\n", rollResult.reasoning];
+    }
+    if (pitchResult.reasoning.length > 0) {
+        [output appendFormat:@"# Pitch: %@\n", pitchResult.reasoning];
+    }
+    if (yawResult.reasoning.length > 0) {
+        [output appendFormat:@"# Yaw: %@\n", yawResult.reasoning];
+    }
+
+    [output appendString:@"\n"];
+
+    // Slider CLI 命令
+    [output appendString:[BFSliderMapper generateSliderCLI:sliders firmwareVersion:versionCode]];
+    [output appendString:@"\nsave\n"];
+
+    NSLog(@"📋 [CLI生成] Slider模式: pi=%ld i=%ld d=%ld ff=%ld ppi=%ld rpr=%ld",
+          (long)sliders.piGain, (long)sliders.iGain, (long)sliders.dGain,
+          (long)sliders.ffGain, (long)sliders.pitchPiGain, (long)sliders.rollPitchRatio);
+
+    return [output copy];
+}
+
+#pragma mark - 降级路径 (直接 PID 值)
+
++ (void)appendLegacyCommandsForAxis:(NSString *)axis
+                              result:(PIDTuningResult *)result
+                              output:(NSMutableString *)output
+                        useNewNaming:(BOOL)useNewNaming {
     PIDValues *rec = result.recommendedPID;
     PIDValues *orig = result.originalPID;
 
-    // 生成推理注释
     if (result.reasoning.length > 0) {
         [output appendFormat:@"# %@\n", result.reasoning];
     }
 
-    // P — 格式: {term}_{axis} → p_roll
     if (orig.p > 0 && fabs(rec.p - orig.p) > 0.5) {
         [output appendFormat:@"set p_%@ = %d\n", axis, (int)round(rec.p)];
     }
-
-    // I — 格式: i_roll
     if (orig.i > 0 && fabs(rec.i - orig.i) > 0.5) {
         [output appendFormat:@"set i_%@ = %d\n", axis, (int)round(rec.i)];
     }
-
-    // D (命名取决于固件版本)
     if (orig.d > 0 && fabs(rec.d - orig.d) > 0.5) {
         if (useNewNaming) {
-            // BF 2025+: d_roll = 基础D
             [output appendFormat:@"set d_%@ = %d\n", axis, (int)round(rec.d)];
         } else {
-            // BF 4.3-4.5: d_min_roll = 基础D (d_roll 是峰值D)
             [output appendFormat:@"set d_min_%@ = %d\n", axis, (int)round(rec.d)];
         }
     }
-
-    // FF — 格式: f_roll
     if (orig.ff > 0 && fabs(rec.ff - orig.ff) > 0.5) {
         [output appendFormat:@"set f_%@ = %d\n", axis, (int)round(rec.ff)];
     }
 }
 
-/// 从版本代码获取固件名称
+#pragma mark - 工具方法
+
 + (NSString *)firmwareNameForVersion:(NSInteger)versionCode {
     if (versionCode >= 202500) {
         NSInteger year = versionCode / 100;
