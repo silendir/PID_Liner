@@ -111,14 +111,29 @@
     PIDResponseResult *response = [analyzer stackResponse:stackData window:window];
     XCTAssertGreaterThan(response.stepResponse.count, 0, @"stepResponse为空");
 
-    // 5. 跨窗口平均 → avgCurve
-    //    截取 0.5s 长度对齐 fitSecondOrder 的 duration=0.5 假设（dt 对齐）
-    NSInteger targetPoints = (NSInteger)(0.5 * sampleRate);
-    NSInteger nPoints = response.stepResponse.firstObject.count;
-    NSInteger usePoints = MIN(nPoints, targetPoints);
-    NSArray<NSNumber *> *avgCurve = [self averageAcrossWindows:response.stepResponse
-                                                       points:usePoints];
-    XCTAssertGreaterThan(avgCurve.count, 100, @"平均曲线点数太少");
+    // 5. weightedModeAverage（PID-Analyzer 标准加权平均，替代简单平均）
+    double vMin = INFINITY, vMax = -INFINITY;
+    for (NSArray<NSNumber *> *win in response.stepResponse) {
+        for (NSNumber *v in win) {
+            double dv = v.doubleValue;
+            if (dv < vMin) vMin = dv;
+            if (dv > vMax) vMax = dv;
+        }
+    }
+    // dataMask 全 1（无质量过滤，长度=窗口数）
+    NSMutableArray<NSNumber *> *dataMask = [NSMutableArray arrayWithCapacity:response.stepResponse.count];
+    for (NSInteger i = 0; i < (NSInteger)response.stepResponse.count; i++) [dataMask addObject:@1];
+    NSArray<NSNumber *> *fullAvg = [PIDTraceAnalyzer
+        weightedModeAverageWithStepResponse:response.stepResponse
+                                    avgTime:response.avgTime
+                                   dataMask:dataMask
+                                 vertRange:@[@(vMin), @(vMax)]
+                                   vertBins:1000
+                                 sampleRate:sampleRate];
+    XCTAssertGreaterThan(fullAvg.count, 100, @"加权平均曲线点数太少");
+    // 截取 0.5s 对齐 fitSecondOrder（duration=0.5 假设）
+    NSInteger usePoints = MIN((NSInteger)(0.45 * sampleRate), (NSInteger)fullAvg.count);  // 去末端10%验证伪影假设
+    NSArray<NSNumber *> *avgCurve = [fullAvg subarrayWithRange:NSMakeRange(0, (NSUInteger)usePoints)];
 
     // 6. 归一化 avgCurve 到稳态=1（让 RMSE 在归一化尺度，0.05 阈值才适用）
     double steadyState = 0;
@@ -146,21 +161,27 @@
           (long)response.stepResponse.count, (long)usePoints, sampleRate, steadyState,
           K, wn, wn / (2 * M_PI), zeta, rmse);
 
-    // avgCurve 形状诊断（判断 RMSE 是测试对齐问题还是模型局限）
-    double avgMin = INFINITY, avgMax = -INFINITY;
-    for (NSNumber *v in avgCurve) {
-        double dv = v.doubleValue;
-        if (dv < avgMin) avgMin = dv;
-        if (dv > avgMax) avgMax = dv;
+    // avgCurve 形状诊断（10 点采样 + argmax + 末端std，判断 RMSE 来源）
+    NSInteger N = avgCurve.count;
+    NSMutableString *shape = [NSMutableString string];
+    for (int s = 0; s <= 10; s++) {
+        NSInteger idx = MIN((NSInteger)(s * (N - 1) / 10.0), N - 1);
+        [shape appendFormat:@"%.2f ", avgCurve[idx].doubleValue];
     }
-    double avgFirst = avgCurve.firstObject.doubleValue;
-    double avgLast = avgCurve.lastObject.doubleValue;
+    double argmaxFrac = 0, mx = -INFINITY;
+    for (NSInteger i = 0; i < N; i++) {
+        if (avgCurve[i].doubleValue > mx) { mx = avgCurve[i].doubleValue; argmaxFrac = (double)i / N; }
+    }
+    double tailVar = 0; NSInteger tailN = 0;
+    for (NSInteger i = N * 9 / 10; i < N; i++) {
+        double d = avgCurve[i].doubleValue - steadyState;
+        tailVar += d * d; tailN++;
+    }
+    double tailStd = tailN > 0 ? sqrt(tailVar / tailN) : 0;
 
-    // 决策门（归一化 RMSE）
     XCTAssertLessThan(rmse, 0.05,
-        @"RMSE=%.4f (K=%.3f ωn=%.1fHz ζ=%.3f) avg[min=%.2f max=%.2f first=%.2f last=%.2f steady=%.1f] sr=%.0f pts=%ld",
-        rmse, K, wn / (2 * M_PI), zeta, avgMin, avgMax, avgFirst, avgLast,
-        steadyState, sampleRate, (long)usePoints);
+        @"RMSE=%.4f 形状[0→1]: %@ argmax=%.2f 末端std=%.3f steady=%.2f (K=%.3f ωn=%.1fHz ζ=%.3f)",
+        rmse, shape, argmaxFrac, tailStd, steadyState, K, wn / (2 * M_PI), zeta);
 }
 
 @end
