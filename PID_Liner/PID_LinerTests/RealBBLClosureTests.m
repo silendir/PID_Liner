@@ -97,7 +97,7 @@
     // 3. stackFromData（Roll 轴）
     //    🔑 windowSize 必须匹配 sampleRate（1秒窗口）：ViewController 硬编码 8000 是假设 8kHz
     //    本测试用真实 sampleRate（如 1024Hz→1024 点），避免窗口/采样率不匹配导致振荡
-    NSInteger windowSize = (NSInteger)sampleRate;
+    NSInteger windowSize = 8000;  // 匹配 ViewController 固定 8000
     PIDStackData *stackData = [PIDStackData stackFromData:data
                                                 axisIndex:0
                                                windowSize:windowSize
