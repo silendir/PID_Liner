@@ -19,6 +19,7 @@
 #import "PIDTraceAnalyzer.h"
 #import "PIDRecommendationEngine.h"
 #import "BBLHeaderParser.h"
+#import "PIDReverseSolver.h"  // 阶段3.2 真实BBL反解
 #import <math.h>
 
 #pragma mark - 私有方法暴露
@@ -316,6 +317,225 @@
     XCTAssertEqualObjects(h[@"Craft name"], @"Silen");
     XCTAssertTrue([h[@"Firmware revision"] containsString:@"Betaflight"],
                   @"固件版本解析错: %@", h[@"Firmware revision"]);
+}
+
+#pragma mark - 阶段3.2: 真实BBL反解 (反解框架 vs 真实数据)
+
+// 目的: 001.bbl 真实 Roll 阶跃曲线 → PIDReverseSolver 反解 → 能否还原 BBL header 真实 PID(38/85/44/72)?
+//   ✅ 接近 → 轻量 forward 在真实数据下可用, 反解可产品化
+//   ❌ 偏离大 → 真实曲线非纯二阶(BF D-term 动态 d_min/双低通/TPA), 需扩 forward
+// mech(87/0.01/0.0007) = 2.5c 用真实PID+fit曲线标定的参考值, 与 fit(ωn=575.9,ζ=0.315) 自洽
+
+/// 001.bbl → 归一化(稳态=1) Roll 阶跃曲线 (复刻 2.5b ViewController 提纯流程)
+/// avgCurve 时间跨度固定 0.5s (weightedModeAverage 内 responseDuration=0.5), 反解 duration 须=0.5 对齐
+- (nullable NSArray<NSNumber *> *)normalizedRollStepCurveFromBBL:(NSString *)bblPath
+                                                    outSampleRate:(double *)outSR {
+    @try {
+        NSString *tempBBL = [NSTemporaryDirectory() stringByAppendingPathComponent:@"001_rev.bbl"];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        [fm removeItemAtPath:tempBBL error:nil];
+        if (![fm copyItemAtPath:bblPath toPath:tempBBL error:nil]) return nil;
+
+        BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
+        if ([decoder decodeFlightLog:tempBBL logIndex:0] != 0) return nil;
+        NSString *csvPath = [[tempBBL stringByDeletingPathExtension] stringByAppendingFormat:@".01.csv"];
+        PIDCSVData *data = [[PIDCSVParser parser] parseCSV:csvPath];
+        if (!data || data.timeUs.count < 100) return nil;
+
+        double sampleRate = data.sampleRate > 0 ? data.sampleRate : 8000.0;
+        if (outSR) *outSR = sampleRate;
+
+        NSInteger windowSize = 8000;
+        PIDStackData *stackData = [PIDStackData stackFromData:data axisIndex:0
+                                                    windowSize:windowSize overlap:0.9375 pGain:45.0];
+        PIDTraceAnalyzer *analyzer = [[PIDTraceAnalyzer alloc] init];
+        PIDResponseResult *response = [analyzer stackResponse:stackData
+                                      window:[PIDTraceAnalyzer hanningWindowWithLength:windowSize]];
+        if (response.stepResponse.count == 0) return nil;
+
+        // 提纯: lowHighMask×2 → weightedModeAverage 初值 → qualityMask → 再平均
+        NSArray<NSNumber *> *lowMask = [[PIDTraceAnalyzer lowHighMask:response.maxInput threshold:500.0] objectForKey:@"low"];
+        NSArray<NSNumber *> *toolowMask = [[PIDTraceAnalyzer lowHighMask:response.maxInput threshold:20.0] objectForKey:@"high"];
+        NSMutableArray<NSNumber *> *respLowMask = [NSMutableArray arrayWithCapacity:lowMask.count];
+        for (NSInteger i = 0; i < (NSInteger)MIN(lowMask.count, toolowMask.count); i++) {
+            [respLowMask addObject:@([lowMask[i] doubleValue] * [toolowMask[i] doubleValue])];
+        }
+        NSArray<NSNumber *> *vr = @[@(-1.5), @(3.5)];
+        NSArray<NSNumber *> *init0 = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:response.stepResponse
+            avgTime:response.avgTime dataMask:respLowMask vertRange:vr vertBins:1000 sampleRate:sampleRate];
+        NSArray<NSNumber *> *qMask = [PIDTraceAnalyzer calculateResponseQualityMask:response.stepResponse referenceResponse:init0];
+        NSArray<NSNumber *> *combined = [PIDTraceAnalyzer combineMasks:respLowMask withMask:qMask];
+        NSArray<NSNumber *> *avgCurve = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:response.stepResponse
+            avgTime:response.avgTime dataMask:combined vertRange:vr vertBins:1000 sampleRate:sampleRate];
+        if (avgCurve.count < 100) return nil;
+
+        // 归一化稳态=1 (让 RMSE 在归一化尺度)
+        double ss = 0; NSInteger tail = avgCurve.count * 9 / 10;
+        for (NSInteger i = tail; i < avgCurve.count; i++) ss += avgCurve[i].doubleValue;
+        ss /= (double)(avgCurve.count - tail); if (fabs(ss) < 1e-9) ss = 1.0;
+        NSMutableArray<NSNumber *> *norm = [NSMutableArray arrayWithCapacity:avgCurve.count];
+        for (NSNumber *v in avgCurve) [norm addObject:@(v.doubleValue / ss)];
+        return [norm copy];
+    } @catch (NSException *e) {
+        NSLog(@"⚠️ normalizedRollStepCurve 异常: %@", e);
+        return nil;
+    }
+}
+
+/// BBL header → 真实 Roll PID (P/I/D/FF), 缺字段 fallback 到 001.bbl 实测值
+- (void)readRealRollPIDFromBBL:(NSString *)bblPath
+                          outP:(double *)outP outI:(double *)outI outD:(double *)outD outFF:(double *)outFF {
+    NSDictionary *header = [BBLHeaderParser parseHeaderFromFile:bblPath];
+    NSArray<NSString *> *pidParts = [[header objectForKey:@"rollPID"] componentsSeparatedByString:@","];
+    NSArray<NSString *> *ffParts = [[header objectForKey:@"feedforward_weight"] componentsSeparatedByString:@","];
+    if (outP)  *outP  = pidParts.count > 0 ? [pidParts[0] doubleValue] : 38.0;
+    if (outI)  *outI  = pidParts.count > 1 ? [pidParts[1] doubleValue] : 85.0;
+    if (outD)  *outD  = pidParts.count > 2 ? [pidParts[2] doubleValue] : 44.0;
+    if (outFF) *outFF = ffParts.count > 0 ? [ffParts[0] doubleValue] : 72.0;
+}
+
+/// 相对误差 %
+- (double)pctErr:(double)solved vs:(double)truth {
+    if (fabs(truth) < 1e-9) return fabs(solved - truth) * 100.0;
+    return fabs(solved - truth) / fabs(truth) * 100.0;
+}
+
+/// 真实BBL[001] Roll → 反解 P/D (最小验证: 真实曲线下框架是否工作)
+- (void)testRealBBL_ReverseSolve_PD {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl, @"001.bbl 不在 test bundle");
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    XCTAssertNotNil(target, @"曲线提取失败");
+    XCTAssertGreaterThan(target.count, 100);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+
+    // 扰动初值 (P+40%, D-40%), I/FF 固定真值
+    PIDValues *guess = [PIDValues new];
+    guess.p = P * 1.4; guess.i = I; guess.d = D * 0.6; guess.ff = FF;
+
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+    PIDReverseSolveResult *r = [solver solveFromTargetCurve:target
+                                              initialGuess:guess
+                                             mechConstants:mech
+                                                    fitMask:PIDReverseFitP | PIDReverseFitD
+                                                     length:(NSInteger)target.count duration:0.5];
+    XCTAssertNotNil(r, @"反解返回 nil");
+
+    double pErr = [self pctErr:r.solvedPID.p vs:P];
+    double dErr = [self pctErr:r.solvedPID.d vs:D];
+
+    // 写报告 (NSLog 被 Xcode16 ephemeral clone 吞, 写文件供测试外读取)
+    NSString *report = [NSString stringWithFormat:
+        @"targetN=%lu sampleRate=%.0f duration=0.5\ntruth:  P=%.0f I=%.0f D=%.0f FF=%.0f\nsolved: P=%.2f(%.1f%%) D=%.2f(%.1f%%)\niter=%ld RMSE=%.4f converged=%d",
+        (unsigned long)target.count, sr, P, I, D, FF,
+        r.solvedPID.p, pErr, r.solvedPID.d, dErr,
+        (long)r.iterations, r.finalRMSE, r.converged];
+    [report writeToFile:@"/tmp/realsolve_pd.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+
+    // 真实曲线非纯二阶, 首轮先只断言反解执行成功, 数值阈值待 /tmp/realsolve_pd.txt 看后定
+    XCTAssertGreaterThan(r.solvedPID.p, 0, @"P 反解非正");
+    XCTAssertGreaterThan(r.solvedPID.d, 0, @"D 反解非正");
+}
+
+/// 真实BBL[001] Roll → 反解全4参 (I 在单阶跃信号弱, 预期 I 仍塌到0, P/D/FF 是看点)
+- (void)testRealBBL_ReverseSolve_AllFour {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    XCTAssertNotNil(target);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+
+    PIDValues *guess = [PIDValues new];
+    guess.p = P * 1.3; guess.i = I * 1.3; guess.d = D * 0.7; guess.ff = FF * 0.7;
+
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+    PIDReverseSolveResult *r = [solver solveFromTargetCurve:target
+                                              initialGuess:guess
+                                             mechConstants:mech
+                                                    fitMask:PIDReverseFitAll
+                                                     length:(NSInteger)target.count duration:0.5];
+    XCTAssertNotNil(r);
+
+    double pErr  = [self pctErr:r.solvedPID.p  vs:P];
+    double iErr  = [self pctErr:r.solvedPID.i  vs:I];
+    double dErr  = [self pctErr:r.solvedPID.d  vs:D];
+    double ffErr = [self pctErr:r.solvedPID.ff vs:FF];
+
+    NSString *report = [NSString stringWithFormat:
+        @"truth:  P=%.0f I=%.0f D=%.0f FF=%.0f\nsolved: P=%.2f(%.1f%%) I=%.2f(%.1f%%) D=%.2f(%.1f%%) FF=%.2f(%.1f%%)\niter=%ld RMSE=%.4f converged=%d",
+        P, I, D, FF,
+        r.solvedPID.p, pErr, r.solvedPID.i, iErr, r.solvedPID.d, dErr, r.solvedPID.ff, ffErr,
+        (long)r.iterations, r.finalRMSE, r.converged];
+    [report writeToFile:@"/tmp/realsolve_4p.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+
+    XCTAssertGreaterThan(r.solvedPID.p, 0);
+}
+
+/// 🔬 诊断: 从真值初值反解 — 区分 P 偏离的根因
+///   真值初值 → LM 停在真值(±1%) → P 欠定(初值依赖, 正则化可治)
+///   真值初值 → LM 漂移到 22      → 模型偏差(二阶 forward 系统拉低 ωn, 扩 forward 才能治)
+- (void)testRealBBL_ReverseSolve_PD_TruthInit {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    XCTAssertNotNil(target);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+
+    // 基线: forward(真实PID) vs target 的 RMSE — 真实PID 在 forward 下离 target 多远
+    PIDValues *truthPID = [PIDValues new];
+    truthPID.p = P; truthPID.i = I; truthPID.d = D; truthPID.ff = FF;
+    NSArray<NSNumber *> *fwdTruth = [PIDReverseSolver forwardCurveWithPID:truthPID
+                                                             mechConstants:mech
+                                                                     length:(NSInteger)target.count duration:0.5];
+    double rmseTruth = [self rmseBetween:target and:fwdTruth];
+
+    // 从真值初值反解 P/D
+    PIDValues *guess = [PIDValues new];
+    guess.p = P; guess.i = I; guess.d = D; guess.ff = FF;
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+    PIDReverseSolveResult *r = [solver solveFromTargetCurve:target
+                                              initialGuess:guess
+                                             mechConstants:mech
+                                                    fitMask:PIDReverseFitP | PIDReverseFitD
+                                                     length:(NSInteger)target.count duration:0.5];
+    XCTAssertNotNil(r);
+
+    double pErr = [self pctErr:r.solvedPID.p vs:P];
+    double dErr = [self pctErr:r.solvedPID.d vs:D];
+
+    NSString *report = [NSString stringWithFormat:
+        @"基线 forward(真实PID=%.0f/%.0f) vs target: RMSE=%.4f\n从真值初值反解: P=%.2f(%.1f%%) D=%.2f(%.1f%%) iter=%ld RMSE=%.4f\n诊断: %@",
+        P, D, rmseTruth,
+        r.solvedPID.p, pErr, r.solvedPID.d, dErr,
+        (long)r.iterations, r.finalRMSE,
+        pErr < 1.0 ? @"P 保持真值 → P 欠定(初值依赖), 正则化可治"
+                   : [NSString stringWithFormat:@"P 漂移%.1f%% → 模型偏差(二阶forward拉低ωn), 扩forward才能治", pErr]];
+    [report writeToFile:@"/tmp/realsolve_truthinit.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+
+    XCTAssertGreaterThan(r.solvedPID.p, 0);
 }
 
 @end
