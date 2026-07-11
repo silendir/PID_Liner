@@ -106,6 +106,21 @@ typedef NS_OPTIONS(NSUInteger, PIDReverseFitMask) {
                                        length:(NSInteger)length
                                      duration:(double)duration;
 
+/// [3.3b-2a] 时域数值积分 forward (物理 PID 闭环, RK4 积分二阶 plant)
+///
+/// 与解析版 forwardCurveWithPID: 的关系 (验收见 ReverseSolverClosureTests):
+///   - 纯 PD (pid.i=0 且 pid.ff=0) 时, 时域积分对齐解析 h(t) (RMSE<1e-4, 验证积分器数学)
+///   - I/FF 用物理建模 (I=积分项+anti-windup, FF=阶跃冲激前馈过plant平滑),
+///     与解析经验项 (0.3 权重叠加, 见 BFPIDToSecondOrderMapper.m:174-185) 形状不同, 差异记录不阻塞
+///   - 2a 阶段: 不替换解析 forward, 反解仍用解析版; 时域版为 2b/2c (dterm 动态) 打基础
+///
+/// @param filter 可选 gyro 低通链 (与解析版同语义: PT1链 > biquad > 不滤); nil=不滤
++ (NSArray<NSNumber *> *)forwardCurveTimeDomainWithPID:(PIDValues *)pid
+                                          mechConstants:(BFMechConstants *)mech
+                                          filterConfig:(nullable BFFilterConfig *)filter
+                                                 length:(NSInteger)length
+                                               duration:(double)duration;
+
 /// 反解: 目标曲线 → PID (LM 数值优化 forward)
 ///
 /// @param target       目标响应曲线

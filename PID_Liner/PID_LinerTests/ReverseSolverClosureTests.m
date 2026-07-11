@@ -223,4 +223,92 @@
     XCTAssertLessThan(pErr, 5.0, @"P 误差 %.2f%% > 5%%, 加低通未还原 P", pErr);
 }
 
+#pragma mark - 🎯 3.3b-2a: 时域积分骨架对齐验证
+//
+// 验收: 纯 PD (I=0, FF=0) 时域 RK4 积分 vs 解析 h(t), RMSE<1e-4
+//   → 证明积分器数学正确 (状态方程与解析版同特征方程)
+//   I=0/FF=0 时解析版无 0.3 权重经验叠加 → 纯 h(t), 时域可对齐
+
+/// 纯 PD 时域积分必须对齐解析 h(t) (RMSE<1e-4) — 2a 核心验收
+- (void)testTimeDomain_PD_AlignsAnalytic {
+    PIDValues *pid = [PIDValues new];
+    pid.p = 38; pid.i = 0; pid.d = 44; pid.ff = 0;  // 纯 PD (无 I/FF 经验叠加)
+
+    NSArray<NSNumber *> *analytic = [PIDReverseSolver forwardCurveWithPID:pid
+                                                            mechConstants:[self realMech]
+                                                                    length:4000 duration:0.5];
+    NSArray<NSNumber *> *timeDomain = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                                                                         mechConstants:[self realMech]
+                                                                         filterConfig:nil
+                                                                                length:4000 duration:0.5];
+
+    XCTAssertEqual(analytic.count, timeDomain.count, @"点数不一致");
+    double sse = 0.0, maxDiff = 0.0;
+    for (NSInteger k = 0; k < (NSInteger)analytic.count; k++) {
+        double d = analytic[k].doubleValue - timeDomain[k].doubleValue;
+        sse += d * d;
+        maxDiff = fmax(maxDiff, fabs(d));
+    }
+    double rmse = sqrt(sse / (double)analytic.count);
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2a] 纯PD时域 vs 解析h(t): RMSE=%.2e maxDiff=%.2e (N=%lu)\n"
+        @"解析末段=%.6f 时域末段=%.6f (稳态≈1)\n判定: %@",
+        rmse, maxDiff, (unsigned long)analytic.count,
+        analytic.lastObject.doubleValue, timeDomain.lastObject.doubleValue,
+        rmse < 1e-4 ? @"✅ 积分器数学正确 (RMSE<1e-4)"
+                    : @"❌ 积分器偏差大, 检查特征方程/RK4"];
+    [report writeToFile:@"/tmp/td_pd_align.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertLessThan(rmse, 1e-4, @"纯PD时域 vs 解析 RMSE=%.2e 超标 (积分器不对齐)", rmse);
+}
+
+/// 物理 I/FF (积分项+冲激) vs 解析经验 I/FF (0.3 权重叠加) 贡献差异 — 记录不阻塞
+///   2a 不作 XCTAssert (形状本质不同: 物理 FF=冲激过 plant, 经验 FF=衰减窗; 2b/2c 决定保留哪套)
+- (void)testTimeDomain_I_FF_PhysVsEmpirical {
+    PIDValues *pidPure = [PIDValues new];
+    pidPure.p = 38; pidPure.i = 0; pidPure.d = 44; pidPure.ff = 0;
+    PIDValues *pidFull = [PIDValues new];
+    pidFull.p = 38; pidFull.i = 85; pidFull.d = 44; pidFull.ff = 72;
+
+    NSArray<NSNumber *> *anaPure = [PIDReverseSolver forwardCurveWithPID:pidPure
+                                                           mechConstants:[self realMech]
+                                                                   length:4000 duration:0.5];
+    NSArray<NSNumber *> *anaFull = [PIDReverseSolver forwardCurveWithPID:pidFull
+                                                           mechConstants:[self realMech]
+                                                                   length:4000 duration:0.5];
+    NSArray<NSNumber *> *tdFull  = [PIDReverseSolver forwardCurveTimeDomainWithPID:pidFull
+                                                                      mechConstants:[self realMech]
+                                                                      filterConfig:nil
+                                                                             length:4000 duration:0.5];
+
+    // 纯 PD 已对齐 (上一测试), 故 anaPure ≈ tdPure; I/FF 贡献 = full − pure
+    double sseEmp = 0, ssePhy = 0, maxEmp = 0, maxPhy = 0;
+    NSMutableString *csv = [NSMutableString stringWithString:@"idx,t_ms,empiricalIFF,physIFF\n"];
+    NSInteger N = (NSInteger)anaPure.count;
+    for (NSInteger k = 0; k < N; k++) {
+        double emp = anaFull[k].doubleValue - anaPure[k].doubleValue;  // 解析经验 I/FF 贡献
+        double phy = tdFull[k].doubleValue  - anaPure[k].doubleValue;  // 物理 I/FF 贡献
+        sseEmp += emp*emp; ssePhy += phy*phy;
+        maxEmp = fmax(maxEmp, fabs(emp)); maxPhy = fmax(maxPhy, fabs(phy));
+        if (k % 40 == 0) {  // 抽样 100 点
+            [csv appendFormat:@"%ld,%.3f,%.5f,%.5f\n",
+                (long)k, (double)k * 500.0 / (double)(N - 1), emp, phy];
+        }
+    }
+    double rmsEmp = sqrt(sseEmp / N), rmsPhy = sqrt(ssePhy / N);
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2a] I/FF 物理 vs 经验 贡献对比 (N=%ld)\n"
+        @"  经验 I/FF (0.3权重叠加):  RMS=%.4f max=%.4f\n"
+        @"  物理 I/FF (积分+冲激):    RMS=%.4f max=%.4f\n"
+        @"结论: 形状本质不同 (物理FF=阶跃冲激过plant平滑; 经验FF=前5ms衰减窗叠加); 2b/2c 决定保留哪套",
+        (long)N, rmsEmp, maxEmp, rmsPhy, maxPhy];
+    [csv appendFormat:@"\n%@", report];
+    [csv writeToFile:@"/tmp/td_iff_compare.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"📊 %@", report);
+    // 2a 不阻塞: 仅记录差异 (无 XCTAssert)
+}
+
 @end

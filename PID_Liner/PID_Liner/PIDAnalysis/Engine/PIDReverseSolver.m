@@ -173,6 +173,106 @@ static void ApplyPT1Lowpass(const double *in, double *out, NSInteger n,
     }
 }
 
+#pragma mark - C 辅助: gyro 低通链公共逻辑 (3.3a/b 解析+时域 forward 共用)
+
+/// 对 buf[0..N-1] 原地施加 gyro 低通链 (PT1链优先 > biquad > 直通)
+/// 模拟 BF gyro 通道对响应上升沿的涂抹; 解析 forward 与时域 forward 共用此函数 (去重)
+/// 返回 YES=已滤波 (buf 被修改); NO=直通 (filter=nil / 参数非法 / malloc失败)
+static BOOL ApplyGyroLowpassChain(double *buf, NSInteger N, double fs, BFFilterConfig *filter) {
+    if (!filter || N <= 2 || fs <= 0) return NO;
+
+    // [3.3b] PT1 链: BF 真实 gyro 三级低通串联 (type=0, 线性可交换)
+    double pt1Fcs[3] = {filter.gyroPT1Hz, filter.gyroPT1_2Hz, filter.gyroPT1DynHz};
+    BOOL hasPT1 = NO;
+    for (int s = 0; s < 3; s++) if (pt1Fcs[s] > 0 && pt1Fcs[s] < fs * 0.5) hasPT1 = YES;
+    if (hasPT1) {
+        for (int s = 0; s < 3; s++) {
+            if (pt1Fcs[s] > 0 && pt1Fcs[s] < fs * 0.5) {
+                ApplyPT1Lowpass(buf, buf, N, fs, pt1Fcs[s]);  // 原地串联
+            }
+        }
+        return YES;
+    }
+
+    // [3.3a] biquad 单级 (合成对照资产, 保留)
+    if (filter.gyroLowpassHz > 0 && filter.gyroLowpassHz < fs * 0.5) {
+        double *out = (double *)malloc((size_t)N * sizeof(double));
+        if (!out) return NO;  // ponytail: malloc 失败直通 (降级而非崩溃)
+        double qVal = (filter.q > 0) ? filter.q : kButterworthQ;
+        ApplyBiquadLowpass(buf, out, N, fs, filter.gyroLowpassHz, qVal);
+        memcpy(buf, out, (size_t)N * sizeof(double));
+        free(out);
+        return YES;
+    }
+    return NO;
+}
+
+#pragma mark - C 辅助: 时域 PID 闭环积分 (3.3b-2a)
+//
+// 物理模型 (与解析 forward 特征方程一致):
+//   error    = setpoint - y                 (setpoint=1, 归一化阶跃)
+//   output   = Kp·error + I_state − Kd_eff·ẏ + ffImpulse
+//              (BF D 项 = derivative-of-gyro → −Kd_eff·ẏ; FF = setpoint 微分冲激)
+//   plant:   τ_m·ÿ + ẏ = K_plant·output     →  ÿ = (K_plant·output − ẏ) / τ_m
+//
+// 特征方程 (纯PD): τ_m·s² + (1+K_plant·Kd_eff)·s + K_plant·Kp = 0
+//   → ωn = √(K_plant·Kp/τ_m),  ζ = (1+K_plant·Kd_eff)/(2·τ_m·ωn)
+//   与解析 forwardCurveWithPID: 完全一致 (Kd_eff = D·dScale) → 纯 PD 时域曲线对齐解析 h(t)
+//
+// I_state / ffImpulse 在单个 RK4 步内视为常数 (步前 Euler 更新 I)
+
+/// 状态 [y, v=ẏ] 的导数 (RK4 用)
+static void PIDPlantDeriv(double y, double v,
+                          double Kp, double Kd_eff, double I_state, double ffImpulse,
+                          double K_plant, double tauM,
+                          double *dy, double *dv) {
+    double error  = 1.0 - y;
+    double output = Kp * error + I_state - Kd_eff * v + ffImpulse;
+    *dy = v;
+    *dv = (K_plant * output - v) / tauM;
+}
+
+/// RK4 单步 (步内 I_state / ffImpulse 固定)
+static void RK4Step(double *y, double *v, double dt,
+                    double Kp, double Kd_eff, double I_state, double ffImpulse,
+                    double K_plant, double tauM) {
+    double k1y, k1v, k2y, k2v, k3y, k3v, k4y, k4v;
+    PIDPlantDeriv(*y,            *v,            Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k1y,&k1v);
+    PIDPlantDeriv(*y+0.5*dt*k1y, *v+0.5*dt*k1v, Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k2y,&k2v);
+    PIDPlantDeriv(*y+0.5*dt*k2y, *v+0.5*dt*k2v, Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k3y,&k3v);
+    PIDPlantDeriv(*y+dt*k3y,     *v+dt*k3v,     Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k4y,&k4v);
+    *y += dt/6.0 * (k1y + 2.0*k2y + 2.0*k3y + k4y);
+    *v += dt/6.0 * (k1v + 2.0*k2v + 2.0*k3v + k4v);
+}
+
+/// 时域 PID 闭环仿真主循环 (RK4), 输出 out[0..N-1]
+/// out[k] = 第 k 步积分前的 y (对应 t=k·dt, 与解析 h(t) 采样对齐)
+/// ffImpulse 仅 k=0 注入 (阶跃 setpoint 微分 = 冲激, 过 plant 平滑)
+/// I_state 带 anti-windup 限幅 (±2·Kp, 防积分饱和失稳)
+static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
+                                  double Kp, double Ki, double Kd_eff, double Kff_norm,
+                                  double K_plant, double tauM) {
+    double y = 0.0, v = 0.0;                    // 初始静止 (阶跃前)
+    double I_state = 0.0;
+    double I_limit = fabs(Kp) * 2.0;            // ponytail: anti-windup 上限
+    BOOL hasI  = (Ki > 1e-9);
+    BOOL hasFF = (Kff_norm > 1e-9);
+
+    for (NSInteger k = 0; k < N; k++) {
+        // FF 冲激: 仅第 0 步 (阶跃 d(setpoint)/dt = δ, 离散为 1/dt)
+        double ffImpulse = (k == 0 && hasFF) ? Kff_norm / dt : 0.0;
+        // I 积分 (Euler 步前更新, 限幅)
+        if (hasI) {
+            double err = 1.0 - y;
+            I_state += Ki * err * dt;
+            if (I_state >  I_limit) I_state =  I_limit;
+            if (I_state < -I_limit) I_state = -I_limit;
+        }
+        out[k] = y;                             // 记录 (步前, 对齐解析 t=k·dt)
+        RK4Step(&y, &v, dt, Kp, Kd_eff, I_state, ffImpulse, K_plant, tauM);
+    }
+}
+
 #pragma mark - PIDReverseSolver
 
 @implementation PIDReverseSolver
@@ -220,50 +320,63 @@ static void ApplyPT1Lowpass(const double *in, double *out, NSInteger n,
                                                                             length:length
                                                                           duration:duration];
 
-    // 3.3a/3.3b: 过 gyro 低通 (模拟 BF gyro 通道涂抹上升沿)
-    //   优先级: PT1链(BF真实type=0) > biquad(3.3a合成资产) > 不滤
+    // 3.3a/3.3b: 过 gyro 低通链 (公共函数 ApplyGyroLowpassChain, 与时域 forward 共用)
     if (filter && raw.count > 2) {
         double fs = (double)(length - 1) / duration;  // 与 predictedCurve 的 dt 一致
         NSInteger n = (NSInteger)raw.count;
-
-        // [3.3b] PT1 链: BF 真实 gyro 三级低通串联 (type=0, 线性系统可交换)
-        double pt1Fcs[3] = {filter.gyroPT1Hz, filter.gyroPT1_2Hz, filter.gyroPT1DynHz};
-        BOOL hasPT1 = NO;
-        for (int s = 0; s < 3; s++) if (pt1Fcs[s] > 0 && pt1Fcs[s] < fs * 0.5) hasPT1 = YES;
-        if (hasPT1) {
-            double *buf = (double *)malloc(n * sizeof(double));
-            if (buf) {
-                for (NSInteger k = 0; k < n; k++) buf[k] = raw[k].doubleValue;
-                for (int s = 0; s < 3; s++) {
-                    if (pt1Fcs[s] > 0 && pt1Fcs[s] < fs * 0.5) {
-                        ApplyPT1Lowpass(buf, buf, n, fs, pt1Fcs[s]);  // 原地串联
-                    }
-                }
-                NSMutableArray<NSNumber *> *filtered = [NSMutableArray arrayWithCapacity:n];
-                for (NSInteger k = 0; k < n; k++) [filtered addObject:@(buf[k])];
-                free(buf);
-                return [filtered copy];
-            }
-            free(buf);  // ponytail: malloc 失败降级下方 biquad/raw
+        double *buf = (double *)malloc((size_t)n * sizeof(double));
+        if (buf) {
+            for (NSInteger k = 0; k < n; k++) buf[k] = raw[k].doubleValue;
+            ApplyGyroLowpassChain(buf, n, fs, filter);  // 原地; 失败/直通不影响正确性
+            NSMutableArray<NSNumber *> *filtered = [NSMutableArray arrayWithCapacity:n];
+            for (NSInteger k = 0; k < n; k++) [filtered addObject:@(buf[k])];
+            free(buf);
+            return [filtered copy];
         }
-
-        // [3.3a] biquad 单级 (合成对照资产, 保留)
-        if (filter.gyroLowpassHz > 0) {
-            double *buf = (double *)malloc(n * sizeof(double));
-            double *out = (double *)malloc(n * sizeof(double));
-            if (buf && out) {
-                for (NSInteger k = 0; k < n; k++) buf[k] = raw[k].doubleValue;
-                double qVal = (filter.q > 0) ? filter.q : kButterworthQ;
-                ApplyBiquadLowpass(buf, out, n, fs, filter.gyroLowpassHz, qVal);
-                NSMutableArray<NSNumber *> *filtered = [NSMutableArray arrayWithCapacity:n];
-                for (NSInteger k = 0; k < n; k++) [filtered addObject:@(out[k])];
-                free(buf); free(out);
-                return [filtered copy];
-            }
-            free(buf); free(out);  // ponytail: malloc 失败回退 raw (降级而非崩溃)
-        }
+        // ponytail: malloc 失败回退 raw (降级而非崩溃)
     }
     return raw;
+}
+
+#pragma mark - [3.3b-2a] 时域数值积分 forward (物理 PID 闭环)
+
++ (NSArray<NSNumber *> *)forwardCurveTimeDomainWithPID:(PIDValues *)pid
+                                          mechConstants:(BFMechConstants *)mech
+                                          filterConfig:(BFFilterConfig *)filter
+                                                 length:(NSInteger)length
+                                               duration:(double)duration {
+    // 🔑 输入校验 (与解析版一致)
+    if (!pid || !mech || length < 2 || duration <= 0) return @[@0.0];
+    if (mech.tauM <= 0 || mech.kPlant < 0) {
+        NSLog(@"⚠️ [ReverseSolver.tdForward] 机械常数非法 kPlant=%.4g tauM=%.4g", mech.kPlant, mech.tauM);
+        return @[@0.0];
+    }
+
+    NSInteger N = length;
+    double dt = duration / (double)(N - 1);
+
+    // 控制器系数 (Kd_eff = D·dScale, 与解析特征方程一致)
+    double Kp       = fmax(pid.p, kPIDEpsilon);
+    double Ki       = pid.i;
+    double Kd_eff   = pid.d * mech.dScale;
+    double Kff_norm = pid.ff / kFFNorm;
+
+    double *buf = (double *)malloc((size_t)N * sizeof(double));
+    if (!buf) return @[@0.0];
+
+    // RK4 时域积分 (物理 PID 闭环 + 二阶 plant)
+    SimulatePIDTimeDomain(buf, N, dt, Kp, Ki, Kd_eff, Kff_norm, mech.kPlant, mech.tauM);
+
+    // gyro 低通链 (与解析版同语义, 共用公共函数)
+    if (filter) {
+        double fs = 1.0 / dt;
+        ApplyGyroLowpassChain(buf, N, fs, filter);
+    }
+
+    NSMutableArray<NSNumber *> *curve = [NSMutableArray arrayWithCapacity:N];
+    for (NSInteger k = 0; k < N; k++) [curve addObject:@(buf[k])];
+    free(buf);
+    return [curve copy];
 }
 
 #pragma mark - 内部: PIDValues 与 double[4] 互转
