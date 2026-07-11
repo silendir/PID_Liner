@@ -835,4 +835,139 @@
     XCTAssertGreaterThan(rmseTD, 0.0);  // 仅断言执行成功, 数值由 /tmp 报告判定 (2b 探索阶段)
 }
 
+/// 🎯 3.3b-2c-α: dScale 扫描基线 (最小信息量实验, 定 2c 方向)
+///
+/// 2b 实锤: dterm 链 + 旧 dScale(0.0007) → 过振荡 (RMSE 0.069→0.120, 带 20-100Hz 翻 3 倍).
+/// 根因假设: dScale=0.0007 是为"固定 D 全频阻尼"标定, 隐式含 dterm 滤波补偿;
+///           显式加 dterm 滤波后用同一 dScale → 高频阻尼被削两次 → 过振荡.
+///           修正方向应为"更大 dScale"补偿回被滤掉的高频 D.
+///
+/// 本测试扫 dScale, 找时域+dterm 链最小 RMSE, 判定 2c 后续:
+///   最优 RMSE ≤ 0.0669 (无 dterm 基线) → dScale 重标定够, d_min/TPA 可选 (Ponytail 止步)
+///   最优 RMSE > 0.0669                  → 光调 dScale 不够, 需 d_min 非线性 (进 2c-β)
+- (void)testRealBBL_TimeDomain_DtermChain_dScaleSweep {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    NSInteger N = (NSInteger)target.count;
+    XCTAssertGreaterThan(N, 100);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+
+    PIDValues *pid = [PIDValues new];
+    pid.p = P; pid.i = I; pid.d = D; pid.ff = FF;
+
+    BFFilterConfig *dtermChain = [BFFilterConfig dtermPT1Chain:150.0 h2:150.0 dyn:120.0];
+    double fs = (double)(N - 1) / 0.5;
+
+    // 扫描点: 覆盖 0.0007 上下一个量级 (0.0003 ~ 0.0050)
+    double dScales[] = {0.0003, 0.0005, 0.0007, 0.0010, 0.0015, 0.0020, 0.0030, 0.0050};
+    int nSweep = (int)(sizeof(dScales) / sizeof(dScales[0]));
+
+    double bestRMSE = 1e9, bestDScale = 0.0, bestBand = 0.0;
+    NSMutableString *report = [NSMutableString stringWithFormat:
+        @"[3.3b-2c-α dScale扫描] 001.bbl Roll, 时域+dterm链(150/150/120), PID=%.0f/%.0f/%.0f/%.0f\n"
+        @"基线: 无dterm RMSE=0.0669 | 旧dScale(0.0007)+dterm RMSE=0.1203\n", P, I, D, FF];
+
+    for (int i = 0; i < nSweep; i++) {
+        double ds = dScales[i];
+        BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:ds];
+        NSArray<NSNumber *> *fwd = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                                                                     mechConstants:mech
+                                                                     filterConfig:dtermChain
+                                                                            length:N duration:0.5];
+        // 残差 (target − forward) 与带内能量
+        NSMutableArray<NSNumber *> *res = [NSMutableArray arrayWithCapacity:N];
+        for (NSInteger k = 0; k < N; k++) [res addObject:@(target[k].doubleValue - fwd[k].doubleValue)];
+        double rmse = [self rmseBetween:target and:fwd];
+        double band = [self bandEnergy:res fs:fs fLo:20.0 fHi:100.0];
+        [report appendFormat:@"  dScale=%.5f  Kd_eff=%.5f  RMSE=%.4f  带20-100Hz=%.4e\n",
+                              ds, D * ds, rmse, band];
+        if (rmse < bestRMSE) { bestRMSE = rmse; bestDScale = ds; bestBand = band; }
+    }
+
+    [report appendFormat:@"最优: dScale=%.5f Kd_eff=%.5f RMSE=%.4f 带20-100Hz=%.4e\n",
+                          bestDScale, D * bestDScale, bestRMSE, bestBand];
+    [report appendFormat:@"判定: %@",
+        (bestRMSE <= 0.0669) ? @"✅ dScale重标定够 → d_min/TPA可选 (止步)"
+                             : @"⚠️ 光调dScale不够 → 需d_min非线性 (进2c-β)"];
+    [report writeToFile:@"/tmp/realsolve_td_dscale_sweep.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertGreaterThan(bestRMSE, 0.0);  // 仅断言执行成功, 方向由 /tmp 报告判定
+}
+
+/// 🎯 3.3b-2c-β: d_min 非线性动态 D (解开 α 的单 dScale 死锁)
+///
+/// α 实锤: 单 dScale 是 trade-off 死锁 (升 dScale 压对 20-100Hz 振荡但坏形状, 降反之).
+/// β 假设: d_min 让 D 动态 — k=0 setpoint 变: D=D_max 压超调; k>0 静止: D=d_min 保形状,
+///         能同时满足"压振荡"+"保形状", RMSE 降到 α 最优 (0.1116) 之下, 趋近无 dterm 基线 (0.0669).
+/// BBL header 真实值: rollPID D=44 (D_max), d_min=29, d_min_gain=37.
+/// 扫 dMin{0禁用, 29真实} × dScale, 判定动态 D 是否解开死锁.
+- (void)testRealBBL_TimeDomain_DminDynamic_Sweep {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    NSInteger N = (NSInteger)target.count;
+    XCTAssertGreaterThan(N, 100);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+    double dMinGainReal = 37.0;  // BBL header: d_min_gain=37
+
+    PIDValues *pid = [PIDValues new];
+    pid.p = P; pid.i = I; pid.d = D; pid.ff = FF;
+
+    BFFilterConfig *dtermChain = [BFFilterConfig dtermPT1Chain:150.0 h2:150.0 dyn:120.0];
+    double fs = (double)(N - 1) / 0.5;
+
+    double dScales[] = {0.0003, 0.0007, 0.0010};
+    double dMins[]   = {0.0, 29.0};  // 0=禁用(2b 固定 D), 29=BBL 真实 d_min
+    int nDS = (int)(sizeof(dScales) / sizeof(dScales[0]));
+    int nDM = (int)(sizeof(dMins) / sizeof(dMins[0]));
+
+    double bestRMSE = 1e9, bestDScale = 0.0, bestDmin = 0.0;
+    NSMutableString *report = [NSMutableString stringWithFormat:
+        @"[3.3b-2c-β d_min动态] 001.bbl Roll, 时域+dterm链(150/150/120), PID=%.0f/%.0f/%.0f/%.0f, d_min_gain=%.0f\n"
+        @"基线: α最优(禁用d_min, dScale=0.0003)=0.1116 | 无dterm=0.0669\n", P, I, D, FF, dMinGainReal];
+
+    for (int im = 0; im < nDM; im++) {
+        for (int is = 0; is < nDS; is++) {
+            double dm = dMins[im], ds = dScales[is];
+            BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01
+                                                          dScale:ds dMin:dm dMinGain:dMinGainReal];
+            NSArray<NSNumber *> *fwd = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                                                                         mechConstants:mech
+                                                                         filterConfig:dtermChain
+                                                                                length:N duration:0.5];
+            NSMutableArray<NSNumber *> *res = [NSMutableArray arrayWithCapacity:N];
+            for (NSInteger k = 0; k < N; k++) [res addObject:@(target[k].doubleValue - fwd[k].doubleValue)];
+            double rmse = [self rmseBetween:target and:fwd];
+            double band = [self bandEnergy:res fs:fs fLo:20.0 fHi:100.0];
+            [report appendFormat:@"  dMin=%-5.1f dScale=%.4f  RMSE=%.4f  带20-100Hz=%.4e\n",
+                                  dm, ds, rmse, band];
+            if (rmse < bestRMSE) { bestRMSE = rmse; bestDScale = ds; bestDmin = dm; }
+        }
+    }
+
+    [report appendFormat:@"最优: dMin=%.1f dScale=%.4f RMSE=%.4f\n", bestDmin, bestDScale, bestRMSE];
+    [report appendFormat:@"判定: %@",
+        (bestDmin > 0.0 && bestRMSE < 0.1116) ? @"✅ d_min降RMSE → 动态D解开死锁 (进γ/TPA 或定稿)"
+                                              : (bestDmin > 0.0 ? @"⚠️ d_min未明显降RMSE → 查dMinGain/dterm参数"
+                                                                : @"⚠️ 禁用d_min最优 → d_min建模有误")];
+    [report writeToFile:@"/tmp/realsolve_td_dmin.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertGreaterThan(bestRMSE, 0.0);  // 仅断言执行成功, 方向由 /tmp 报告判定
+}
+
 @end

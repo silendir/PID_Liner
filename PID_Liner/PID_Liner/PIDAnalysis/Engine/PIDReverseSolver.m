@@ -32,6 +32,18 @@ static const double    kJacStep      = 1e-6;   ///< 数值雅可比相对步长
     m.kPlant = kPlant;
     m.tauM   = tauM;
     m.dScale = dScale;
+    return m;  // dMin/dMinGain 默认 0 = 禁用 d_min (向后兼容 2a/2b)
+}
+
+/// [2c-β] 带 d_min 非线性的机械常数 (D 在 d_min~D_max 间随 setpoint 动态)
++ (instancetype)withKPlant:(double)kPlant tauM:(double)tauM dScale:(double)dScale
+                     dMin:(double)dMin dMinGain:(double)dMinGain {
+    BFMechConstants *m = [[BFMechConstants alloc] init];
+    m.kPlant   = kPlant;
+    m.tauM     = tauM;
+    m.dScale   = dScale;
+    m.dMin     = dMin;
+    m.dMinGain = dMinGain;
     return m;
 }
 
@@ -294,8 +306,14 @@ static void RK4Step(double *y, double *v, double dt,
 /// I_state 带 anti-windup 限幅 (±2·Kp, 防积分饱和失稳)
 /// D 路径三级 PT1 (dtermFc1/2/3, 来自 BF dterm_lowpass/2/dyn): 每步前用当前 v
 ///   更新三级状态, 步内 D 冻结 (BF 离散行为); 全 0 = 无滤波, D 跟踪 v (2a 对齐)
+/// [2c-β] d_min 非线性 (dMin>0 且 <D_raw): 每步算 D_eff∈[dMin,D_raw], 单位阶跃 setpoint
+///   仅 k=0 变化 → sigmoid factor=Δ·gain/(1+Δ·gain) boost 到 D_raw, 静止回 dMin;
+///   Kd_eff_step=D_eff·dScale 步内固定。解开 2c-α 单 dScale 死锁 (动态 D 兼顾压振荡/保形状)
 static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
-                                  double Kp, double Ki, double Kd_eff, double Kff_norm,
+                                  double Kp, double Ki,
+                                  double D_raw, double dScale,
+                                  double dMin, double dMinGain,
+                                  double Kff_norm,
                                   double K_plant, double tauM,
                                   double dtermFc1, double dtermFc2, double dtermFc3) {
     double y = 0.0, v = 0.0;                    // 初始静止 (阶跃前)
@@ -304,6 +322,7 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
     BOOL hasI  = (Ki > 1e-9);
     BOOL hasFF = (Kff_norm > 1e-9);
     BOOL hasDtermFilter = (dtermFc1 > 0.0 || dtermFc2 > 0.0 || dtermFc3 > 0.0);
+    BOOL hasDmin = (dMin > 0.0 && dMin < D_raw);  // [2c-β] d_min 启用条件
     double d1 = 0.0, d2 = 0.0, d3 = 0.0;        // 三级 PT1 状态 (初始静止)
 
     for (NSInteger k = 0; k < N; k++) {
@@ -317,6 +336,19 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
             if (I_state >  I_limit) I_state =  I_limit;
             if (I_state < -I_limit) I_state = -I_limit;
         }
+        // [2c-β] d_min 非线性: 每步算 D_eff (setpoint 变化时 boost 到 D_raw, 静止回 dMin)
+        //   单位阶跃: setpoint 仅 k=0 变化 (Δ=1); sigmoid factor=Δ·gain/(1+Δ·gain) (BF 风格)
+        //   步内 D_eff 固定 (RK4 子步不变); Kd_eff_step=D_eff·dScale
+        double D_eff;
+        if (hasDmin) {
+            double setpointDelta = (k == 0) ? 1.0 : 0.0;
+            double dBoost = setpointDelta * dMinGain;
+            double dMinFactor = dBoost / (1.0 + dBoost);
+            D_eff = dMin + (D_raw - dMin) * dMinFactor;
+        } else {
+            D_eff = D_raw;  // 禁用: 固定 D (2b 行为)
+        }
+        double Kd_eff_step = D_eff * dScale;
         // D 路径: 三级 PT1 滤波陀螺导数 v (BF D-on-measurement), 步内冻结
         double dtermFB;
         if (hasDtermFilter) {
@@ -328,7 +360,7 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
             dtermFB = v;  // 无滤波: RK4 子步内由 freezeD=NO 跟踪 v (2a 对齐)
         }
         out[k] = y;                             // 记录 (步前, 对齐解析 t=k·dt)
-        RK4Step(&y, &v, dt, Kp, Kd_eff, I_state, ffImpulse, K_plant, tauM,
+        RK4Step(&y, &v, dt, Kp, Kd_eff_step, I_state, ffImpulse, K_plant, tauM,
                 hasDtermFilter, dtermFB);
     }
 }
@@ -415,10 +447,10 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
     NSInteger N = length;
     double dt = duration / (double)(N - 1);
 
-    // 控制器系数 (Kd_eff = D·dScale, 与解析特征方程一致)
+    // 控制器系数 ([2c-β] D 原值传入, d_min 在 Simulate 内动态算 D_eff)
     double Kp       = fmax(pid.p, kPIDEpsilon);
     double Ki       = pid.i;
-    double Kd_eff   = pid.d * mech.dScale;
+    double D_raw    = pid.d;           // D_max (BF D 原值)
     double Kff_norm = pid.ff / kFFNorm;
 
     double *buf = (double *)malloc((size_t)N * sizeof(double));
@@ -429,9 +461,9 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
     double dFc2 = filter.dtermPT1_2Hz;
     double dFc3 = filter.dtermPT1DynHz;
 
-    // RK4 时域积分 (物理 PID 闭环 + 二阶 plant, D 路径三级 PT1)
-    SimulatePIDTimeDomain(buf, N, dt, Kp, Ki, Kd_eff, Kff_norm, mech.kPlant, mech.tauM,
-                          dFc1, dFc2, dFc3);
+    // RK4 时域积分 (物理 PID 闭环 + 二阶 plant, D 路径三级 PT1 + d_min 非线性)
+    SimulatePIDTimeDomain(buf, N, dt, Kp, Ki, D_raw, mech.dScale, mech.dMin, mech.dMinGain,
+                          Kff_norm, mech.kPlant, mech.tauM, dFc1, dFc2, dFc3);
 
     // gyro 低通链 (与解析版同语义, 共用公共函数)
     if (filter) {

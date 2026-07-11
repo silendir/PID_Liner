@@ -36,7 +36,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) double tauM;    ///< τ_m:   电机时间常数 (秒)
 @property (nonatomic, assign) double dScale;  ///< D_scale: BF D 到二阶 Kd 的等效系数
 
+/// [2c-β] d_min 非线性 (BF d_min 机制): D 在 d_min~D_max 间随 setpoint 动态
+/// setpoint 变化时 D→D_max (压超调/振荡), 静止时 D→d_min (稳态, 低于 D_max)
+/// dMin≤0 或 ≥D_max → 禁用, 固定 D=D_max (2b 行为)
+@property (nonatomic, assign) double dMin;      ///< BF d_min (D 下限, 001.bbl:29); 0=禁用
+@property (nonatomic, assign) double dMinGain;  ///< d_min boost 增益 (BF d_min_gain, 001:37); factor=Δsp·gain/(1+Δsp·gain)
+
 + (instancetype)withKPlant:(double)kPlant tauM:(double)tauM dScale:(double)dScale;
++ (instancetype)withKPlant:(double)kPlant tauM:(double)tauM dScale:(double)dScale dMin:(double)dMin dMinGain:(double)dMinGain;  ///< [2c-β]
 
 @end
 
