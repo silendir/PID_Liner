@@ -74,6 +74,21 @@ static const double kButterworthQ = 0.7071067811865476;
     return f;
 }
 
+/// [3.3b-2b] BF 真实 dterm 通道三级 PT1 链 (type=0, 来自 BBL header)
+/// 001.bbl: dterm_lowpass=150 / dterm_lowpass2=150 / dterm_lowpass_dyn=70-170(随油门)
+/// 作用于 D 项信号 (陀螺导数), 每步内更新; 与 gyro 链 (整段后处理) 作用点不同
+/// gyro 直通; 任一级 h≤0 跳过该级; dyn 取定值 (阶跃统计平均, 取中值≈120)
++ (instancetype)dtermPT1Chain:(double)h1 h2:(double)h2 dyn:(double)hdyn {
+    BFFilterConfig *f = [[BFFilterConfig alloc] init];
+    f.gyroLowpassHz  = 0.0;
+    f.dtermLowpassHz = 0.0;
+    f.q              = kButterworthQ;
+    f.dtermPT1Hz     = h1;    // dterm_lowpass (001:150)
+    f.dtermPT1_2Hz   = h2;    // dterm_lowpass2 (001:150)
+    f.dtermPT1DynHz  = hdyn;  // dterm_lowpass_dyn (001:70-170, 取定值)
+    return f;
+}
+
 @end
 
 #pragma mark - PIDReverseSolveResult
@@ -207,40 +222,68 @@ static BOOL ApplyGyroLowpassChain(double *buf, NSInteger N, double fs, BFFilterC
     return NO;
 }
 
-#pragma mark - C 辅助: 时域 PID 闭环积分 (3.3b-2a)
+#pragma mark - C 辅助: 时域 PID 闭环积分 (3.3b-2a 骨架 / 2b D 路径三级低通)
 //
-// 物理模型 (与解析 forward 特征方程一致):
+// 物理模型 (纯 PD 与解析 forward 同特征方程; 加 dterm 滤波后 D 时变, 解析失效):
 //   error    = setpoint - y                 (setpoint=1, 归一化阶跃)
-//   output   = Kp·error + I_state − Kd_eff·ẏ + ffImpulse
-//              (BF D 项 = derivative-of-gyro → −Kd_eff·ẏ; FF = setpoint 微分冲激)
+//   output   = Kp·error + I_state − Kd_eff·dtermFB + ffImpulse
+//              (dtermFB = PT1_chain(ẏ) [2b] 或 原始 ẏ [2a]; BF D-on-measurement)
 //   plant:   τ_m·ÿ + ẏ = K_plant·output     →  ÿ = (K_plant·output − ẏ) / τ_m
 //
-// 特征方程 (纯PD): τ_m·s² + (1+K_plant·Kd_eff)·s + K_plant·Kp = 0
+// 特征方程 (纯PD无滤波): τ_m·s² + (1+K_plant·Kd_eff)·s + K_plant·Kp = 0
 //   → ωn = √(K_plant·Kp/τ_m),  ζ = (1+K_plant·Kd_eff)/(2·τ_m·ωn)
-//   与解析 forwardCurveWithPID: 完全一致 (Kd_eff = D·dScale) → 纯 PD 时域曲线对齐解析 h(t)
+//   与解析 forwardCurveWithPID: 完全一致 → 纯 PD (dtermFc 全 0) 时域对齐解析 h(t)
 //
-// I_state / ffImpulse 在单个 RK4 步内视为常数 (步前 Euler 更新 I)
+// I_state / ffImpulse / dtermFB 在单个 RK4 步内视为常数 (步前 Euler 更新 I 与三级 PT1)
+
+/// 单步 PT1 更新 (BF pt1FilterUpdate 等价), 原地更新 *state, 返回新状态
+/// fc≤0 直通 (state=input); gain 物理约束 ∈(0,1], fc≥Nyquist 自然饱和到 1
+/// ponytail: 时域 D 路径每步更新三级 PT1, 不能用整段版 ApplyPT1Lowpass
+static inline double PT1Step(double input, double *state, double dt, double fc) {
+    if (fc <= 0.0) { *state = input; return input; }  // 该级跳过 = 直通
+    double RC   = 1.0 / (2.0 * M_PI * fc);
+    double gain = dt / (RC + dt);
+    if (gain > 1.0) gain = 1.0;
+    *state += gain * (input - *state);
+    return *state;
+}
 
 /// 状态 [y, v=ẏ] 的导数 (RK4 用)
-static void PIDPlantDeriv(double y, double v,
+/// dtermFB = D 项反馈信号 (已滤波或原始 v, 由调用方决定)
+static void PIDPlantDeriv(double y, double v, double dtermFB,
                           double Kp, double Kd_eff, double I_state, double ffImpulse,
                           double K_plant, double tauM,
                           double *dy, double *dv) {
     double error  = 1.0 - y;
-    double output = Kp * error + I_state - Kd_eff * v + ffImpulse;
+    double output = Kp * error + I_state - Kd_eff * dtermFB + ffImpulse;
     *dy = v;
     *dv = (K_plant * output - v) / tauM;
 }
 
-/// RK4 单步 (步内 I_state / ffImpulse 固定)
+/// RK4 单步 (步内 I_state / ffImpulse / dtermFB 固定)
+/// freezeD=YES 时 D 项用 dtermFrozen (BF 离散循环: D 每步算一次, 步内不变);
+/// freezeD=NO 时 D 项跟踪各子步的 v (2a 纯 PD 对齐解析 h(t) 路径)
 static void RK4Step(double *y, double *v, double dt,
                     double Kp, double Kd_eff, double I_state, double ffImpulse,
-                    double K_plant, double tauM) {
+                    double K_plant, double tauM,
+                    BOOL freezeD, double dtermFrozen) {
     double k1y, k1v, k2y, k2v, k3y, k3v, k4y, k4v;
-    PIDPlantDeriv(*y,            *v,            Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k1y,&k1v);
-    PIDPlantDeriv(*y+0.5*dt*k1y, *v+0.5*dt*k1v, Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k2y,&k2v);
-    PIDPlantDeriv(*y+0.5*dt*k2y, *v+0.5*dt*k2v, Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k3y,&k3v);
-    PIDPlantDeriv(*y+dt*k3y,     *v+dt*k3v,     Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k4y,&k4v);
+    // 子步 1
+    double d1 = freezeD ? dtermFrozen : *v;
+    PIDPlantDeriv(*y, *v, d1, Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k1y,&k1v);
+    // 子步 2
+    double vs2 = *v + 0.5 * dt * k1v;
+    double d2  = freezeD ? dtermFrozen : vs2;
+    PIDPlantDeriv(*y + 0.5*dt*k1y, vs2, d2, Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k2y,&k2v);
+    // 子步 3
+    double vs3 = *v + 0.5 * dt * k2v;
+    double d3  = freezeD ? dtermFrozen : vs3;
+    PIDPlantDeriv(*y + 0.5*dt*k2y, vs3, d3, Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k3y,&k3v);
+    // 子步 4
+    double vs4 = *v + dt * k3v;
+    double d4  = freezeD ? dtermFrozen : vs4;
+    PIDPlantDeriv(*y + dt*k3y, vs4, d4, Kp,Kd_eff,I_state,ffImpulse, K_plant,tauM, &k4y,&k4v);
+
     *y += dt/6.0 * (k1y + 2.0*k2y + 2.0*k3y + k4y);
     *v += dt/6.0 * (k1v + 2.0*k2v + 2.0*k3v + k4v);
 }
@@ -249,18 +292,24 @@ static void RK4Step(double *y, double *v, double dt,
 /// out[k] = 第 k 步积分前的 y (对应 t=k·dt, 与解析 h(t) 采样对齐)
 /// ffImpulse 仅 k=0 注入 (阶跃 setpoint 微分 = 冲激, 过 plant 平滑)
 /// I_state 带 anti-windup 限幅 (±2·Kp, 防积分饱和失稳)
+/// D 路径三级 PT1 (dtermFc1/2/3, 来自 BF dterm_lowpass/2/dyn): 每步前用当前 v
+///   更新三级状态, 步内 D 冻结 (BF 离散行为); 全 0 = 无滤波, D 跟踪 v (2a 对齐)
 static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
                                   double Kp, double Ki, double Kd_eff, double Kff_norm,
-                                  double K_plant, double tauM) {
+                                  double K_plant, double tauM,
+                                  double dtermFc1, double dtermFc2, double dtermFc3) {
     double y = 0.0, v = 0.0;                    // 初始静止 (阶跃前)
     double I_state = 0.0;
     double I_limit = fabs(Kp) * 2.0;            // ponytail: anti-windup 上限
     BOOL hasI  = (Ki > 1e-9);
     BOOL hasFF = (Kff_norm > 1e-9);
+    BOOL hasDtermFilter = (dtermFc1 > 0.0 || dtermFc2 > 0.0 || dtermFc3 > 0.0);
+    double d1 = 0.0, d2 = 0.0, d3 = 0.0;        // 三级 PT1 状态 (初始静止)
 
     for (NSInteger k = 0; k < N; k++) {
-        // FF 冲激: 仅第 0 步 (阶跃 d(setpoint)/dt = δ, 离散为 1/dt)
-        double ffImpulse = (k == 0 && hasFF) ? Kff_norm / dt : 0.0;
+        // FF 前馈: 仅第 0 步注入 Kff_norm·Δsetpoint (BF 离散循环: 单位阶跃 Δsetpoint=1,
+        //   FF 输出 = Kff·1, 一轮; 不除 dt — 2a 曾误用 Kff/dt 连续冲激框架致峰值 5.96)
+        double ffImpulse = (k == 0 && hasFF) ? Kff_norm : 0.0;
         // I 积分 (Euler 步前更新, 限幅)
         if (hasI) {
             double err = 1.0 - y;
@@ -268,8 +317,19 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
             if (I_state >  I_limit) I_state =  I_limit;
             if (I_state < -I_limit) I_state = -I_limit;
         }
+        // D 路径: 三级 PT1 滤波陀螺导数 v (BF D-on-measurement), 步内冻结
+        double dtermFB;
+        if (hasDtermFilter) {
+            PT1Step(v, &d1, dt, dtermFc1);  // stage 1 (fc≤0 直通)
+            PT1Step(d1, &d2, dt, dtermFc2); // stage 2
+            PT1Step(d2, &d3, dt, dtermFc3); // stage 3
+            dtermFB = d3;
+        } else {
+            dtermFB = v;  // 无滤波: RK4 子步内由 freezeD=NO 跟踪 v (2a 对齐)
+        }
         out[k] = y;                             // 记录 (步前, 对齐解析 t=k·dt)
-        RK4Step(&y, &v, dt, Kp, Kd_eff, I_state, ffImpulse, K_plant, tauM);
+        RK4Step(&y, &v, dt, Kp, Kd_eff, I_state, ffImpulse, K_plant, tauM,
+                hasDtermFilter, dtermFB);
     }
 }
 
@@ -364,8 +424,14 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
     double *buf = (double *)malloc((size_t)N * sizeof(double));
     if (!buf) return @[@0.0];
 
-    // RK4 时域积分 (物理 PID 闭环 + 二阶 plant)
-    SimulatePIDTimeDomain(buf, N, dt, Kp, Ki, Kd_eff, Kff_norm, mech.kPlant, mech.tauM);
+    // D 路径三级 PT1 截止 (来自 filter, 全 0 = 无滤波走 2a 对齐路径)
+    double dFc1 = filter.dtermPT1Hz;
+    double dFc2 = filter.dtermPT1_2Hz;
+    double dFc3 = filter.dtermPT1DynHz;
+
+    // RK4 时域积分 (物理 PID 闭环 + 二阶 plant, D 路径三级 PT1)
+    SimulatePIDTimeDomain(buf, N, dt, Kp, Ki, Kd_eff, Kff_norm, mech.kPlant, mech.tauM,
+                          dFc1, dFc2, dFc3);
 
     // gyro 低通链 (与解析版同语义, 共用公共函数)
     if (filter) {

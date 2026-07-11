@@ -311,4 +311,65 @@
     // 2a 不阻塞: 仅记录差异 (无 XCTAssert)
 }
 
+#pragma mark - 🎯 3.3b-2b: D 路径三级 PT1 低通链 (BF 真实 dterm 通道)
+//
+// 验收: D 项从固定 −Kd_eff·v 升级为 −Kd_eff·PT1_chain(v)
+//   1) 接线: 有/无 dterm 链的时域曲线必须显著不同 (filter 真的作用了)
+//   2) 物理方向: dterm 低通衰减高频 D → 等效阻尼下降 → 过冲/振铃加重
+//      (固定 D 在所有频率提供阻尼; PT1 链在 >截止频率衰减 D 信号)
+//   3) 2a 回归: nil filter 仍走纯 PD 对齐路径 (dtermFc 全 0, freezeD=NO)
+//
+// 真实 BBL 的 RMSE 地板对比见 RealBBLClosureTests (001.bbl roll 曲线)
+
+/// 001.bbl 真实 dterm 三级 PT1 链 (type=0): dterm_lowpass=150 / lowpass2=150 / dyn=70-170(取120)
+- (BFFilterConfig *)realDtermChain {
+    return [BFFilterConfig dtermPT1Chain:150.0 h2:150.0 dyn:120.0];
+}
+
+/// D 路径三级 PT1 滤波必须显著改变时域曲线 (接线正确性)
+- (void)testTimeDomain_DtermFilter_ChangesCurve {
+    PIDValues *pid = [PIDValues new];
+    pid.p = 38; pid.i = 85; pid.d = 44; pid.ff = 72;
+
+    NSArray<NSNumber *> *noFilter = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                                                                       mechConstants:[self realMech]
+                                                                       filterConfig:nil
+                                                                              length:4000 duration:0.5];
+    NSArray<NSNumber *> *dterm150 = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                                                                       mechConstants:[self realMech]
+                                                                       filterConfig:[self realDtermChain]
+                                                                              length:4000 duration:0.5];
+
+    XCTAssertEqual(noFilter.count, dterm150.count);
+    double sse = 0, maxDiff = 0;
+    for (NSInteger k = 0; k < (NSInteger)noFilter.count; k++) {
+        double d = noFilter[k].doubleValue - dterm150[k].doubleValue;
+        sse += d * d;
+        maxDiff = fmax(maxDiff, fabs(d));
+    }
+    double rmsDiff = sqrt(sse / (double)noFilter.count);
+
+    // 过冲对比 (前 200 点 = 25ms, 捕捉上升沿+第一过冲)
+    double peakNoF = 0, peakDT = 0;
+    NSInteger lim = MIN(200, (NSInteger)noFilter.count);
+    for (NSInteger k = 0; k < lim; k++) {
+        peakNoF = fmax(peakNoF, noFilter[k].doubleValue);
+        peakDT  = fmax(peakDT,  dterm150[k].doubleValue);
+    }
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2b] D路径三级PT1 (150/150/120) 接线验证\n"
+        @"  无滤波 vs 有滤波: RMS差=%.4f maxDiff=%.4f\n"
+        @"  前25ms峰值: 无滤波=%.4f / dterm链=%.4f\n"
+        @"  方向: %@",
+        rmsDiff, maxDiff, peakNoF, peakDT,
+        peakDT > peakNoF ? @"✅ dterm滤波→阻尼降→过冲加重 (物理方向对)"
+                         : @"⚠️ 过冲未加重 (FF冲激主导, 留2c定夺)"];
+    // 注: FF 已修为离散 Kff_norm (非 /dt 冲激), 峰值回到物理范围, 过冲对比有意义
+    [report writeToFile:@"/tmp/td_dterm_wiring.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertGreaterThan(maxDiff, 1e-3, @"dterm 链未改变曲线 (filter 没作用, 接线错误)");
+}
+
 @end

@@ -61,9 +61,16 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) double gyroPT1_2Hz;    ///< [3.3b PT1] gyro_lowpass2 截止 Hz (001:250); 0=跳过
 @property (nonatomic, assign) double gyroPT1DynHz;   ///< [3.3b PT1] gyro_lowpass_dyn 截止 Hz (001:200-500随油门, 取定值); 0=跳过
 
+/// [3.3b-2b] dterm 三级 PT1 链 (作用于 D 项信号, 每步内更新, 区别于 gyro 链的整段后处理)
+/// 001.bbl: dterm_lowpass=150 / dterm_lowpass2=150 / dterm_lowpass_dyn=70-170(随油门, 取定值)
+@property (nonatomic, assign) double dtermPT1Hz;     ///< [3.3b-2b] dterm_lowpass 截止 Hz (001:150); 0=跳过
+@property (nonatomic, assign) double dtermPT1_2Hz;   ///< [3.3b-2b] dterm_lowpass2 截止 Hz (001:150); 0=跳过
+@property (nonatomic, assign) double dtermPT1DynHz;  ///< [3.3b-2b] dterm_lowpass_dyn 截止 Hz (001:70-170, 取定值); 0=跳过
+
 + (instancetype)noFilter;                              ///< 无滤波 (向后兼容)
 + (instancetype)gyroLowpass:(double)hz;                ///< [3.3a] 单 biquad (Butterworth Q)
 + (instancetype)gyroPT1Chain:(double)h1 h2:(double)h2 dyn:(double)hdyn;  ///< [3.3b] BF真实gyro三级PT1链 (任一 0 跳过该级)
++ (instancetype)dtermPT1Chain:(double)h1 h2:(double)h2 dyn:(double)hdyn; ///< [3.3b-2b] BF真实dterm三级PT1链 (gyro直通, 任一 0 跳过该级)
 
 @end
 

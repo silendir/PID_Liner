@@ -735,4 +735,104 @@
     XCTAssertGreaterThan(N, 100);
 }
 
+#pragma mark - 阶段3.3b-2b: 时域 forward + dterm 三级 PT1 链 vs 真实 BBL
+
+// 背景: 2a 时域骨架已对齐解析 h(t) (纯PD RMSE=2.7e-8). 2b 加 BF 真实 dterm 三级 PT1 (150/150/120).
+// 假设 (3.3b-1 频谱诊断): RMSE 地板 ~0.063 的残余 40-70Hz 占 34% = dterm 动态振荡.
+//   固定 D (解析/2a) 全频阻尼 → 产生不了这带振荡 → 残余;
+//   dterm 低通衰减高频 D → 等效阻尼在高频下降 → 能产生 20-100Hz 振荡 → 残余应降.
+// 看点: ① td+dterm 的 RMSE 是否 < 解析 0.069  ② 残差 20-100Hz 带能量是否下降
+
+/// 带内功率 (Goertzel 风格直接相关, fs Hz, fLo~fHi Hz, 2Hz 分辨率)
+/// ponytail: 不引 Accelerate, N~4000 带内 ~40 频点 × N = 160k 次运算, 测试可接受
+- (double)bandEnergy:(NSArray<NSNumber *> *)sig fs:(double)fs fLo:(double)fLo fHi:(double)fHi {
+    NSInteger N = sig.count;
+    if (N < 4 || fs <= 0 || fHi <= fLo) return 0.0;
+    double dt = 1.0 / fs;
+    double e = 0.0;
+    for (double f = fLo; f <= fHi + 1e-9; f += 2.0) {
+        double w = 2.0 * M_PI * f;
+        double re = 0.0, im = 0.0;
+        for (NSInteger k = 0; k < N; k++) {
+            double s = sig[k].doubleValue;
+            double ang = w * (double)k * dt;
+            re += s * cos(ang);
+            im += s * sin(ang);
+        }
+        e += (re * re + im * im);
+    }
+    return e / ((double)N * (double)N * (double)((NSInteger)((fHi - fLo) / 2.0) + 1));
+}
+
+/// 🎯 3.3b-2b: 真实 BBL vs 三路 forward (解析 / 时域无dterm / 时域+dterm链)
+/// 判定 dterm 三级 PT1 链能否降 RMSE 地板 + 残差 20-100Hz 带能量
+- (void)testRealBBL_TimeDomain_DtermChain_VsAnalytic {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    XCTAssertNotNil(target);
+    NSInteger N = (NSInteger)target.count;
+    XCTAssertGreaterThan(N, 100);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+
+    PIDValues *pid = [PIDValues new];
+    pid.p = P; pid.i = I; pid.d = D; pid.ff = FF;
+
+    // 三路 forward
+    NSArray<NSNumber *> *fwdAnalytic = [PIDReverseSolver forwardCurveWithPID:pid
+                                                                 mechConstants:mech
+                                                                         length:N duration:0.5];
+    NSArray<NSNumber *> *fwdTD_NoDterm = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                                                                              mechConstants:mech
+                                                                              filterConfig:nil
+                                                                                     length:N duration:0.5];
+    BFFilterConfig *dtermChain = [BFFilterConfig dtermPT1Chain:150.0 h2:150.0 dyn:120.0];
+    NSArray<NSNumber *> *fwdTD_Dterm = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                                                                            mechConstants:mech
+                                                                            filterConfig:dtermChain
+                                                                                   length:N duration:0.5];
+
+    // 残差 (target − forward)
+    NSMutableArray<NSNumber *> *resA = [NSMutableArray arrayWithCapacity:N];
+    NSMutableArray<NSNumber *> *resTN = [NSMutableArray arrayWithCapacity:N];
+    NSMutableArray<NSNumber *> *resTD = [NSMutableArray arrayWithCapacity:N];
+    for (NSInteger k = 0; k < N; k++) {
+        double t = target[k].doubleValue;
+        [resA  addObject:@(t - fwdAnalytic[k].doubleValue)];
+        [resTN addObject:@(t - fwdTD_NoDterm[k].doubleValue)];
+        [resTD addObject:@(t - fwdTD_Dterm[k].doubleValue)];
+    }
+
+    double rmseA  = [self rmseBetween:target and:fwdAnalytic];
+    double rmseTN = [self rmseBetween:target and:fwdTD_NoDterm];
+    double rmseTD = [self rmseBetween:target and:fwdTD_Dterm];
+
+    double fs = (double)(N - 1) / 0.5;
+    double bandA  = [self bandEnergy:resA  fs:fs fLo:20.0 fHi:100.0];
+    double bandTN = [self bandEnergy:resTN fs:fs fLo:20.0 fHi:100.0];
+    double bandTD = [self bandEnergy:resTD fs:fs fLo:20.0 fHi:100.0];
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2b 真实BBL] 001.bbl Roll, 三路 forward 对比 (PID=%.0f/%.0f/%.0f/%.0f)\n"
+        @"  解析 (经验I/FF 0.3权重):     RMSE=%.4f  带20-100Hz=%.4e\n"
+        @"  时域 无dterm (物理I/FF):     RMSE=%.4f  带20-100Hz=%.4e\n"
+        @"  时域 +dterm链(150/150/120):  RMSE=%.4f  带20-100Hz=%.4e\n"
+        @"判定: %@",
+        P, I, D, FF,
+        rmseA, bandA, rmseTN, bandTN, rmseTD, bandTD,
+        rmseTD < rmseA ? @"✅ dterm链降RMSE → D路径建模对, 可上2c(d_min/TPA)"
+                       : @"⚠️ dterm链未降RMSE → 需查dScale标定或FF, 留分析"];
+    [report writeToFile:@"/tmp/realsolve_td_dterm.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertGreaterThan(rmseTD, 0.0);  // 仅断言执行成功, 数值由 /tmp 报告判定 (2b 探索阶段)
+}
+
 @end
