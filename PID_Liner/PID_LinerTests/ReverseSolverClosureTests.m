@@ -138,4 +138,89 @@
     //    P/D/FF 信号强, 合成下误差 < 0.6%
 }
 
+#pragma mark - 🎯 3.3a: gyro 低通对照实验 (证 P 偏差根因 = forward 缺低通)
+//
+// 假设 (来自 3.2 真实 BBL: P 反解偏低 40%):
+//   真实响应被 BF gyro_lowpass 涂抹 → 上升沿变缓
+//   纯二阶 forward 无滤波 → 为匹配变缓上升沿只能降 ωn → P 偏低
+//   forward 加同款低通后 → 上升沿形状对齐 → P 可还原
+//
+// Test A (复现): 带滤波 target → 无滤波 forward 反解 → 期望 P 偏低 >15%
+// Test B (还原): 带滤波 target → 带滤波 forward 反解 → 期望 P 误差 <5%
+//   A 复现 + B 还原 = 假设成立 → 可上真实 BBL 验证
+
+/// 合成带 gyro 低通的曲线 (模拟真实 BBL: gyro 已被 BF gyro_lowpass 涂抹)
+- (NSArray<NSNumber *> *)syntheticFilteredTargetWithP:(double)p i:(double)i d:(double)d
+                                                   ff:(double)ff gyroHz:(double)hz {
+    PIDValues *pid = [PIDValues new];
+    pid.p = p; pid.i = i; pid.d = d; pid.ff = ff;
+    return [PIDReverseSolver forwardCurveWithPID:pid
+                                   mechConstants:[self realMech]
+                                   filterConfig:[BFFilterConfig gyroLowpass:hz]
+                                           length:4000 duration:0.5];
+}
+
+/// 🔬 Test A: 带滤波 target → 无滤波 forward 反解 (真值初值) → 期望 P 偏低
+///   真值初值确保偏差只来自模型失配, 非初值依赖
+- (void)testSynthetic_GyroLowpassReproducesPBias {
+    double P = 38, I = 85, D = 44, FF = 72;
+    NSArray<NSNumber *> *target = [self syntheticFilteredTargetWithP:P i:I d:D ff:FF gyroHz:150.0];
+
+    PIDValues *guess = [PIDValues new];
+    guess.p = P; guess.i = I; guess.d = D; guess.ff = FF;  // 真值初值
+
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+    PIDReverseSolveResult *r = [solver solveFromTargetCurve:target
+                                              initialGuess:guess
+                                             mechConstants:[self realMech]
+                                                    fitMask:PIDReverseFitP | PIDReverseFitD
+                                                     length:4000 duration:0.5];
+    XCTAssertNotNil(r);
+    double pErr = [self pctErr:r.solvedPID.p vs:P];
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3a-A] target=forward(P=38,D=44,gyro150Hz), 无滤波forward反解(真值初值)\n"
+        @"P=%.2f(真38, %.1f%%) D=%.2f RMSE=%.4f iter=%ld\n复现: %@",
+        r.solvedPID.p, pErr, r.solvedPID.d, r.finalRMSE, (long)r.iterations,
+        pErr > 15.0 ? @"✅ P偏低>15% → 复现真实BBL症状, 假设(缺低通)成立"
+                    : @"❌ P未偏低, 假设不成立"];
+    [report writeToFile:@"/tmp/synth_lowpass_bias.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🔬 %@", report);
+
+    XCTAssertTrue(pErr > 15.0, @"P 误差 %.1f%% < 15%%, 未复现偏低症状 (假设不成立)", pErr);
+}
+
+/// 🎯 Test B: 带滤波 target → 带滤波 forward 反解 (扰动初值) → 期望 P 还原 <5%
+- (void)testSynthetic_GyroLowpassRestoresP {
+    double P = 38, I = 85, D = 44, FF = 72;
+    NSArray<NSNumber *> *target = [self syntheticFilteredTargetWithP:P i:I d:D ff:FF gyroHz:150.0];
+
+    PIDValues *guess = [PIDValues new];
+    guess.p = P * 1.4; guess.i = I; guess.d = D * 0.6; guess.ff = FF;  // 扰动初值
+
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+    PIDReverseSolveResult *r = [solver solveFromTargetCurve:target
+                                              initialGuess:guess
+                                             mechConstants:[self realMech]
+                                              filterConfig:[BFFilterConfig gyroLowpass:150.0]
+                                                    fitMask:PIDReverseFitP | PIDReverseFitD
+                                                     length:4000 duration:0.5];
+    XCTAssertNotNil(r);
+    double pErr = [self pctErr:r.solvedPID.p vs:P];
+    double dErr = [self pctErr:r.solvedPID.d vs:D];
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3a-B] target=forward(P=38,D=44,gyro150Hz), 带滤波forward反解(扰动初值)\n"
+        @"P=%.2f(真38, %.2f%%) D=%.2f(真44, %.2f%%) RMSE=%.4e iter=%ld\n还原: %@",
+        r.solvedPID.p, pErr, r.solvedPID.d, dErr, r.finalRMSE, (long)r.iterations,
+        pErr < 5.0 ? @"✅ P误差<5% → 加低通治本, 可上真实BBL"
+                   : @"❌ P仍偏高, 需扩dterm低通或其它"];
+    [report writeToFile:@"/tmp/synth_lowpass_restore.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertLessThan(pErr, 5.0, @"P 误差 %.2f%% > 5%%, 加低通未还原 P", pErr);
+}
+
 @end

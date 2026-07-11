@@ -37,6 +37,45 @@ static const double    kJacStep      = 1e-6;   ///< 数值雅可比相对步长
 
 @end
 
+#pragma mark - BFFilterConfig
+
+@implementation BFFilterConfig
+
+/// Butterworth Q 常量 (最大化平坦通带)
+static const double kButterworthQ = 0.7071067811865476;
+
++ (instancetype)noFilter {
+    BFFilterConfig *f = [[BFFilterConfig alloc] init];
+    f.gyroLowpassHz  = 0.0;
+    f.dtermLowpassHz = 0.0;
+    f.q              = kButterworthQ;
+    return f;
+}
+
++ (instancetype)gyroLowpass:(double)hz {
+    BFFilterConfig *f = [[BFFilterConfig alloc] init];
+    f.gyroLowpassHz  = hz;       // 0 = 不滤波 (gyroLowpass:0 也合法)
+    f.dtermLowpassHz = 0.0;
+    f.q              = kButterworthQ;
+    return f;
+}
+
+/// [3.3b] BF 真实 gyro 通道三级 PT1 链 (type=0, 来自 BBL header)
+/// 001.bbl: gyro_lowpass=200 / gyro_lowpass2=250 / gyro_lowpass_dyn=200-500(随油门)
+/// 任一级 h≤0 跳过该级; dyn 取定值 (阶跃统计平均, 油门混合, 取下限≈低油门)
++ (instancetype)gyroPT1Chain:(double)h1 h2:(double)h2 dyn:(double)hdyn {
+    BFFilterConfig *f = [[BFFilterConfig alloc] init];
+    f.gyroLowpassHz  = 0.0;
+    f.dtermLowpassHz = 0.0;
+    f.q              = kButterworthQ;
+    f.gyroPT1Hz      = h1;    // gyro_lowpass (001:200)
+    f.gyroPT1_2Hz    = h2;    // gyro_lowpass2 (001:250)
+    f.gyroPT1DynHz   = hdyn;  // gyro_lowpass_dyn (001:200-500, 取定值)
+    return f;
+}
+
+@end
+
 #pragma mark - PIDReverseSolveResult
 
 @implementation PIDReverseSolveResult
@@ -75,6 +114,65 @@ static void SolveLinearSystem(double *A, double *b, int n) {
     }
 }
 
+#pragma mark - C 辅助: biquad 低通 (RBJ cookbook, Direct Form I)
+
+/// 对 in[0..n-1] 做 biquad lowpass, 输出 out (可与 in 同缓冲, 非法参数直通)
+/// fs=采样率 Hz, fc=截止 Hz, Q=品质因数 (Butterworth=0.7071)
+/// 数学: H(z)=(b0+b1·z⁻¹+b2·z⁻²)/(1+a1·z⁻¹+a2·z⁻²); DC 增益恒 1 → 稳态不变, 只抹瞬态
+/// 物理对应: BF gyro_lowpass 涂抹真实响应上升沿 (高频被滤, 上升变缓)
+static void ApplyBiquadLowpass(const double *in, double *out, NSInteger n,
+                               double fs, double fc, double Q) {
+    // 🔑 非法参数直通 (fc≥Nyquist 或负值无意义)
+    if (n <= 0 || fs <= 0 || fc <= 0 || fc >= fs * 0.5 || Q <= 0) {
+        if (in != out) for (NSInteger k = 0; k < n; k++) out[k] = in[k];
+        return;
+    }
+    double w0    = 2.0 * M_PI * fc / fs;
+    double cosw0 = cos(w0);
+    double sinw0 = sin(w0);
+    double alpha = sinw0 / (2.0 * Q);
+    double a0    = 1.0 + alpha;
+    double b0    = ((1.0 - cosw0) * 0.5) / a0;
+    double b1    = (1.0 - cosw0) / a0;
+    double b2    = ((1.0 - cosw0) * 0.5) / a0;
+    double a1    = (-2.0 * cosw0) / a0;
+    double a2    = (1.0 - alpha) / a0;
+
+    double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;  // 初始状态: 阶跃前静止
+    for (NSInteger k = 0; k < n; k++) {
+        double x0 = in[k];
+        double y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        out[k] = y0;
+        x2 = x1; x1 = x0;
+        y2 = y1; y1 = y0;
+    }
+}
+
+#pragma mark - C 辅助: PT1 低通 (BF pt1Filter 等价, type=0)
+
+/// 对 in[0..n-1] 做一阶低通 (BF pt1FilterApply), 输出 out (可与 in 同缓冲, 原地安全)
+/// fs=采样率 Hz, fc=截止 Hz
+/// 数学: y[k] = y[k-1] + gain·(x[k] − y[k-1]); gain = dt/(RC+dt), RC = 1/(2π·fc)
+/// DC 增益恒 1 → 稳态不变, 只抹瞬态 (与 biquad 同性质, 但一阶非二阶)
+/// 物理对应: BF gyro_lowpass 真实类型 (001.bbl gyro_lowpass_type=0 → PT1)
+static void ApplyPT1Lowpass(const double *in, double *out, NSInteger n,
+                            double fs, double fc) {
+    // 🔑 非法参数直通 (fc≥Nyquist 或非正无意义)
+    if (n <= 0 || fs <= 0 || fc <= 0 || fc >= fs * 0.5) {
+        if (in != out) for (NSInteger k = 0; k < n; k++) out[k] = in[k];
+        return;
+    }
+    double dt   = 1.0 / fs;
+    double RC   = 1.0 / (2.0 * M_PI * fc);
+    double gain = dt / (RC + dt);
+    if (gain > 1.0) gain = 1.0;  // ponytail: 物理约束 gain∈(0,1]
+    double y = 0.0;  // 初始状态: 阶跃前静止 (与二阶起步 0 一致)
+    for (NSInteger k = 0; k < n; k++) {
+        y += gain * (in[k] - y);
+        out[k] = y;
+    }
+}
+
 #pragma mark - PIDReverseSolver
 
 @implementation PIDReverseSolver
@@ -83,6 +181,16 @@ static void SolveLinearSystem(double *A, double *b, int n) {
 
 + (NSArray<NSNumber *> *)forwardCurveWithPID:(PIDValues *)pid
                                mechConstants:(BFMechConstants *)mech
+                                       length:(NSInteger)length
+                                     duration:(double)duration {
+    // 旧接口转调带滤波版 (nil=不滤波, 向后兼容 3.1/3.2 现有测试)
+    return [self forwardCurveWithPID:pid mechConstants:mech filterConfig:nil
+                              length:length duration:duration];
+}
+
++ (NSArray<NSNumber *> *)forwardCurveWithPID:(PIDValues *)pid
+                               mechConstants:(BFMechConstants *)mech
+                               filterConfig:(BFFilterConfig *)filter
                                        length:(NSInteger)length
                                      duration:(double)duration {
     // 🔑 输入校验
@@ -108,7 +216,54 @@ static void SolveLinearSystem(double *A, double *b, int n) {
     params.integralTau   = (i > kPIDEpsilon) ? (p / i) : 0.0;
     params.feedforwardScale = ff / kFFNorm;
 
-    return [BFPIDToSecondOrderMapper predictedCurveWithParams:params length:length duration:duration];
+    NSArray<NSNumber *> *raw = [BFPIDToSecondOrderMapper predictedCurveWithParams:params
+                                                                            length:length
+                                                                          duration:duration];
+
+    // 3.3a/3.3b: 过 gyro 低通 (模拟 BF gyro 通道涂抹上升沿)
+    //   优先级: PT1链(BF真实type=0) > biquad(3.3a合成资产) > 不滤
+    if (filter && raw.count > 2) {
+        double fs = (double)(length - 1) / duration;  // 与 predictedCurve 的 dt 一致
+        NSInteger n = (NSInteger)raw.count;
+
+        // [3.3b] PT1 链: BF 真实 gyro 三级低通串联 (type=0, 线性系统可交换)
+        double pt1Fcs[3] = {filter.gyroPT1Hz, filter.gyroPT1_2Hz, filter.gyroPT1DynHz};
+        BOOL hasPT1 = NO;
+        for (int s = 0; s < 3; s++) if (pt1Fcs[s] > 0 && pt1Fcs[s] < fs * 0.5) hasPT1 = YES;
+        if (hasPT1) {
+            double *buf = (double *)malloc(n * sizeof(double));
+            if (buf) {
+                for (NSInteger k = 0; k < n; k++) buf[k] = raw[k].doubleValue;
+                for (int s = 0; s < 3; s++) {
+                    if (pt1Fcs[s] > 0 && pt1Fcs[s] < fs * 0.5) {
+                        ApplyPT1Lowpass(buf, buf, n, fs, pt1Fcs[s]);  // 原地串联
+                    }
+                }
+                NSMutableArray<NSNumber *> *filtered = [NSMutableArray arrayWithCapacity:n];
+                for (NSInteger k = 0; k < n; k++) [filtered addObject:@(buf[k])];
+                free(buf);
+                return [filtered copy];
+            }
+            free(buf);  // ponytail: malloc 失败降级下方 biquad/raw
+        }
+
+        // [3.3a] biquad 单级 (合成对照资产, 保留)
+        if (filter.gyroLowpassHz > 0) {
+            double *buf = (double *)malloc(n * sizeof(double));
+            double *out = (double *)malloc(n * sizeof(double));
+            if (buf && out) {
+                for (NSInteger k = 0; k < n; k++) buf[k] = raw[k].doubleValue;
+                double qVal = (filter.q > 0) ? filter.q : kButterworthQ;
+                ApplyBiquadLowpass(buf, out, n, fs, filter.gyroLowpassHz, qVal);
+                NSMutableArray<NSNumber *> *filtered = [NSMutableArray arrayWithCapacity:n];
+                for (NSInteger k = 0; k < n; k++) [filtered addObject:@(out[k])];
+                free(buf); free(out);
+                return [filtered copy];
+            }
+            free(buf); free(out);  // ponytail: malloc 失败回退 raw (降级而非崩溃)
+        }
+    }
+    return raw;
 }
 
 #pragma mark - 内部: PIDValues 与 double[4] 互转
@@ -124,9 +279,10 @@ static void SolveLinearSystem(double *A, double *b, int n) {
 + (void)fillForwardDouble:(double *)out
                    fromPID:(PIDValues *)pid
               mechConstants:(BFMechConstants *)mech
+              filterConfig:(BFFilterConfig *)filter
                     length:(NSInteger)N
                   duration:(double)duration {
-    NSArray<NSNumber *> *curve = [self forwardCurveWithPID:pid mechConstants:mech length:N duration:duration];
+    NSArray<NSNumber *> *curve = [self forwardCurveWithPID:pid mechConstants:mech filterConfig:filter length:N duration:duration];
     NSInteger n = MIN(N, (NSInteger)curve.count);
     for (NSInteger k = 0; k < n; k++) out[k] = curve[k].doubleValue;
     for (NSInteger k = n; k < N; k++) out[k] = 0.0;
@@ -137,6 +293,19 @@ static void SolveLinearSystem(double *A, double *b, int n) {
 - (nullable PIDReverseSolveResult *)solveFromTargetCurve:(NSArray<NSNumber *> *)target
                                             initialGuess:(PIDValues *)initialGuess
                                            mechConstants:(BFMechConstants *)mech
+                                                  fitMask:(PIDReverseFitMask)fitMask
+                                                   length:(NSInteger)length
+                                                 duration:(double)duration {
+    // 旧接口转调带滤波版 (nil=不滤波, 向后兼容 3.1/3.2 现有测试)
+    return [self solveFromTargetCurve:target initialGuess:initialGuess
+                         mechConstants:mech filterConfig:nil
+                               fitMask:fitMask length:length duration:duration];
+}
+
+- (nullable PIDReverseSolveResult *)solveFromTargetCurve:(NSArray<NSNumber *> *)target
+                                            initialGuess:(PIDValues *)initialGuess
+                                           mechConstants:(BFMechConstants *)mech
+                                            filterConfig:(BFFilterConfig *)filter
                                                   fitMask:(PIDReverseFitMask)fitMask
                                                    length:(NSInteger)length
                                                  duration:(double)duration {
@@ -178,7 +347,7 @@ static void SolveLinearSystem(double *A, double *b, int n) {
 
     // 初始残差 + cost
     [PIDReverseSolver applyCur:cur toPID:workPID];
-    [self.class fillForwardDouble:fwd0 fromPID:workPID mechConstants:mech length:N duration:duration];
+    [self.class fillForwardDouble:fwd0 fromPID:workPID mechConstants:mech filterConfig:filter length:N duration:duration];
     double cost = 0.0;
     for (NSInteger k = 0; k < N; k++) { r0[k] = fwd0[k] - tgt[k]; cost += r0[k] * r0[k]; }
 
@@ -196,7 +365,7 @@ static void SolveLinearSystem(double *A, double *b, int n) {
             double save = cur[j];
             cur[j] = save + h;
             [PIDReverseSolver applyCur:cur toPID:workPID];
-            [self.class fillForwardDouble:fwdPert fromPID:workPID mechConstants:mech length:N duration:duration];
+            [self.class fillForwardDouble:fwdPert fromPID:workPID mechConstants:mech filterConfig:filter length:N duration:duration];
             cur[j] = save;
             // J[:][jj] = (fwdPert - fwd0) / h
             for (NSInteger k = 0; k < N; k++) {
@@ -242,7 +411,7 @@ static void SolveLinearSystem(double *A, double *b, int n) {
             for (int j = 0; j < 4; j++) if (trialCur[j] < 0) trialCur[j] = kPIDEpsilon;
 
             [PIDReverseSolver applyCur:trialCur toPID:workPID];
-            [self.class fillForwardDouble:fwdPert fromPID:workPID mechConstants:mech length:N duration:duration];
+            [self.class fillForwardDouble:fwdPert fromPID:workPID mechConstants:mech filterConfig:filter length:N duration:duration];
             double newCost = 0.0;
             for (NSInteger k = 0; k < N; k++) {
                 double dr = fwdPert[k] - tgt[k];

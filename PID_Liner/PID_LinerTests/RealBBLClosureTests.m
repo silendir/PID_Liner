@@ -487,6 +487,93 @@
     XCTAssertGreaterThan(r.solvedPID.p, 0);
 }
 
+/// 🎯 3.3a 真实BBL续: 带 gyro 低通反解 — 验证 P 能否从 22.48 → 接近 38
+/// 3.3a 合成已证: forward 加 gyro150Hz 低通后 P 偏差消除 (合成 43.4%→0.00%)
+/// 此测试: 同款滤波上真实 001.bbl, P 误差能从 40.8% 降到多少?
+- (void)testRealBBL_ReverseSolve_PD_WithGyroLowpass {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    XCTAssertNotNil(target);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+
+    PIDValues *guess = [PIDValues new];
+    guess.p = P * 1.4; guess.i = I; guess.d = D * 0.6; guess.ff = FF;
+
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+    PIDReverseSolveResult *r = [solver solveFromTargetCurve:target
+                                              initialGuess:guess
+                                             mechConstants:mech
+                                              filterConfig:[BFFilterConfig gyroLowpass:150.0]
+                                                    fitMask:PIDReverseFitP | PIDReverseFitD
+                                                     length:(NSInteger)target.count duration:0.5];
+    XCTAssertNotNil(r);
+
+    double pErr = [self pctErr:r.solvedPID.p vs:P];
+    double dErr = [self pctErr:r.solvedPID.d vs:D];
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3a 真实BBL] 001.bbl Roll, 带 gyro150Hz 低通反解\n"
+        @"truth:  P=%.0f I=%.0f D=%.0f FF=%.0f\n"
+        @"solved: P=%.2f(%.1f%%) D=%.2f(%.1f%%) iter=%ld RMSE=%.4f\n"
+        @"对比3.2无滤波: P=22.48(40.8%%)\n"
+        @"判定: %@",
+        P, I, D, FF,
+        r.solvedPID.p, pErr, r.solvedPID.d, dErr, (long)r.iterations, r.finalRMSE,
+        pErr < 15.0 ? @"✅ P误差<15% → 加低通在真实BBL也有效"
+                    : @"⚠️ P仍>15% → 真实曲线还有dterm动态未建模, 需3.3b扩滤波"];
+    [report writeToFile:@"/tmp/realsolve_lowpass.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+
+    XCTAssertGreaterThan(r.solvedPID.p, 0);
+}
+
+/// 🔬 3.3a 扫频: gyro 低通截止 Hz → 反解 P, 找 P=38(真值) 对应的等效截止 f*
+/// 已知两端: 0Hz→P=22.48(偏低40.8%), 150Hz→P=77.78(偏高104.7%)
+/// 目标: 看 P 随 f 是否单调, 定位 f* 使 P≈38 (该 f* 即真实 BBL 的等效涂抹截止)
+- (void)testRealBBL_ReverseSolve_PD_LowpassSweep {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    XCTAssertNotNil(target);
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+
+    double hzs[] = {0, 50, 100, 150, 200, 300, 500};
+    int cnt = (int)(sizeof(hzs) / sizeof(hzs[0]));
+    NSMutableString *rep = [NSMutableString stringWithFormat:
+        @"[3.3a 扫频] 001.bbl Roll, P真值=%.0f D真值=%.0f\n截止Hz → 反解P(误差%%) D  RMSE\n", P, D];
+    for (int k = 0; k < cnt; k++) {
+        PIDValues *guess = [PIDValues new];
+        guess.p = P * 1.2; guess.i = I; guess.d = D * 0.8; guess.ff = FF;
+        BFFilterConfig *f = (hzs[k] > 0) ? [BFFilterConfig gyroLowpass:hzs[k]]
+                                          : [BFFilterConfig noFilter];
+        PIDReverseSolveResult *r = [solver solveFromTargetCurve:target
+                                                  initialGuess:guess
+                                                 mechConstants:mech
+                                                  filterConfig:f
+                                                        fitMask:PIDReverseFitP | PIDReverseFitD
+                                                         length:(NSInteger)target.count duration:0.5];
+        double pErr = r ? [self pctErr:r.solvedPID.p vs:P] : -1.0;
+        [rep appendFormat:@"  %4.0fHz → P=%6.1f(%5.1f%%)  D=%6.1f  RMSE=%.4f\n",
+            hzs[k], r.solvedPID.p, pErr, r.solvedPID.d, r.finalRMSE];
+    }
+    [rep appendString:@"\n判定: P 随 f 单调 → 加低通方向对, f* 处 P≈38 即真实等效涂抹截止\n"];
+    [rep writeToFile:@"/tmp/realsolve_sweep.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    XCTAssertGreaterThan(P, 0);
+}
+
 /// 🔬 诊断: 从真值初值反解 — 区分 P 偏离的根因
 ///   真值初值 → LM 停在真值(±1%) → P 欠定(初值依赖, 正则化可治)
 ///   真值初值 → LM 漂移到 22      → 模型偏差(二阶 forward 系统拉低 ωn, 扩 forward 才能治)
@@ -536,6 +623,116 @@
                 encoding:NSUTF8StringEncoding error:nil];
 
     XCTAssertGreaterThan(r.solvedPID.p, 0);
+}
+
+#pragma mark - 阶段3.3b-1: BF 真实 gyro 三级 PT1 链 (替换3.3a猜错的biquad)
+
+// 背景: 3.3a 用单 biquad 扫频, 200Hz 得 P=42.6(12%最近), 但 RMSE 地板 0.063 全程不降
+//       (单 biquad 不增模型容量). 且 BF type=0=PT1, 3.3a 用 biquad 类型建错.
+// 3.3b-1: 换 BF 真实 type=0 PT1, 三级串联 (BBL header 实测 gyro_lowpass=200/lowpass2=250/dyn=200-500)
+// 看点: ① P 误差能否 <5%  ② finalRMSE 地板能否 <0.063 (降=PT1链真增容量, 方向对, 继续dterm)
+
+/// 🎯 真实BBL[001] + BF真实 gyro 三级 PT1 链 (200/250/dyn200) 反解 P/D
+- (void)testRealBBL_ReverseSolve_PD_WithGyroPT1Chain {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    XCTAssertNotNil(target);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+
+    PIDValues *guess = [PIDValues new];
+    guess.p = P * 1.4; guess.i = I; guess.d = D * 0.6; guess.ff = FF;
+
+    // BF 真实 gyro 三级 PT1 (001.bbl header 实测): 200 / 250 / dyn 取下限 200 (低油门)
+    BFFilterConfig *filter = [BFFilterConfig gyroPT1Chain:200.0 h2:250.0 dyn:200.0];
+
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+    PIDReverseSolveResult *r = [solver solveFromTargetCurve:target
+                                              initialGuess:guess
+                                             mechConstants:mech
+                                              filterConfig:filter
+                                                    fitMask:PIDReverseFitP | PIDReverseFitD
+                                                     length:(NSInteger)target.count duration:0.5];
+    XCTAssertNotNil(r);
+
+    double pErr = [self pctErr:r.solvedPID.p vs:P];
+    double dErr = [self pctErr:r.solvedPID.d vs:D];
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-1 真实BBL] 001.bbl Roll, BF真实gyro三级PT1链 (200/250/200)\n"
+        @"truth:  P=%.0f I=%.0f D=%.0f FF=%.0f\n"
+        @"solved: P=%.2f(%.1f%%) D=%.2f(%.1f%%) iter=%ld RMSE=%.4f\n"
+        @"对比:\n"
+        @"  3.2 无滤波:       P=22.48(40.8%%) RMSE=0.0626\n"
+        @"  3.3a 单biquad200: P=42.6(12.1%%)  RMSE=0.0648\n"
+        @"判定: %@",
+        P, I, D, FF,
+        r.solvedPID.p, pErr, r.solvedPID.d, dErr, (long)r.iterations, r.finalRMSE,
+        pErr < 5.0 ? @"✅ P<5% → PT1链治本, 可上dterm"
+                   : (r.finalRMSE < 0.060 ? @"🔶 P仍偏但RMSE降了 → PT1链增容量, 继续dterm(3.3b-2)"
+                                          : @"❌ P偏+RMSE不降 → PT1链不够, 问题在d_min动态/TPA/模型结构")];
+    [report writeToFile:@"/tmp/realsolve_pt1chain.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+
+    NSLog(@"🎯 3.3b-1 PT1链: P=%.2f(%.1f%%) D=%.2f(%.1f%%) RMSE=%.4f",
+          r.solvedPID.p, pErr, r.solvedPID.d, dErr, r.finalRMSE);
+    XCTAssertGreaterThan(r.solvedPID.p, 0);
+}
+
+/// 🔬 3.3b 诊断: residual = target − forward(真实PID) 频谱, 定位 RMSE 地板性质
+/// 3.3b-1 证 gyro 低通(任何形式)破不了 RMSE 地板(~0.063) → 地板是模型产生不了的曲线结构
+/// 本测试输出 target/forward/residual 三列到 /tmp/residual_diag.txt, 供离线 FFT 分析:
+///   残余集中低频→I/稳态; 中频→dterm动态振荡(确认方向); 白噪→统计噪声(致命); 峰→RPM谐波
+- (void)testRealBBL_ResidualSpectrumDiag {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"001" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    double sr = 0;
+    NSArray<NSNumber *> *target = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+    XCTAssertNotNil(target);
+
+    double P = 0, I = 0, D = 0, FF = 0;
+    [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+
+    PIDValues *truth = [PIDValues new];
+    truth.p = P; truth.i = I; truth.d = D; truth.ff = FF;
+    NSArray<NSNumber *> *fwd = [PIDReverseSolver forwardCurveWithPID:truth
+                                                        mechConstants:mech
+                                                                length:(NSInteger)target.count
+                                                              duration:0.5];
+    XCTAssertNotNil(fwd);
+
+    NSInteger N = MIN(target.count, fwd.count);
+    NSMutableString *out = [NSMutableString stringWithFormat:
+        @"# 3.3b residual 频谱诊断 001.bbl Roll (N=%ld duration=0.5s fs=%.1fHz)\n"
+        @"# truth PID: P=%.0f I=%.0f D=%.0f FF=%.0f\n"
+        @"# 列: target  forward  residual(target-fwd)\n",
+        (long)N, (double)(N - 1) / 0.5, P, I, D, FF];
+    double sumSq = 0.0;
+    for (NSInteger k = 0; k < N; k++) {
+        double t = target[k].doubleValue;
+        double f = fwd[k].doubleValue;
+        double res = t - f;
+        sumSq += res * res;
+        [out appendFormat:@"%.6f %.6f %.6f\n", t, f, res];
+    }
+    double rmse = sqrt(sumSq / (double)N);
+    NSString *header = [NSString stringWithFormat:@"# residual RMSE=%.4f (=RMSE地板, forward(真实PID)离target多远)\n", rmse];
+    [out insertString:header atIndex:0];
+
+    [out writeToFile:@"/tmp/residual_diag.txt" atomically:YES
+             encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🔬 residual 诊断: N=%ld RMSE=%.4f → /tmp/residual_diag.txt", (long)N, rmse);
+    XCTAssertGreaterThan(N, 100);
 }
 
 @end

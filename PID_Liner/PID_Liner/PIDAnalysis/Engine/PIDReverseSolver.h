@@ -40,6 +40,33 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+#pragma mark - 滤波配置 (3.3a biquad / 3.3b PT1链: 模拟 BF gyro 低通对响应曲线的涂抹)
+
+/// BF 信号链低通配置
+/// 物理动机: 真实 BBL 记录的 gyro 已被 BF gyro 通道低通涂抹, 上升沿变缓;
+///           纯二阶 forward 无滤波 → 为匹配变缓上升沿只能降 ωn → P 反解偏低 40%
+///           forward 出纯二阶曲线后再过同一低通链, 即可消除该模型偏差
+///
+/// 两条路径 (forward 内 PT1链优先, 否则 biquad, 否则不滤):
+///   - 3.3a biquad: 单级 RBJ cookbook (DC增益=1, 合成对照资产, 保留)
+///   - 3.3b PT1链: BF 真实 gyro 通道 (type=0 PT1, 3级串联, 来自 BBL header)
+///                 001.bbl 实测: gyro_lowpass=200 / lowpass2=250 / dyn=200-500
+@interface BFFilterConfig : NSObject
+
+@property (nonatomic, assign) double gyroLowpassHz;  ///< [3.3a biquad] gyro 低通截止 Hz; 0=跳过biquad
+@property (nonatomic, assign) double dtermLowpassHz; ///< dterm 低通 (预留, 当前未作用于输出)
+@property (nonatomic, assign) double q;              ///< [3.3a biquad] 品质因数; Butterworth=0.7071
+
+@property (nonatomic, assign) double gyroPT1Hz;      ///< [3.3b PT1] gyro_lowpass 截止 Hz (001:200); 0=该级跳过
+@property (nonatomic, assign) double gyroPT1_2Hz;    ///< [3.3b PT1] gyro_lowpass2 截止 Hz (001:250); 0=跳过
+@property (nonatomic, assign) double gyroPT1DynHz;   ///< [3.3b PT1] gyro_lowpass_dyn 截止 Hz (001:200-500随油门, 取定值); 0=跳过
+
++ (instancetype)noFilter;                              ///< 无滤波 (向后兼容)
++ (instancetype)gyroLowpass:(double)hz;                ///< [3.3a] 单 biquad (Butterworth Q)
++ (instancetype)gyroPT1Chain:(double)h1 h2:(double)h2 dyn:(double)hdyn;  ///< [3.3b] BF真实gyro三级PT1链 (任一 0 跳过该级)
+
+@end
+
 #pragma mark - 反解结果
 
 @interface PIDReverseSolveResult : NSObject
@@ -71,6 +98,14 @@ typedef NS_OPTIONS(NSUInteger, PIDReverseFitMask) {
                                        length:(NSInteger)length
                                      duration:(double)duration;
 
+/// 带 gyro 低通的 forward (3.3a): 纯二阶阶跃 → biquad 低通 (模拟 BF gyro_lowpass 涂抹)
+/// filter=nil 或 gyroLowpassHz=0 时退化为纯二阶 (等价上面的旧接口)
++ (NSArray<NSNumber *> *)forwardCurveWithPID:(PIDValues *)pid
+                               mechConstants:(BFMechConstants *)mech
+                               filterConfig:(nullable BFFilterConfig *)filter
+                                       length:(NSInteger)length
+                                     duration:(double)duration;
+
 /// 反解: 目标曲线 → PID (LM 数值优化 forward)
 ///
 /// @param target       目标响应曲线
@@ -83,6 +118,15 @@ typedef NS_OPTIONS(NSUInteger, PIDReverseFitMask) {
 - (nullable PIDReverseSolveResult *)solveFromTargetCurve:(NSArray<NSNumber *> *)target
                                             initialGuess:(PIDValues *)initialGuess
                                            mechConstants:(BFMechConstants *)mech
+                                                  fitMask:(PIDReverseFitMask)fitMask
+                                                   length:(NSInteger)length
+                                                 duration:(double)duration;
+
+/// 带 gyro 低通的反解 (3.3a): LM 全程用带滤波 forward (target 与 forward 同滤波, 延迟自抵消)
+- (nullable PIDReverseSolveResult *)solveFromTargetCurve:(NSArray<NSNumber *> *)target
+                                            initialGuess:(PIDValues *)initialGuess
+                                           mechConstants:(BFMechConstants *)mech
+                                            filterConfig:(nullable BFFilterConfig *)filter
                                                   fitMask:(PIDReverseFitMask)fitMask
                                                    length:(NSInteger)length
                                                  duration:(double)duration;
