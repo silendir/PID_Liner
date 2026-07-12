@@ -1482,4 +1482,217 @@
     XCTAssertGreaterThan(bestK, 0);
 }
 
+/// 🔬 阶段3.3b-2f-诊断: 单参拟合灵敏度 (零引擎改动, 确认Tikhonov是否对症)
+///
+/// 2e实锤: fit P/D 时 P 爆炸(83.2%), 猜根因是P/D/FF雅可比共线(欠定).
+/// 本测试: 逐参 fit (P only / D only), D/FF 固定真值, 看 P 能否准确.
+///   P only P准确(<15%) → 共线是根因, Tikhonov对症(进2f-正则化)
+///   P only P仍偏(>15%) → forward对P系统偏差, Tikhonov治不了, 需改模型
+/// 解析forward无gyro链(与2d基线一致), K=110(2d最优)
+- (void)testCrossValidation_WuBBL_PerParamSensitivity {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSArray<NSDictionary<NSString *, NSString *> *> *specs = @[
+        @{@"name":@"wu_515inch",   @"grp":@"A"},
+        @{@"name":@"wu_51log",     @"grp":@"A"},
+        @{@"name":@"wu_xxx5101",   @"grp":@"B"},
+        @{@"name":@"wu_bde51_2_0", @"grp":@"C"},
+        @{@"name":@"wu_bde51_3_0", @"grp":@"C"},
+        @{@"name":@"wu_wu3",       @"grp":@"C"},
+    ];
+
+    // 提取 6 条曲线 + PID (解析forward不读d_min, 故不提)
+    NSMutableArray<NSString *> *names=[NSMutableArray array], *grps=[NSMutableArray array];
+    NSMutableArray<NSArray<NSNumber *> *> *targets=[NSMutableArray array];
+    NSMutableArray<NSNumber *> *Pv=[NSMutableArray array], *Iv=[NSMutableArray array],
+        *Dv=[NSMutableArray array], *Fv=[NSMutableArray array], *Nv=[NSMutableArray array];
+    for (NSDictionary<NSString *, NSString *> *spec in specs) {
+        NSString *bbl = [bundle pathForResource:spec[@"name"] ofType:@"bbl"];
+        if (!bbl) continue;
+        double sr=0;
+        NSArray<NSNumber *> *t = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+        if (!t || t.count < 100) continue;
+        double P=0,I=0,D=0,FF=0;
+        [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+        [names addObject:spec[@"name"]]; [grps addObject:spec[@"grp"]]; [targets addObject:t];
+        [Pv addObject:@(P)]; [Iv addObject:@(I)]; [Dv addObject:@(D)]; [Fv addObject:@(FF)];
+        [Nv addObject:@((NSInteger)t.count)];
+    }
+    NSInteger valid = (NSInteger)names.count;
+    XCTAssertGreaterThanOrEqual(valid, 4, @"至少4条曲线提取成功");
+
+    BFMechConstants *mech = [BFMechConstants withKPlant:110.0 tauM:0.010 dScale:0.0007];
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+    NSMutableString *solve = [NSMutableString stringWithString:
+        @"单参灵敏度 (K=110, 解析forward无gyro链):\n"
+        @"  name[grp]      | P-only解(%)  | D-only解(%)  | P+D解(%)对照\n"];
+
+    double pOnlyErrSum=0, dOnlyErrSum=0, pDErrSum=0;
+    NSInteger pOnlyCnt=0, dOnlyCnt=0, pDCnt=0;
+    for (NSInteger j=0; j<valid; j++) {
+        double P=Pv[j].doubleValue, D=Dv[j].doubleValue;
+        NSInteger N = Nv[j].integerValue;
+
+        // P only: guess P 扰动+30%, D/FF 固定真值 (排除D/FF共线)
+        PIDValues *gP = [PIDValues new];
+        gP.p=P*1.3; gP.i=Iv[j].doubleValue; gP.d=D; gP.ff=Fv[j].doubleValue;
+        PIDReverseSolveResult *rP = [solver solveFromTargetCurve:targets[j] initialGuess:gP
+                                                     mechConstants:mech
+                                                          fitMask:PIDReverseFitP
+                                                               length:N duration:0.5];
+        // D only: P/FF 固定真值, guess D 扰动-30%
+        PIDValues *gD = [PIDValues new];
+        gD.p=P; gD.i=Iv[j].doubleValue; gD.d=D*0.7; gD.ff=Fv[j].doubleValue;
+        PIDReverseSolveResult *rD = [solver solveFromTargetCurve:targets[j] initialGuess:gD
+                                                     mechConstants:mech
+                                                          fitMask:PIDReverseFitD
+                                                               length:N duration:0.5];
+        // P+D 对照 (2d基线)
+        PIDValues *gPD = [PIDValues new];
+        gPD.p=P*1.3; gPD.i=Iv[j].doubleValue; gPD.d=D*0.7; gPD.ff=Fv[j].doubleValue;
+        PIDReverseSolveResult *rPD = [solver solveFromTargetCurve:targets[j] initialGuess:gPD
+                                                       mechConstants:mech
+                                                            fitMask:PIDReverseFitP|PIDReverseFitD
+                                                                 length:N duration:0.5];
+        double pOP = rP ? [self pctErr:rP.solvedPID.p vs:P] : -1;
+        double dOD = rD ? [self pctErr:rD.solvedPID.d vs:D] : -1;
+        double pDP = rPD ? [self pctErr:rPD.solvedPID.p vs:P] : -1;
+        if (rP) { pOnlyErrSum += pOP; pOnlyCnt++; }
+        if (rD) { dOnlyErrSum += dOD; dOnlyCnt++; }
+        if (rPD) { pDErrSum += pDP; pDCnt++; }
+        [solve appendFormat:@"  %@[%@] P真=%.0f D真=%.0f | P=%6.2f(%5.1f) | D=%6.2f(%5.1f) | P=%6.2f(%5.1f)\n",
+            names[j], grps[j], P, D,
+            rP.solvedPID.p, pOP, rD.solvedPID.d, dOD, rPD.solvedPID.p, pDP];
+    }
+
+    double avgPO = pOnlyCnt>0 ? pOnlyErrSum/(double)pOnlyCnt : 0;
+    double avgDO = dOnlyCnt>0 ? dOnlyErrSum/(double)dOnlyCnt : 0;
+    double avgPD = pDCnt>0 ? pDErrSum/(double)pDCnt : 0;
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2f-诊断 单参灵敏度] 吴bbl 6条, K=110, 解析forward(无gyro链)\n"
+        @"%@\n"
+        @"平均误差: P-only=%.1f%% (n=%ld) | D-only=%.1f%% (n=%ld) | P+D对照=%.1f%% (n=%ld)\n"
+        @"判定: %@",
+        solve, avgPO, (long)pOnlyCnt, avgDO, (long)dOnlyCnt, avgPD, (long)pDCnt,
+        (avgPO < 15.0)
+            ? @"✅ P-only准确(<15%) → 共线是根因, Tikhonov对症(进2f-正则化)"
+            : @"⚠️ P-only仍偏(>15%) → forward对P系统偏差, Tikhonov治不了, 需改模型"];
+    [report writeToFile:@"/tmp/realsolve_wu6_perparam.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(valid, 0);
+}
+
+/// 🔬 阶段3.3b-2f-曲线诊断: 同组曲线形状对比 (定位反解不稳是否源于输入曲线)
+///
+/// 2f-诊断发现: A组515inch(P解3.8%) vs 51log(P解34.4%) 同飞机同PID却差30%
+///   → 猜曲线提取(stackResponse提纯)对飞行风格/噪声敏感, 同PID应形状近但实际差异大
+/// 本测试: 输出6条归一化曲线的形状采样(上升沿/稳态/超调), 同组对比
+///   同组形状近 → 曲线OK, 反解不稳是forward问题
+///   同组形状远 → 曲线提取是根因, 先治提纯再谈反解
+- (void)testWuBBL_CurveShapeDiagnostic {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSArray<NSDictionary<NSString *, NSString *> *> *specs = @[
+        @{@"name":@"wu_515inch",   @"grp":@"A"},
+        @{@"name":@"wu_51log",     @"grp":@"A"},
+        @{@"name":@"wu_xxx5101",   @"grp":@"B"},
+        @{@"name":@"wu_bde51_2_0", @"grp":@"C"},
+        @{@"name":@"wu_bde51_3_0", @"grp":@"C"},
+        @{@"name":@"wu_wu3",       @"grp":@"C"},
+    ];
+
+    NSMutableString *report = [NSMutableString stringWithString:
+        @"[3.3b-2f 曲线形状诊断] 吴bbl 6条归一化avgCurve (稳态=1, 时间轴0~0.5s)\n"
+        @"  name[grp]      | t=0.02 0.05 0.10 0.15 0.20 0.30 0.50 | 峰值 超调% 稳态t\n"];
+    for (NSDictionary<NSString *, NSString *> *spec in specs) {
+        NSString *bbl = [bundle pathForResource:spec[@"name"] ofType:@"bbl"];
+        if (!bbl) continue;
+        double sr=0;
+        NSArray<NSNumber *> *c = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+        if (!c || c.count < 100) continue;
+        NSInteger N = (NSInteger)c.count;
+
+        // 形状采样 (归一化曲线在 t=k/N*0.5 处的值)
+        double ts[] = {0.02, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50};
+        int nT = (int)(sizeof(ts)/sizeof(ts[0]));
+        NSMutableString *samp = [NSMutableString string];
+        for (int k=0; k<nT; k++) {
+            NSInteger idx = (NSInteger)(ts[k] / 0.5 * (N-1));
+            if (idx >= N) idx = N-1;
+            [samp appendFormat:@"%5.2f ", c[idx].doubleValue];
+        }
+        // 峰值 + 超调% (相对稳态1.0)
+        double peak = 0;
+        for (NSInteger k=0; k<N; k++) peak = MAX(peak, c[k].doubleValue);
+        double overshoot = (peak - 1.0) * 100.0;
+        // 稳态时间 (首次达0.9的时刻, 秒)
+        double settleT = -1;
+        for (NSInteger k=0; k<N; k++) {
+            if (c[k].doubleValue >= 0.9) { settleT = (double)k/(N-1)*0.5; break; }
+        }
+
+        [report appendFormat:@"  %@[%@] | %@ | %.2f %5.1f %5.3f\n",
+            spec[@"name"], spec[@"grp"], samp, peak, overshoot, settleT];
+    }
+    [report appendString:@"\n判定: 同组(A的两条/C的三条)形状近→曲线OK, 形状远→曲线提取是根因\n"];
+    [report writeToFile:@"/tmp/realsolve_wu6_curveshape.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(specs.count, 0);
+}
+
+/// 🔬 阶段3.3b-2f-时间尺度诊断: avgCurve(target) vs forward(真PID) 形状叠加
+///
+/// 曲线诊断发现: avgCurve settleT=2-4ms (典型阶跃应50-200ms), 疑似时间尺度与forward不匹配.
+/// 本测试: 取515inch(P解准)和51log(P偏)两条, 同图对比avgCurve与forward(真PID)形状采样.
+///   时间尺度匹配 + 形状近 → 瓶颈在forward模型, 继续扩forward
+///   时间尺度不匹配 / 形状差远 → 瓶颈在target(avgCurve语义), 扩forward无用, 需查avgCurve定义
+- (void)testWuBBL_TargetVsForwardShape {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSArray<NSString *> *names = @[@"wu_515inch", @"wu_51log"];
+    NSMutableString *report = [NSMutableString stringWithString:
+        @"[3.3b-2f 时间尺度诊断] avgCurve vs forward(真PID) 形状叠加 (K=110)\n"
+        @"  t      | avgCurve采样 | forward采样 | 差值\n"];
+
+    BFMechConstants *mech = [BFMechConstants withKPlant:110.0 tauM:0.010 dScale:0.0007];
+    double ts[] = {0, 0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.50};
+    int nT = (int)(sizeof(ts)/sizeof(ts[0]));
+
+    for (NSString *name in names) {
+        NSString *bbl = [bundle pathForResource:name ofType:@"bbl"];
+        if (!bbl) continue;
+        double sr=0;
+        NSArray<NSNumber *> *avg = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+        if (!avg || avg.count < 100) continue;
+        NSInteger N = (NSInteger)avg.count;
+
+        double P=0,I=0,D=0,FF=0;
+        [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+        PIDValues *pid = [PIDValues new];
+        pid.p=P; pid.i=I; pid.d=D; pid.ff=FF;
+        NSArray<NSNumber *> *fwd = [PIDReverseSolver forwardCurveWithPID:pid
+                                                           mechConstants:mech
+                                                                   length:N duration:0.5];
+        if (!fwd) continue;
+
+        [report appendFormat:@"\n%@ (P=%.0f D=%.0f FF=%.0f N=%ld):\n", name, P, D, FF, (long)N];
+        for (int k=0; k<nT; k++) {
+            NSInteger idx = (NSInteger)(ts[k] / 0.5 * (N-1));
+            if (idx >= N) idx = N-1;
+            double a = avg[idx].doubleValue, f = fwd[idx].doubleValue;
+            [report appendFormat:@"  t=%.3fs | avg=%6.3f | fwd=%6.3f | Δ=%+.3f\n", ts[k], a, f, a-f];
+        }
+        // 时间尺度指标: avgCurve 与 forward 各自达0.5的时刻 (上升沿中点)
+        double avgHalfT = -1, fwdHalfT = -1;
+        for (NSInteger k=0; k<N; k++) {
+            if (avgHalfT<0 && avg[k].doubleValue >= 0.5) avgHalfT = (double)k/(N-1)*0.5;
+            if (fwdHalfT<0 && fwd[k].doubleValue >= 0.5) fwdHalfT = (double)k/(N-1)*0.5;
+        }
+        [report appendFormat:@"  达0.5时刻: avg=%.4fs fwd=%.4fs (比值=%.1fx)\n",
+            avgHalfT, fwdHalfT, fwdHalfT>0 && avgHalfT>0 ? fwdHalfT/avgHalfT : -1];
+    }
+    [report appendString:@"\n判定: fwd/avg达0.5比值≈1→时间尺度匹配; >>1或<<1→不匹配(target语义问题)\n"];
+    [report writeToFile:@"/tmp/realsolve_wu6_timescale.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(names.count, 0);
+}
+
 @end
