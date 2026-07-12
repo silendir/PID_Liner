@@ -331,21 +331,49 @@
 - (nullable NSArray<NSNumber *> *)normalizedRollStepCurveFromBBL:(NSString *)bblPath
                                                     outSampleRate:(double *)outSR {
     @try {
-        NSString *tempBBL = [NSTemporaryDirectory() stringByAppendingPathComponent:@"001_rev.bbl"];
+        // 唯一临时文件名 (基于输入 basename), 避免 001/003 等多 BBL 共享 001_rev.bbl 冲突
+        NSString *baseName = [[bblPath lastPathComponent] stringByDeletingPathExtension];
+        NSString *tempBBL = [NSTemporaryDirectory()
+            stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_rev.bbl", baseName]];
         NSFileManager *fm = [NSFileManager defaultManager];
         [fm removeItemAtPath:tempBBL error:nil];
+        // 清理同 basename 残留 CSV (blackbox-tools 输出 .NN.csv, 避免上次产物干扰本次解析)
+        for (int s = 0; s < 10; s++) {
+            NSString *oldCsv = [[tempBBL stringByDeletingPathExtension]
+                stringByAppendingFormat:@".%02d.csv", s];
+            [fm removeItemAtPath:oldCsv error:nil];
+        }
         if (![fm copyItemAtPath:bblPath toPath:tempBBL error:nil]) return nil;
 
-        BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
-        if ([decoder decodeFlightLog:tempBBL logIndex:0] != 0) return nil;
-        NSString *csvPath = [[tempBBL stringByDeletingPathExtension] stringByAppendingFormat:@".01.csv"];
-        PIDCSVData *data = [[PIDCSVParser parser] parseCSV:csvPath];
+        // 多 session BBL: 选数据最多的 session
+        // (003 logIdx0=1411点太短是解锁片段, logIdx1=55454点是主飞行)
+        // ponytail: 试 logIdx 0..3, 够 16000 点(2个8000窗口)就停, 避免全 session 解码
+        PIDCSVData *data = nil;
+        NSInteger bestPts = 0;
+        NSString *dir = [tempBBL stringByDeletingLastPathComponent];
+        NSString *prefix = [[tempBBL lastPathComponent] stringByDeletingPathExtension];
+        for (int tryLog = 0; tryLog < 4; tryLog++) {
+            for (int s = 0; s < 10; s++) {
+                NSString *c = [[tempBBL stringByDeletingPathExtension] stringByAppendingFormat:@".%02d.csv", s];
+                [fm removeItemAtPath:c error:nil];
+            }
+            BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
+            if ([decoder decodeFlightLog:tempBBL logIndex:tryLog] != 0) break;  // 无更多 session
+            NSString *csvFound = nil;
+            for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+                if ([f hasPrefix:prefix] && [f hasSuffix:@".csv"]) { csvFound = [dir stringByAppendingPathComponent:f]; break; }
+            }
+            PIDCSVData *d = csvFound ? [[PIDCSVParser parser] parseCSV:csvFound] : nil;
+            NSInteger pts = d ? d.timeUs.count : 0;
+            if (pts > bestPts) { bestPts = pts; data = d; }
+            if (pts > 16000) break;  // 够 2 个 8000 窗口, 不用试更多
+        }
         if (!data || data.timeUs.count < 100) return nil;
 
         double sampleRate = data.sampleRate > 0 ? data.sampleRate : 8000.0;
         if (outSR) *outSR = sampleRate;
 
-        NSInteger windowSize = 8000;
+        NSInteger windowSize = 8000;  // 7.8秒@1024Hz: 完整捕捉阶跃响应(含稳态); 1秒窗口RMSE 0.067→0.34反解崩溃
         PIDStackData *stackData = [PIDStackData stackFromData:data axisIndex:0
                                                     windowSize:windowSize overlap:0.9375 pGain:45.0];
         PIDTraceAnalyzer *analyzer = [[PIDTraceAnalyzer alloc] init];
@@ -968,6 +996,223 @@
     NSLog(@"🎯 %@", report);
 
     XCTAssertGreaterThan(bestRMSE, 0.0);  // 仅断言执行成功, 方向由 /tmp 报告判定
+}
+
+/// 🎯 2c 交叉验证基线 (Silen 001+003 同架不同 PID) — 摆脱"样本=1"
+///
+/// 003.bbl 是 Silen 同架不同 PID (P 38→34, D 44→39, d_min 29→26), 一直在项目主目录没进测试.
+/// 本测试: 两条 BBL 各自反解 P/D (当前解析 forward + 固定 K=87/τ=0.01), 看 P 偏差是否系统性.
+///   两条 P 偏差接近 → 系统性模型偏差 (K_plant/τ_m 错, 标定可治)
+///   两条 P 偏差差异大 → PID 相关, 标定救不了, 要扩 forward
+- (void)testCrossValidation_Silen_Baseline {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl001 = [bundle pathForResource:@"001" ofType:@"bbl"];
+    NSString *bbl003 = [bundle pathForResource:@"003" ofType:@"bbl"];
+    XCTAssertNotNil(bbl001, @"001.bbl 未在 test bundle");
+    XCTAssertNotNil(bbl003, @"003.bbl 未在 test bundle (PBXFileSystemSynchronized 应自动加)");
+
+    double sr1 = 0, sr3 = 0;
+    NSArray<NSNumber *> *t1 = [self normalizedRollStepCurveFromBBL:bbl001 outSampleRate:&sr1];
+    NSArray<NSNumber *> *t3 = [self normalizedRollStepCurveFromBBL:bbl003 outSampleRate:&sr3];
+    XCTAssertGreaterThan(t1.count, 100);
+    XCTAssertGreaterThan(t3.count, 100);
+
+    double P1=0,I1=0,D1=0,FF1=0, P3=0,I3=0,D3=0,FF3=0;
+    [self readRealRollPIDFromBBL:bbl001 outP:&P1 outI:&I1 outD:&D1 outFF:&FF1];
+    [self readRealRollPIDFromBBL:bbl003 outP:&P3 outI:&I3 outD:&D3 outFF:&FF3];
+
+    BFMechConstants *mech = [BFMechConstants withKPlant:87.0 tauM:0.01 dScale:0.0007];
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+
+    // 反解 001 (扰动初值 P+40%/D-40%, I/FF 固定真值)
+    PIDValues *g1 = [PIDValues new];
+    g1.p=P1*1.4; g1.i=I1; g1.d=D1*0.6; g1.ff=FF1;
+    PIDReverseSolveResult *r1 = [solver solveFromTargetCurve:t1 initialGuess:g1
+                                               mechConstants:mech fitMask:PIDReverseFitP|PIDReverseFitD
+                                                    length:(NSInteger)t1.count duration:0.5];
+    // 反解 003
+    PIDValues *g3 = [PIDValues new];
+    g3.p=P3*1.4; g3.i=I3; g3.d=D3*0.6; g3.ff=FF3;
+    PIDReverseSolveResult *r3 = [solver solveFromTargetCurve:t3 initialGuess:g3
+                                               mechConstants:mech fitMask:PIDReverseFitP|PIDReverseFitD
+                                                    length:(NSInteger)t3.count duration:0.5];
+    XCTAssertNotNil(r1); XCTAssertNotNil(r3);
+
+    double pErr1 = [self pctErr:r1.solvedPID.p vs:P1];
+    double pErr3 = [self pctErr:r3.solvedPID.p vs:P3];
+    double dErr1 = [self pctErr:r1.solvedPID.d vs:D1];
+    double dErr3 = [self pctErr:r3.solvedPID.d vs:D3];
+
+    NSString *report = [NSString stringWithFormat:
+        @"[2c 交叉验证基线] Silen 001+003 (解析forward, K=87/τ=0.01/dScale=0.0007)\n"
+        @"001: truth P=%.0f D=%.0f d_min=29 → solved P=%.2f(%.1f%%) D=%.2f(%.1f%%) RMSE=%.4f\n"
+        @"003: truth P=%.0f D=%.0f d_min=26 → solved P=%.2f(%.1f%%) D=%.2f(%.1f%%) RMSE=%.4f\n"
+        @"P偏差差 = |%.1f − %.1f| = %.1f%%\n"
+        @"判定: %@",
+        P1,D1, r1.solvedPID.p,pErr1, r1.solvedPID.d,dErr1, r1.finalRMSE,
+        P3,D3, r3.solvedPID.p,pErr3, r3.solvedPID.d,dErr3, r3.finalRMSE,
+        pErr1, pErr3, fabs(pErr1-pErr3),
+        (fabs(pErr1-pErr3) < 10.0)
+            ? @"✅ 两条P偏差接近(<10%) → 系统性模型偏差, 标定K_plant/τ_m可治"
+            : @"⚠️ 两条P偏差差异大 → PID相关, 标定救不了, 需扩forward"];
+    [report writeToFile:@"/tmp/crossval_baseline.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertGreaterThan(r1.solvedPID.p, 0);
+    XCTAssertGreaterThan(r3.solvedPID.p, 0);
+}
+
+/// 诊断: 全部 BBL 各 session 数据长度 (决定哪些够 windowSize=8000 做统计阶跃)
+/// 001/003 from bundle; 吴bbl 6 条 (BF4.5) 用绝对路径 (诊断用, 不 portable)
+- (void)testBBL_AllSessionLengths {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSArray<NSArray *> *bbls = @[
+        @[@"001(Silen4.2.6)",   [bundle pathForResource:@"001" ofType:@"bbl"] ?: @""],
+        @[@"003(Silen4.2.6)",   [bundle pathForResource:@"003" ofType:@"bbl"] ?: @""],
+        @[@"吴515inch2.0(4.5.2)", @"/Users/liangjuan/PID_Liner/吴bbl/515inch2.0.BBL"],
+        @[@"吴WU3(4.5.3)",       @"/Users/liangjuan/PID_Liner/吴bbl/WU3.BBL"],
+        @[@"吴bde51.2.0(4.5.3)", @"/Users/liangjuan/PID_Liner/吴bbl/bde51.2.0.BBL"],
+        @[@"吴xxx5101(4.5.3)",   @"/Users/liangjuan/PID_Liner/吴bbl/xxx5101.BBL"],
+        @[@"吴五一LOG(4.5.2)",   @"/Users/liangjuan/PID_Liner/吴bbl/五一五寸LOG_20260501_144246_MAMBAF722_2022B.BBL"],
+        @[@"吴bde51.3.0(4.5.3)", @"/Users/liangjuan/PID_Liner/吴bbl/吴bde51.3.0.BBL"],
+    ];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableString *report = [NSMutableString stringWithFormat:@"各 BBL session 数据长度 (windowSize=8000 需点数>>8000):\n"];
+    for (NSUInteger i = 0; i < bbls.count; i++) {
+        NSString *name = bbls[i][0];
+        NSString *src  = bbls[i][1];
+        if (src.length == 0 || ![fm fileExistsAtPath:src]) {
+            [report appendFormat:@"\n%@: 文件不存在\n", name];
+            continue;
+        }
+        [report appendFormat:@"\n%@:\n", name];
+        for (int logIdx = 0; logIdx < 2; logIdx++) {
+            NSString *temp = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                [NSString stringWithFormat:@"sesslen_%lu_%d.bbl", (unsigned long)i, logIdx]];
+            [fm removeItemAtPath:temp error:nil];
+            NSString *dir = [temp stringByDeletingLastPathComponent];
+            NSString *prefix = [[temp lastPathComponent] stringByDeletingPathExtension];
+            for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+                if ([f hasPrefix:prefix] && [f hasSuffix:@".csv"])
+                    [fm removeItemAtPath:[dir stringByAppendingPathComponent:f] error:nil];
+            }
+            [fm copyItemAtPath:src toPath:temp error:nil];
+            BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
+            int rc = [decoder decodeFlightLog:temp logIndex:logIdx];
+            if (rc != 0) { [report appendFormat:@"  logIdx=%d rc=%d (无更多session)\n", logIdx, rc]; break; }
+            NSString *csvFound = nil;
+            for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+                if ([f hasPrefix:prefix] && [f hasSuffix:@".csv"]) { csvFound = [dir stringByAppendingPathComponent:f]; break; }
+            }
+            PIDCSVData *data = csvFound ? [[PIDCSVParser parser] parseCSV:csvFound] : nil;
+            NSInteger pts = data ? data.timeUs.count : 0;
+            double sr = data ? data.sampleRate : 0;
+            [report appendFormat:@"  logIdx=%d 点数=%ld sampleRate=%.1f 时长=%.2fs 够8000窗口=%@\n",
+                logIdx, (long)pts, sr, sr > 0 ? pts / sr : 0.0, pts > 8000 ? @"✅" : @"❌"];
+        }
+    }
+    [report writeToFile:@"/tmp/bbl_session_lengths.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(bbls.count, 0);
+}
+
+/// 🎯 2c 标定 K_plant/τ_m + 交叉验证 (Silen 001 标定 → 003 验证)
+///
+/// 基线: 001 P偏低40.8%, 003 P偏低31.2% (系统性, 差9.6%). 假设 K_plant/τ_m 错致 P 系统偏低.
+/// 标定: 扫 (K_plant, τ_m) 找 001 forward(真实PID) 最小 RMSE.
+/// 交叉验证: 用 001 标定值反解 003, 看 P 误差是否也降 (降=非过拟合, 不降=过拟合001).
+- (void)testCalibration_KPlant_TauM_CrossVal {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl001 = [bundle pathForResource:@"001" ofType:@"bbl"];
+    NSString *bbl003 = [bundle pathForResource:@"003" ofType:@"bbl"];
+    XCTAssertNotNil(bbl001); XCTAssertNotNil(bbl003);
+
+    double sr1=0, sr3=0;
+    NSArray<NSNumber *> *t1 = [self normalizedRollStepCurveFromBBL:bbl001 outSampleRate:&sr1];
+    NSArray<NSNumber *> *t3 = [self normalizedRollStepCurveFromBBL:bbl003 outSampleRate:&sr3];
+    NSInteger N1 = (NSInteger)t1.count, N3 = (NSInteger)t3.count;
+
+    double P1=0,I1=0,D1=0,FF1=0, P3=0,I3=0,D3=0,FF3=0;
+    [self readRealRollPIDFromBBL:bbl001 outP:&P1 outI:&I1 outD:&D1 outFF:&FF1];
+    [self readRealRollPIDFromBBL:bbl003 outP:&P3 outI:&I3 outD:&D3 outFF:&FF3];
+
+    PIDValues *truth1 = [PIDValues new]; truth1.p=P1; truth1.i=I1; truth1.d=D1; truth1.ff=FF1;
+    PIDValues *truth3 = [PIDValues new]; truth3.p=P3; truth3.i=I3; truth3.d=D3; truth3.ff=FF3;
+
+    // 扫 (K_plant, τ_m) 找 001/003 各自 forward(真实PID) 最小 RMSE (dScale 固定 0.0007)
+    double kPlants[] = {50, 70, 87, 110, 150};
+    double tauMs[]   = {0.006, 0.010, 0.015};
+    int nK = (int)(sizeof(kPlants)/sizeof(kPlants[0]));
+    int nT = (int)(sizeof(tauMs)/sizeof(tauMs[0]));
+
+    double bestRMSE1 = 1e9, bestK1 = 0, bestTau1 = 0;
+    double bestRMSE3 = 1e9, bestK3 = 0, bestTau3 = 0;
+    NSMutableString *sweep = [NSMutableString string];
+    for (int ik = 0; ik < nK; ik++) {
+        for (int it = 0; it < nT; it++) {
+            BFMechConstants *m = [BFMechConstants withKPlant:kPlants[ik] tauM:tauMs[it] dScale:0.0007];
+            NSArray<NSNumber *> *f1 = [PIDReverseSolver forwardCurveWithPID:truth1 mechConstants:m length:N1 duration:0.5];
+            NSArray<NSNumber *> *f3 = [PIDReverseSolver forwardCurveWithPID:truth3 mechConstants:m length:N3 duration:0.5];
+            double rmse1 = [self rmseBetween:t1 and:f1];
+            double rmse3 = [self rmseBetween:t3 and:f3];
+            [sweep appendFormat:@"  K=%-5.1f τ=%.4f → 001 RMSE=%.4f | 003 RMSE=%.4f\n", kPlants[ik], tauMs[it], rmse1, rmse3];
+            if (rmse1 < bestRMSE1) { bestRMSE1 = rmse1; bestK1 = kPlants[ik]; bestTau1 = tauMs[it]; }
+            if (rmse3 < bestRMSE3) { bestRMSE3 = rmse3; bestK3 = kPlants[ik]; bestTau3 = tauMs[it]; }
+        }
+    }
+
+    PIDReverseSolver *solver = [PIDReverseSolver new];
+
+    // 用 001 标定反解 001(自) + 003(交叉); 用 003 标定反解 003(自)
+    BFMechConstants *calib1 = [BFMechConstants withKPlant:bestK1 tauM:bestTau1 dScale:0.0007];
+    BFMechConstants *calib3 = [BFMechConstants withKPlant:bestK3 tauM:bestTau3 dScale:0.0007];
+    PIDValues *g1 = [PIDValues new]; g1.p=P1*1.4; g1.i=I1; g1.d=D1*0.6; g1.ff=FF1;
+    PIDValues *g3 = [PIDValues new]; g3.p=P3*1.4; g3.i=I3; g3.d=D3*0.6; g3.ff=FF3;
+    PIDReverseSolveResult *r1self = [solver solveFromTargetCurve:t1 initialGuess:g1
+                                                    mechConstants:calib1 fitMask:PIDReverseFitP|PIDReverseFitD
+                                                         length:N1 duration:0.5];
+    PIDReverseSolveResult *r3cross = [solver solveFromTargetCurve:t3 initialGuess:g3
+                                                     mechConstants:calib1 fitMask:PIDReverseFitP|PIDReverseFitD
+                                                          length:N3 duration:0.5];
+    PIDReverseSolveResult *r3self = [solver solveFromTargetCurve:t3 initialGuess:g3
+                                                    mechConstants:calib3 fitMask:PIDReverseFitP|PIDReverseFitD
+                                                         length:N3 duration:0.5];
+    XCTAssertNotNil(r1self); XCTAssertNotNil(r3cross); XCTAssertNotNil(r3self);
+
+    double pErr1self  = [self pctErr:r1self.solvedPID.p  vs:P1];
+    double pErr3cross = [self pctErr:r3cross.solvedPID.p vs:P3];
+    double pErr3self  = [self pctErr:r3self.solvedPID.p  vs:P3];
+
+    NSString *verdict;
+    if (pErr1self < 5.0 && pErr3cross < 15.0) {
+        verdict = @"✅ 001标定泛化到003 (K_plant是飞机常数)";
+    } else if (pErr3self < 5.0) {
+        verdict = [NSString stringWithFormat:@"⚠️ 003需不同K_plant(003最优K=%.1f vs 001 K=%.1f) → K_plant非飞机常数(过拟合)", bestK3, bestK1];
+    } else {
+        verdict = @"❌ 003自标定也不达标 → 003问题不在K_plant, 在forward结构(gyro链)";
+    }
+
+    NSString *report = [NSString stringWithFormat:
+        @"[2c K_plant/τ_m 标定+交叉验证] Silen 001+003 (dScale=0.0007)\n"
+        @"扫描 (forward(真实PID) RMSE):\n%@\n"
+        @"001 最优: K=%.1f τ=%.4f RMSE=%.4f\n"
+        @"003 最优: K=%.1f τ=%.4f RMSE=%.4f\n"
+        @"反解 P 误差:\n"
+        @"  001 用001标定(自):   P=%.2f(%.1f%%) [基线40.8%%]\n"
+        @"  003 用001标定(交叉): P=%.2f(%.1f%%) [基线31.2%%]\n"
+        @"  003 用003标定(自):   P=%.2f(%.1f%%)\n"
+        @"判定: %@",
+        sweep,
+        bestK1, bestTau1, bestRMSE1,
+        bestK3, bestTau3, bestRMSE3,
+        r1self.solvedPID.p, pErr1self,
+        r3cross.solvedPID.p, pErr3cross,
+        r3self.solvedPID.p, pErr3self,
+        verdict];
+    [report writeToFile:@"/tmp/calib_ktau_crossval.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(r1self.solvedPID.p, 0);
 }
 
 @end
