@@ -491,9 +491,13 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
                    fromPID:(PIDValues *)pid
               mechConstants:(BFMechConstants *)mech
               filterConfig:(BFFilterConfig *)filter
+              useTimeDomain:(BOOL)td
                     length:(NSInteger)N
                   duration:(double)duration {
-    NSArray<NSNumber *> *curve = [self forwardCurveWithPID:pid mechConstants:mech filterConfig:filter length:N duration:duration];
+    /// [3.3b-2g] td=YES 时域积分版 forward (含 d_min 动态D + dterm PT1 链), 物理最全; NO=解析版
+    NSArray<NSNumber *> *curve = td
+        ? [self forwardCurveTimeDomainWithPID:pid mechConstants:mech filterConfig:filter length:N duration:duration]
+        : [self forwardCurveWithPID:pid mechConstants:mech filterConfig:filter length:N duration:duration];
     NSInteger n = MIN(N, (NSInteger)curve.count);
     for (NSInteger k = 0; k < n; k++) out[k] = curve[k].doubleValue;
     for (NSInteger k = n; k < N; k++) out[k] = 0.0;
@@ -518,6 +522,22 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
                                            mechConstants:(BFMechConstants *)mech
                                             filterConfig:(BFFilterConfig *)filter
                                                   fitMask:(PIDReverseFitMask)fitMask
+                                                   length:(NSInteger)length
+                                                 duration:(double)duration {
+    /// [3.3b-2g] 旧接口 (解析版 forward) 转调时域版 td=NO, 向后兼容 2e/3.1/3.2 现有测试
+    return [self solveFromTargetCurve:target initialGuess:initialGuess
+                         mechConstants:mech filterConfig:filter
+                               fitMask:fitMask useTimeDomain:NO
+                                length:length duration:duration];
+}
+
+/// [3.3b-2g] 反解主流程 (LM): td=YES 用时域版 forward (含 d_min 动态D + dterm PT1 链 + gyro 链), 物理最全
+- (nullable PIDReverseSolveResult *)solveFromTargetCurve:(NSArray<NSNumber *> *)target
+                                            initialGuess:(PIDValues *)initialGuess
+                                           mechConstants:(BFMechConstants *)mech
+                                            filterConfig:(BFFilterConfig *)filter
+                                                  fitMask:(PIDReverseFitMask)fitMask
+                                            useTimeDomain:(BOOL)td
                                                    length:(NSInteger)length
                                                  duration:(double)duration {
     // 🔑 输入校验
@@ -558,7 +578,7 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
 
     // 初始残差 + cost
     [PIDReverseSolver applyCur:cur toPID:workPID];
-    [self.class fillForwardDouble:fwd0 fromPID:workPID mechConstants:mech filterConfig:filter length:N duration:duration];
+    [self.class fillForwardDouble:fwd0 fromPID:workPID mechConstants:mech filterConfig:filter useTimeDomain:td length:N duration:duration];
     double cost = 0.0;
     for (NSInteger k = 0; k < N; k++) { r0[k] = fwd0[k] - tgt[k]; cost += r0[k] * r0[k]; }
 
@@ -576,7 +596,7 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
             double save = cur[j];
             cur[j] = save + h;
             [PIDReverseSolver applyCur:cur toPID:workPID];
-            [self.class fillForwardDouble:fwdPert fromPID:workPID mechConstants:mech filterConfig:filter length:N duration:duration];
+            [self.class fillForwardDouble:fwdPert fromPID:workPID mechConstants:mech filterConfig:filter useTimeDomain:td length:N duration:duration];
             cur[j] = save;
             // J[:][jj] = (fwdPert - fwd0) / h
             for (NSInteger k = 0; k < N; k++) {
@@ -622,7 +642,7 @@ static void SimulatePIDTimeDomain(double *out, NSInteger N, double dt,
             for (int j = 0; j < 4; j++) if (trialCur[j] < 0) trialCur[j] = kPIDEpsilon;
 
             [PIDReverseSolver applyCur:trialCur toPID:workPID];
-            [self.class fillForwardDouble:fwdPert fromPID:workPID mechConstants:mech filterConfig:filter length:N duration:duration];
+            [self.class fillForwardDouble:fwdPert fromPID:workPID mechConstants:mech filterConfig:filter useTimeDomain:td length:N duration:duration];
             double newCost = 0.0;
             for (NSInteger k = 0; k < N; k++) {
                 double dr = fwdPert[k] - tgt[k];

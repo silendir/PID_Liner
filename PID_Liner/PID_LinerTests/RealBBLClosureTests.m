@@ -1482,6 +1482,170 @@
     XCTAssertGreaterThan(bestK, 0);
 }
 
+/// 🎯 阶段3.3b-2g: 时域forward接入反解LM (forward物理最全: d_min动态D + dterm PT1链 + gyro链)
+///
+/// 2e实锤: 解析forward + gyro链 → P平均83.2% (反解P爆炸).
+/// 2f诊断: P-only仍36.3% → forward对P系统偏差, 非共线, Tikhonov治不了.
+/// 根因: 解析forward是纯二阶(ζ由dScale常数定), 真实BF有d_min动态D+dterm双低通
+///        → D阻尼被低估 → forward过振荡(t=0.005超调34% vs avgCurve 8-15%)
+///        → LM为贴平avgCurve只能压P → P偏低/爆炸.
+/// 本测试: 反解LM改用时域forward (RK4积分, 含d_min非线性 + dterm PT1链), 看P能否达标.
+/// 模型一致性: K扫描与反解都用时域forward + gyro链 + dterm链 + d_min.
+/// 时域RK4是O(N), 6条反解可在秒级完成.
+- (void)testCrossValidation_WuBBL_TimeDomainReverse {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSArray<NSDictionary<NSString *, NSString *> *> *specs = @[
+        @{@"name":@"wu_515inch",   @"grp":@"A"},
+        @{@"name":@"wu_51log",     @"grp":@"A"},
+        @{@"name":@"wu_xxx5101",   @"grp":@"B"},
+        @{@"name":@"wu_bde51_2_0", @"grp":@"C"},
+        @{@"name":@"wu_bde51_3_0", @"grp":@"C"},
+        @{@"name":@"wu_wu3",       @"grp":@"C"},
+    ];
+
+    // 1. 提取6条曲线 + PID + gyro等效截止 + d_min/dGain (合并2d的d_min提取与2e的gyro提取)
+    NSMutableArray<NSString *> *names=[NSMutableArray array], *grps=[NSMutableArray array];
+    NSMutableArray<NSArray<NSNumber *> *> *targets=[NSMutableArray array];
+    NSMutableArray<NSNumber *> *Pv=[NSMutableArray array], *Iv=[NSMutableArray array],
+        *Dv=[NSMutableArray array], *Fv=[NSMutableArray array],
+        *Nv=[NSMutableArray array], *gH1v=[NSMutableArray array], *gH2v=[NSMutableArray array],
+        *dMv=[NSMutableArray array], *dGv=[NSMutableArray array];
+    NSMutableString *extract = [NSMutableString stringWithString:@"曲线提取 + gyro链 + d_min:\n"];
+    for (NSDictionary<NSString *, NSString *> *spec in specs) {
+        NSString *name = spec[@"name"];
+        NSString *bbl = [bundle pathForResource:name ofType:@"bbl"];
+        if (!bbl) { [extract appendFormat:@"  %@: ❌ bundle无BBL\n", name]; continue; }
+        double sr=0;
+        NSArray<NSNumber *> *t = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+        if (!t || t.count < 100) { [extract appendFormat:@"  %@: ❌ 曲线失败\n", name]; continue; }
+        double P=0,I=0,D=0,FF=0;
+        [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+        NSDictionary<NSString *, NSString *> *header = [BBLHeaderParser parseHeaderFromFile:bbl];
+        // BF4.5 gyro等效截止: lpf1(static>0?static:dyn中点) + lpf2
+        double lpf1Static = [[header objectForKey:@"gyro_lpf1_static_hz"] doubleValue];
+        NSString *dynHzStr = [header objectForKey:@"gyro_lpf1_dyn_hz"];
+        if (dynHzStr.length == 0) dynHzStr = @"0,500";  // BF4.5 缺字段兜底
+        NSArray<NSString *> *dp = [dynHzStr componentsSeparatedByString:@","];
+        double dynLo = dp.count>0 ? [dp[0] doubleValue] : 0;
+        double dynHi = dp.count>1 ? [dp[1] doubleValue] : 500;
+        double gH1 = (lpf1Static > 0) ? lpf1Static : (dynLo + dynHi) / 2.0;
+        double gH2 = [[header objectForKey:@"gyro_lpf2_static_hz"] doubleValue];
+        // d_min/d_max_gain (roll = 第0个)
+        NSArray<NSString *> *dm = [[header objectForKey:@"d_min"] componentsSeparatedByString:@","];
+        double dMin = dm.count>0 ? [dm[0] doubleValue] : 0.0;
+        double dGain = [[header objectForKey:@"d_max_gain"] doubleValue];
+
+        [names addObject:name]; [grps addObject:spec[@"grp"]]; [targets addObject:t];
+        [Pv addObject:@(P)]; [Iv addObject:@(I)]; [Dv addObject:@(D)]; [Fv addObject:@(FF)];
+        [Nv addObject:@((NSInteger)t.count)];
+        [gH1v addObject:@(gH1)]; [gH2v addObject:@(gH2)];
+        [dMv addObject:@(dMin)]; [dGv addObject:@(dGain)];
+        [extract appendFormat:@"  %@[%@] P=%.0f D=%.0f FF=%.0f N=%lu gyro(%.0f,%.0f) dMin=%.0f dGain=%.0f\n",
+            name, spec[@"grp"], P, D, FF, (unsigned long)t.count, gH1, gH2, dMin, dGain];
+    }
+    NSInteger valid = (NSInteger)names.count;
+    XCTAssertGreaterThanOrEqual(valid, 4, @"至少4条曲线提取成功");
+
+    // 🔑 构造同时含gyro链+dterm链的filter (时域forward读gyroPT1Hz+dtermPT1Hz两组字段)
+    // dterm链用001.bbl标定值150/150/120 (吴bbl BF4.5 dterm配置相近, 先跑通定方向)
+    NSMutableArray<BFFilterConfig *> *filters = [NSMutableArray array];
+    for (NSInteger j=0; j<valid; j++) {
+        BFFilterConfig *f = [[BFFilterConfig alloc] init];
+        f.gyroPT1Hz = gH1v[j].doubleValue;    // gyro lpf1 等效
+        f.gyroPT1_2Hz = gH2v[j].doubleValue;  // gyro lpf2
+        f.gyroPT1DynHz = 0;                     // BF4.5 只2级, 第三级跳过
+        f.dtermPT1Hz = 150.0;                   // dterm_lowpass (001标定)
+        f.dtermPT1_2Hz = 150.0;                 // dterm_lowpass2
+        f.dtermPT1DynHz = 120.0;                // dterm_lowpass_dyn 中点
+        [filters addObject:f];
+    }
+
+    // 2. 扫K (时域forward + gyro链 + dterm链 + d_min, 与反解一致)
+    double kPlants[] = {50, 70, 90, 110, 130, 150};
+    int nK = (int)(sizeof(kPlants)/sizeof(kPlants[0]));
+    double bestK = 110, bestAvgRMSE = 1e9;
+    NSMutableString *sweep = [NSMutableString string];
+    for (int ik=0; ik<nK; ik++) {
+        double sumRMSE = 0;
+        for (NSInteger j=0; j<valid; j++) {
+            BFMechConstants *m = [BFMechConstants withKPlant:kPlants[ik] tauM:0.010
+                                                       dScale:0.0007
+                                                          dMin:dMv[j].doubleValue dMinGain:dGv[j].doubleValue];
+            PIDValues *pid = [PIDValues new];
+            pid.p=Pv[j].doubleValue; pid.i=Iv[j].doubleValue;
+            pid.d=Dv[j].doubleValue; pid.ff=Fv[j].doubleValue;
+            NSInteger N = Nv[j].integerValue;
+            NSArray<NSNumber *> *curve = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                mechConstants:m filterConfig:filters[j] length:N duration:0.5];
+            sumRMSE += [self rmseBetween:targets[j] and:curve];
+        }
+        double avg = sumRMSE / (double)valid;
+        [sweep appendFormat:@"  K=%-5.1f → %ld条平均RMSE=%.4f\n", kPlants[ik], (long)valid, avg];
+        if (avg < bestAvgRMSE) { bestAvgRMSE = avg; bestK = kPlants[ik]; }
+    }
+
+    // 3. 反解6条 (时域forward td=YES + gyro链 + dterm链 + d_min)
+    NSMutableString *solve = [NSMutableString stringWithString:
+        @"反解(fit P/D, 时域forward + gyro链 + dterm链 + d_min):\n"];
+    double pErrSum=0; NSInteger pCnt=0;
+    NSMutableArray<NSNumber *> *solvedP = [NSMutableArray array];
+    NSMutableArray<NSString *> *solvedGrp = [NSMutableArray array];
+    for (NSInteger j=0; j<valid; j++) {
+        BFMechConstants *m = [BFMechConstants withKPlant:bestK tauM:0.010
+                                                   dScale:0.0007
+                                                      dMin:dMv[j].doubleValue dMinGain:dGv[j].doubleValue];
+        PIDValues *guess = [PIDValues new];
+        double P=Pv[j].doubleValue, D=Dv[j].doubleValue;
+        guess.p=P*1.3; guess.i=Iv[j].doubleValue; guess.d=D*0.7; guess.ff=Fv[j].doubleValue;
+        NSInteger N = Nv[j].integerValue;
+        PIDReverseSolver *solver = [PIDReverseSolver new];
+        PIDReverseSolveResult *r = [solver solveFromTargetCurve:targets[j] initialGuess:guess
+                                                    mechConstants:m filterConfig:filters[j]
+                                                         fitMask:PIDReverseFitP|PIDReverseFitD
+                                                     useTimeDomain:YES
+                                                          length:N duration:0.5];
+        if (!r) { [solve appendFormat:@"  %@[%@]: ❌ 反解nil\n", names[j], grps[j]]; continue; }
+        double pErr = [self pctErr:r.solvedPID.p vs:P];
+        double dErr = [self pctErr:r.solvedPID.d vs:D];
+        pErrSum += pErr; pCnt++;
+        [solvedP addObject:@(r.solvedPID.p)]; [solvedGrp addObject:grps[j]];
+        [solve appendFormat:@"  %@[%@] P真=%.0f 解=%.2f(%.1f%%) D真=%.0f 解=%.2f(%.1f%%) RMSE=%.4f iter=%ld\n",
+            names[j], grps[j], P, r.solvedPID.p, pErr, D, r.solvedPID.d, dErr,
+            r.finalRMSE, (long)r.iterations];
+    }
+
+    // C组重复性: 3条P解极差/均值
+    double cMin=1e9, cMax=0, cSum=0; NSInteger cCnt=0;
+    for (NSInteger j=0; j<solvedP.count; j++) {
+        if ([solvedGrp[j] isEqualToString:@"C"]) {
+            double p = solvedP[j].doubleValue;
+            cMin = MIN(cMin, p); cMax = MAX(cMax, p); cSum += p; cCnt++;
+        }
+    }
+    double cSpread = (cCnt>=2 && cSum>0) ? (cMax-cMin)/(cSum/cCnt)*100.0 : -1.0;
+    double avgPErr = pCnt>0 ? pErrSum/(double)pCnt : 0.0;
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2g 吴bbl 6条] 时域forward反解 (d_min动态D + dterm PT1链 + gyro链)\n"
+        @"%@\n"
+        @"K扫描 (时域forward+全滤波, %ld条平均RMSE):\n%@\n"
+        @"最优K=%.1f (avgRMSE=%.4f) | 2e基线 K=110(解析+gyro, avg=0.0643)\n"
+        @"%@\n"
+        @"平均P误差=%.1f%% (2e基线=83.2%%, 2d基线=24.8%%)\n"
+        @"C组重复性: P解极差/均值=%.1f%% (n=%ld)\n"
+        @"判定: %@",
+        extract, (long)valid, sweep, bestK, bestAvgRMSE, solve,
+        avgPErr, cSpread, (long)cCnt,
+        (avgPErr<15.0 && cSpread>=0 && cSpread<15.0)
+            ? @"✅ P<15%且C组重复性<15% → 时域forward治本, 可定稿反解"
+            : (avgPErr<15.0
+                ? @"🔶 P达标但C组重复性仍差 → 需正则化或曲线质量门控"
+                : @"⚠️ P仍>15% → 时域forward也不够, forward模型层穷尽, 转质量门控")];
+    [report writeToFile:@"/tmp/realsolve_wu6_td.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(bestK, 0);
+}
+
 /// 🔬 阶段3.3b-2f-诊断: 单参拟合灵敏度 (零引擎改动, 确认Tikhonov是否对症)
 ///
 /// 2e实锤: fit P/D 时 P 爆炸(83.2%), 猜根因是P/D/FF雅可比共线(欠定).

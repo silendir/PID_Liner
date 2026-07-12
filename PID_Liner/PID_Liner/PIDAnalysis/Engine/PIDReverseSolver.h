@@ -160,6 +160,17 @@ typedef NS_OPTIONS(NSUInteger, PIDReverseFitMask) {
                                                    length:(NSInteger)length
                                                  duration:(double)duration;
 
+/// [3.3b-2g] 反解选 forward 路径: td=YES 时域积分版 (含 d_min 动态D + dterm PT1 链, 物理最全);
+/// td=NO 解析版 (向后兼容). 时域版 RK4 是 O(N), 反解 6 条可在秒级完成
+- (nullable PIDReverseSolveResult *)solveFromTargetCurve:(NSArray<NSNumber *> *)target
+                                            initialGuess:(PIDValues *)initialGuess
+                                           mechConstants:(BFMechConstants *)mech
+                                            filterConfig:(nullable BFFilterConfig *)filter
+                                                  fitMask:(PIDReverseFitMask)fitMask
+                                            useTimeDomain:(BOOL)td
+                                                   length:(NSInteger)length
+                                                 duration:(double)duration;
+
 @end
 
 NS_ASSUME_NONNULL_END
