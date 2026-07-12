@@ -411,11 +411,14 @@
 }
 
 /// BBL header → 真实 Roll PID (P/I/D/FF), 缺字段 fallback 到 001.bbl 实测值
+/// FF 增益字段版本差异: BF4.2=feedforward_weight, BF4.5+=ff_weight (优先4.2, 回退4.5)
 - (void)readRealRollPIDFromBBL:(NSString *)bblPath
                           outP:(double *)outP outI:(double *)outI outD:(double *)outD outFF:(double *)outFF {
     NSDictionary *header = [BBLHeaderParser parseHeaderFromFile:bblPath];
     NSArray<NSString *> *pidParts = [[header objectForKey:@"rollPID"] componentsSeparatedByString:@","];
-    NSArray<NSString *> *ffParts = [[header objectForKey:@"feedforward_weight"] componentsSeparatedByString:@","];
+    NSString *ffField = [header objectForKey:@"feedforward_weight"];  // BF4.2
+    if (ffField.length == 0) ffField = [header objectForKey:@"ff_weight"];  // BF4.5+ 改名
+    NSArray<NSString *> *ffParts = [ffField componentsSeparatedByString:@","];
     if (outP)  *outP  = pidParts.count > 0 ? [pidParts[0] doubleValue] : 38.0;
     if (outI)  *outI  = pidParts.count > 1 ? [pidParts[1] doubleValue] : 85.0;
     if (outD)  *outD  = pidParts.count > 2 ? [pidParts[2] doubleValue] : 44.0;
@@ -1213,6 +1216,119 @@
     [report writeToFile:@"/tmp/calib_ktau_crossval.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
     NSLog(@"🎯 %@", report);
     XCTAssertGreaterThan(r1self.solvedPID.p, 0);
+}
+
+/// 🎯 阶段3.3b-2d: 吴bbl 6条交叉验证 (BF4.5, 3种PID, 另一架飞机)
+/// 3种P (42/26/32), 每种有重复样本 → 测区分度(不同P解出不同值) + 重复性(同P解出相近值)
+/// 吴飞机K_plant未知 → 先扫K标定(6条forward时域平均RMSE最小), 再反解
+/// BF4.5适配: FF fallback(header无feedforward_weight), d_min/d_max_gain从header读
+/// duration=0.5 (avgCurve固定0~0.5s时间轴, line848-849, 与Silen可比)
+- (void)testCrossValidation_WuBBL_Baseline {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    /// 6条BBL, 3种PID配置:
+    ///   A (42/76/44, d_min=33~40): wu_515inch, wu_51log  [BF4.5.2, gyro动态0-500]
+    ///   B (26/43/26, d_min=21):    wu_xxx5101            [BF4.5.3]
+    ///   C (32/43/26, d_min=0):     wu_bde51_2_0/3_0, wu_wu3 [BF4.5.3]
+    NSArray<NSDictionary<NSString *, NSString *> *> *specs = @[
+        @{@"name":@"wu_515inch",   @"grp":@"A"},
+        @{@"name":@"wu_51log",     @"grp":@"A"},
+        @{@"name":@"wu_xxx5101",   @"grp":@"B"},
+        @{@"name":@"wu_bde51_2_0", @"grp":@"C"},
+        @{@"name":@"wu_bde51_3_0", @"grp":@"C"},
+        @{@"name":@"wu_wu3",       @"grp":@"C"},
+    ];
+
+    // 1. 提取 6 条曲线 + PID 真值 + d_min/d_max_gain (明确类型并行数组, 避免malloc)
+    NSMutableArray<NSString *> *names=[NSMutableArray array], *grps=[NSMutableArray array];
+    NSMutableArray<NSArray<NSNumber *> *> *targets=[NSMutableArray array];
+    NSMutableArray<NSNumber *> *Pv=[NSMutableArray array], *Iv=[NSMutableArray array],
+        *Dv=[NSMutableArray array], *Fv=[NSMutableArray array],
+        *dMv=[NSMutableArray array], *dGv=[NSMutableArray array], *Nv=[NSMutableArray array];
+    NSMutableString *extract = [NSMutableString stringWithString:@"曲线提取:\n"];
+    for (NSDictionary<NSString *, NSString *> *spec in specs) {
+        NSString *name = spec[@"name"];
+        NSString *bbl = [bundle pathForResource:name ofType:@"bbl"];
+        if (!bbl) { [extract appendFormat:@"  %@: ❌ bundle无BBL\n", name]; continue; }
+        double sr=0;  // sampleRate仅提纯用, forward用duration=0.5不依赖sr
+        NSArray<NSNumber *> *t = [self normalizedRollStepCurveFromBBL:bbl outSampleRate:&sr];
+        if (!t || t.count < 100) {
+            [extract appendFormat:@"  %@: ❌ 曲线失败(N=%lu)\n", name, t?(unsigned long)t.count:0];
+            continue;
+        }
+        double P=0,I=0,D=0,FF=0;
+        [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];  // FF fallback 72(BF4.5无feedforward_weight)
+        NSDictionary<NSString *, NSString *> *header = [BBLHeaderParser parseHeaderFromFile:bbl];
+        NSArray<NSString *> *dm = [[header objectForKey:@"d_min"] componentsSeparatedByString:@","];
+        double dMin = dm.count>0 ? [dm[0] doubleValue] : 0.0;  // roll = 第0个
+        double dGain = [[header objectForKey:@"d_max_gain"] doubleValue];
+
+        [names addObject:name]; [grps addObject:spec[@"grp"]]; [targets addObject:t];
+        [Pv addObject:@(P)]; [Iv addObject:@(I)]; [Dv addObject:@(D)]; [Fv addObject:@(FF)];
+        [dMv addObject:@(dMin)]; [dGv addObject:@(dGain)]; [Nv addObject:@((NSInteger)t.count)];
+        [extract appendFormat:@"  %@[%@] P=%.0f I=%.0f D=%.0f FF=%.0f dMin=%.0f dGain=%.0f N=%lu\n",
+            name, spec[@"grp"], P,I,D,FF,dMin,dGain,(unsigned long)t.count];
+    }
+    NSInteger valid = (NSInteger)names.count;
+    XCTAssertGreaterThanOrEqual(valid, 4, @"至少4条曲线提取成功");
+
+    // 2. 扫 K (10-150) 找吴飞机最优 K_plant (6条forward时域平均RMSE最小)
+    double kPlants[] = {10, 30, 50, 70, 90, 110, 150};
+    int nK = (int)(sizeof(kPlants)/sizeof(kPlants[0]));
+    double bestK = 50, bestAvgRMSE = 1e9;
+    NSMutableString *sweep = [NSMutableString string];
+    for (int ik=0; ik<nK; ik++) {
+        double sumRMSE = 0;
+        for (NSInteger j=0; j<valid; j++) {
+            BFMechConstants *m = [BFMechConstants withKPlant:kPlants[ik] tauM:0.010
+                                                       dScale:0.0007 dMin:dMv[j].doubleValue dMinGain:dGv[j].doubleValue];
+            PIDValues *pid = [PIDValues new];
+            pid.p=Pv[j].doubleValue; pid.i=Iv[j].doubleValue;
+            pid.d=Dv[j].doubleValue; pid.ff=Fv[j].doubleValue;
+            NSInteger N = Nv[j].integerValue;
+            NSArray<NSNumber *> *f = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                mechConstants:m filterConfig:nil length:N duration:0.5];
+            sumRMSE += [self rmseBetween:targets[j] and:f];
+        }
+        double avg = sumRMSE / (double)valid;
+        [sweep appendFormat:@"  K=%-5.1f → %ld条平均RMSE=%.4f\n", kPlants[ik], (long)valid, avg];
+        if (avg < bestAvgRMSE) { bestAvgRMSE = avg; bestK = kPlants[ik]; }
+    }
+
+    // 3. 用最优 K 反解 6 条 (fit P/D)
+    NSMutableString *solve = [NSMutableString stringWithString:@"反解(fit P/D, 最优K):\n"];
+    double pErrSum=0; NSInteger pCnt=0;
+    for (NSInteger j=0; j<valid; j++) {
+        BFMechConstants *m = [BFMechConstants withKPlant:bestK tauM:0.010
+                                                   dScale:0.0007 dMin:dMv[j].doubleValue dMinGain:dGv[j].doubleValue];
+        PIDValues *guess = [PIDValues new];
+        double P=Pv[j].doubleValue, D=Dv[j].doubleValue;
+        guess.p=P*1.3; guess.i=Iv[j].doubleValue; guess.d=D*0.7; guess.ff=Fv[j].doubleValue;
+        NSInteger N = Nv[j].integerValue;
+        PIDReverseSolver *solver = [PIDReverseSolver new];
+        PIDReverseSolveResult *r = [solver solveFromTargetCurve:targets[j] initialGuess:guess
+                                                    mechConstants:m fitMask:PIDReverseFitP|PIDReverseFitD
+                                                         length:N duration:0.5];
+        if (!r) { [solve appendFormat:@"  %@[%@]: ❌ 反解nil\n", names[j], grps[j]]; continue; }
+        double pErr = [self pctErr:r.solvedPID.p vs:P];
+        double dErr = [self pctErr:r.solvedPID.d vs:D];
+        pErrSum += pErr; pCnt++;
+        [solve appendFormat:@"  %@[%@] P真=%.0f 解=%.2f(%.1f%%) D真=%.0f 解=%.2f(%.1f%%) RMSE=%.4f iter=%ld\n",
+            names[j], grps[j], P, r.solvedPID.p, pErr, D, r.solvedPID.d, dErr,
+            r.finalRMSE, (long)r.iterations];
+    }
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2d 吴bbl 6条交叉验证] BF4.5 另一架飞机 (duration=0.5)\n"
+        @"%@\n"
+        @"K_plant 扫描 (forward时域, %ld条平均RMSE):\n%@\n"
+        @"吴飞机最优 K=%.1f (平均RMSE=%.4f) | Silen最优K=50\n"
+        @"%@\n"
+        @"平均 P 误差=%.1f%% (n=%ld)\n"
+        @"判定: 区分度(A=42/B=26/C=32应解出不同P) + 重复性(同组应相近) + 精度(P误差<15%%)",
+        extract, (long)valid, sweep, bestK, bestAvgRMSE, solve, pCnt>0?pErrSum/(double)pCnt:0.0, (long)pCnt];
+    [report writeToFile:@"/tmp/realsolve_wu6.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(bestK, 0);
 }
 
 @end
