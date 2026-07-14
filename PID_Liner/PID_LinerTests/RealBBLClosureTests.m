@@ -51,6 +51,40 @@
 @implementation Wu6ReverseBundle
 @end
 
+#pragma mark - [3.3b-2i] C 辅助: n×n 线性求解 (联合标定 B' 用, 7 未知 = 3 机械常数 + 4 P)
+
+/// 解 A·x = b, 解存入 b (原地修改 A, b)。n ∈ [1,8]。
+/// 复制自 PIDReverseSolver.m::SolveLinearSystem (生产 static 测试不可见)。
+/// ponytail: 复制而非暴露生产 static, 测试与生产解耦; n 通用避免硬编码 7×7。
+static void SolveLinearSystemN(double *A, double *b, int n) {
+    for (int col = 0; col < n; col++) {
+        // 列主元选取
+        int pivot = col;
+        double maxVal = fabs(A[col * n + col]);
+        for (int row = col + 1; row < n; row++) {
+            double v = fabs(A[row * n + col]);
+            if (v > maxVal) { maxVal = v; pivot = row; }
+        }
+        if (maxVal < 1e-18) { b[col] = 0.0; continue; }  // ponytail: 奇异列, step 置 0
+        if (pivot != col) {
+            for (int c = 0; c < n; c++) {
+                double t = A[col * n + c]; A[col * n + c] = A[pivot * n + c]; A[pivot * n + c] = t;
+            }
+            double t = b[col]; b[col] = b[pivot]; b[pivot] = t;
+        }
+        double piv = A[col * n + col];
+        for (int c = col; c < n; c++) A[col * n + c] /= piv;
+        b[col] /= piv;
+        for (int row = 0; row < n; row++) {
+            if (row == col) continue;
+            double factor = A[row * n + col];
+            if (factor == 0.0) continue;
+            for (int c = col; c < n; c++) A[row * n + c] -= factor * A[col * n + c];
+            b[row] -= factor * b[col];
+        }
+    }
+}
+
 @implementation RealBBLClosureTests
 
 /// RMSE
@@ -1838,6 +1872,734 @@
     XCTAssertGreaterThan(b.bestK, 0);
 }
 
+/// [3.3b-2i] 联合 forward: 给 cur[K_plant,τM,dScale,P0..P3] → 拼接 nyi 条 forward 到 outBuf
+/// 机械常数共享 (cur[0..2]), 每条 P 独立 (cur[3+k]); D/FF/I 用 header 真值固定
+/// 返回拼接总点数。B' 联合标定 LM 的残差/雅可比评估核心。
+- (NSInteger)evalJointForward:(const double *)cur
+                       yiIdx:(const NSInteger *)yiIdx
+                          Ns:(const NSInteger *)Ns
+                         nyi:(NSInteger)nyi
+                      bundle:(Wu6ReverseBundle *)b
+                      outBuf:(double *)outBuf {
+    NSInteger offset = 0;
+    for (NSInteger k = 0; k < nyi; k++) {
+        NSInteger j = yiIdx[k];
+        BFMechConstants *m = [BFMechConstants withKPlant:cur[0] tauM:cur[1] dScale:cur[2]
+                                                    dMin:b.dMv[j].doubleValue dMinGain:b.dGv[j].doubleValue];
+        PIDValues *pid = [PIDValues new];
+        pid.p  = cur[3 + k];                      // 第 k 条的 P (待 fit)
+        pid.i  = b.Iv[j].doubleValue;             // header 真值固定
+        pid.d  = b.Dv[j].doubleValue;
+        pid.ff = b.Fv[j].doubleValue;
+        NSArray<NSNumber *> *curve = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+            mechConstants:m filterConfig:b.filters[j] length:Ns[k] duration:0.5];
+        NSInteger n = MIN(Ns[k], (NSInteger)curve.count);
+        for (NSInteger i = 0; i < n; i++) outBuf[offset + i] = curve[i].doubleValue;
+        offset += n;
+    }
+    return offset;
+}
+
+/// 🎯 阶段3.3b-2i: 飞机乙 4 条联合标定 (B' 验证 — 多曲线 + 同架先验解单条欠定)
+///
+/// 探路发现 (见 wu-bbl-aircraft-mapping): 6 条吴 bbl 实为 2 架飞机; 飞机乙(HAKRCF722V2)
+/// 4 条含 2 组 PID(xxx5101 P=26 / bde51_2/3/wu3 P=32). 单条曲线 2 观测(ωn,ζ) vs 3 未知
+/// (K_plant,τM,dScale) 数学欠定; 联合标定用"同架机械常数共享"先验解欠定.
+///
+/// 联合 fit: 共享 1 组(K_plant,τM,dScale) + 每条独立 P(D/FF/I 固定 header), 7 未知 vs 4×N 约束
+/// LM: 7 维数值雅可比 + per-param 步长(τM/dScale 小量纲 floor 保护), 拼接 4 条残差
+/// 门控: C 组 3 条同 PID 标完 P 应一致; P 平均误差 vs 2g 的 8.9%; 收敛性
+/// 判定: P<8% 且 C 组极差<10% 且收敛 → B' 数学成立, 进生产化(加联合标定到 PIDReverseSolver)
+- (void)testJointCalibration_YiAircraft_4Curves {
+    Wu6ReverseBundle *b = [self extractWu6Bundle];
+    XCTAssertNotNil(b, @"提取6条曲线失败");
+    NSInteger valid = (NSInteger)b.names.count;
+
+    /// 筛飞机乙 (grp ∈ {B,C} = HAKRCF722V2; A 组=MAMBAF722=飞机甲, 不参与本次联合标定)
+    NSMutableArray<NSNumber *> *yiIdxList = [NSMutableArray array];
+    for (NSInteger j = 0; j < valid; j++) {
+        if (![b.grps[j] isEqualToString:@"A"]) [yiIdxList addObject:@((NSInteger)j)];
+    }
+    const NSInteger nyi = (NSInteger)yiIdxList.count;
+    XCTAssertGreaterThanOrEqual(nyi, 4, @"飞机乙不足4条 (got %ld)", (long)nyi);
+
+    /// 装 C 数组: 乙的 4 条索引/点数/真值P, 拼接总长
+    NSInteger yiIdx[8] = {0}; NSInteger Ns[8] = {0}; double truthP[8] = {0}; double Ntotal = 0;
+    for (NSInteger k = 0; k < nyi; k++) {
+        yiIdx[k] = yiIdxList[k].integerValue;
+        Ns[k] = b.Nv[yiIdx[k]].integerValue;
+        truthP[k] = b.Pv[yiIdx[k]].doubleValue;
+        Ntotal += Ns[k];
+    }
+
+    /// 工作缓冲 (拼接版: 4 条 target/forward 拼成一条大残差向量)
+    double *tgt     = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *fwd0    = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *fwdPert = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *r0      = (double *)malloc((size_t)Ntotal * sizeof(double));
+    const int nUnk = 3 + (int)nyi;  // 7 = 3 机械常数 + 4 P
+    double *diff   = (double *)malloc((size_t)Ntotal * (size_t)nUnk * sizeof(double));
+    XCTAssertTrue(tgt != NULL && fwd0 != NULL && fwdPert != NULL && r0 != NULL && diff != NULL,
+                 @"联合标定 malloc 失败");
+    {
+        /// 拼接 4 条 target
+        NSInteger off = 0;
+        for (NSInteger k = 0; k < nyi; k++) {
+            NSArray<NSNumber *> *t = b.targets[yiIdx[k]];
+            NSInteger n = MIN(Ns[k], (NSInteger)t.count);
+            for (NSInteger i = 0; i < n; i++) tgt[off + i] = t[i].doubleValue;
+            off += n;
+        }
+    }
+
+    /// 未知初值: 机械常数用 2g 的 K=50 + 拍脑袋 τM/dScale; 每条 P 用 header 真值×1.1 小扰动
+    double cur[8] = {0};
+    cur[0] = b.bestK;                       // K_plant (2g 标定的 50)
+    cur[1] = 0.010;                         // τM
+    cur[2] = 0.0007;                        // dScale
+    for (int k = 0; k < nyi; k++) cur[3 + k] = truthP[k] * 1.1;  // P 小扰动让 LM 有梯度
+
+    /// 🔑 雅可比 per-param 步长: 量纲差异大(K~50/τM~0.01/dScale~0.0007/P~30),
+    /// 统一相对步长会让 τM/dScale 的绝对 h 淹没在 RK4 浮点噪声里; 各自 floor 保护
+    double stepFloor[8] = {1.0, 1e-3, 1e-5, 1.0, 1.0, 1.0, 1.0, 1.0};  // K,P=1; τM=1e-3; dScale=1e-5
+    const double kJacStep = 1e-4;
+    const double kRMSETol = 1e-4;
+    const NSInteger kMaxIter = 100;
+    const double kLambdaInit = 1e-3, kLambdaUp = 3.0, kLambdaDown = 0.3;
+
+    /// 初始 forward + 残差 + cost
+    [self evalJointForward:cur yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwd0];
+    double cost = 0.0;
+    for (NSInteger i = 0; i < Ntotal; i++) { r0[i] = fwd0[i] - tgt[i]; cost += r0[i] * r0[i]; }
+
+    double lambda = kLambdaInit;
+    NSInteger iter = 0;
+    BOOL converged = (sqrt(cost / Ntotal) < kRMSETol);
+
+    while (!converged && iter < kMaxIter) {
+        iter++;
+
+        /// ---- 数值雅可比: nUnk 个参数各扰动, 全曲线重算 ----
+        for (int jj = 0; jj < nUnk; jj++) {
+            double save = cur[jj];
+            double h = kJacStep * fmax(fabs(cur[jj]), stepFloor[jj]);
+            cur[jj] = save + h;
+            [self evalJointForward:cur yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwdPert];
+            cur[jj] = save;
+            for (NSInteger i = 0; i < Ntotal; i++) {
+                diff[i * nUnk + jj] = (fwdPert[i] - fwd0[i]) / h;  // J[:][jj]
+            }
+        }
+
+        /// ---- JᵀJ (AtA) + Jᵀr (grad) ----
+        double AtA[64] = {0};   // max 8×8 (nUnk=7)
+        double grad[8] = {0};
+        for (int a = 0; a < nUnk; a++) {
+            for (int bb = a; bb < nUnk; bb++) {
+                double s = 0.0;
+                for (NSInteger i = 0; i < Ntotal; i++) s += diff[i * nUnk + a] * diff[i * nUnk + bb];
+                AtA[a * nUnk + bb] = s; AtA[bb * nUnk + a] = s;  // 对称
+            }
+            double g = 0.0;
+            for (NSInteger i = 0; i < Ntotal; i++) g += diff[i * nUnk + a] * r0[i];
+            grad[a] = g;
+        }
+
+        /// ---- LM 试步: (AtA + λ·diag)·step = -grad ----
+        double trialLambda = lambda;
+        BOOL accepted = NO;
+        for (int retry = 0; retry < 12; retry++) {
+            double AtAtrial[64];
+            memcpy(AtAtrial, AtA, sizeof(double) * nUnk * nUnk);
+            for (int a = 0; a < nUnk; a++) AtAtrial[a * nUnk + a] *= (1.0 + trialLambda);
+
+            double step[8] = {0};
+            memcpy(step, grad, sizeof(double) * nUnk);
+            for (int a = 0; a < nUnk; a++) step[a] = -step[a];
+            SolveLinearSystemN(AtAtrial, step, nUnk);
+
+            /// 试新解 + 负值/零值保护 (K_plant/τM 进 forward 分母须 >0; dScale 可 0; P>0)
+            double trialCur[8];
+            memcpy(trialCur, cur, sizeof(double) * nUnk);
+            for (int jj = 0; jj < nUnk; jj++) trialCur[jj] += step[jj];
+            if (trialCur[0] < 1e-6) trialCur[0] = 1e-6;        // K_plant > 0
+            if (trialCur[1] < 1e-6) trialCur[1] = 1e-6;        // τM > 0 (forward 分母)
+            if (trialCur[2] < 0.0) trialCur[2] = 0.0;           // dScale ≥ 0
+            for (int k = 0; k < nyi; k++) if (trialCur[3 + k] < 1e-9) trialCur[3 + k] = 1e-9;
+
+            [self evalJointForward:trialCur yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwdPert];
+            double newCost = 0.0;
+            for (NSInteger i = 0; i < Ntotal; i++) { double dr = fwdPert[i] - tgt[i]; newCost += dr * dr; }
+
+            if (newCost < cost) {
+                memcpy(cur, trialCur, sizeof(double) * nUnk);
+                cost = newCost;
+                lambda = fmax(trialLambda * kLambdaDown, 1e-12);
+                memcpy(fwd0, fwdPert, sizeof(double) * Ntotal);
+                for (NSInteger i = 0; i < Ntotal; i++) r0[i] = fwd0[i] - tgt[i];
+                accepted = YES;
+                break;
+            }
+            trialLambda *= kLambdaUp;  // 拒绝, 增阻尼重试
+        }
+        if (!accepted) break;  // 阻尼加到极限仍无法下降, 停
+        if (sqrt(cost / Ntotal) < kRMSETol) converged = YES;
+    }
+
+    /// 每条最终 RMSE + P 误差 (用最终 cur 重算每条 forward)
+    NSMutableString *solve = [NSMutableString stringWithString:
+        @"联合反解 (共享 K_plant/τM/dScale + 每条P, D/FF/I固定header):\n"];
+    double pErrSum = 0.0;
+    NSMutableArray<NSNumber *> *solvedP = [NSMutableArray array];
+    NSMutableArray<NSString *> *solvedGrp = [NSMutableArray array];
+    const double curK = cur[0], curT = cur[1], curD = cur[2];
+    for (NSInteger k = 0; k < nyi; k++) {
+        NSInteger j = yiIdx[k];
+        BFMechConstants *m = [BFMechConstants withKPlant:curK tauM:curT dScale:curD
+                                                    dMin:b.dMv[j].doubleValue dMinGain:b.dGv[j].doubleValue];
+        PIDValues *pid = [PIDValues new];
+        pid.p = cur[3 + k];
+        pid.i = b.Iv[j].doubleValue; pid.d = b.Dv[j].doubleValue; pid.ff = b.Fv[j].doubleValue;
+        NSArray<NSNumber *> *c = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+            mechConstants:m filterConfig:b.filters[j] length:Ns[k] duration:0.5];
+        double rmse = [self rmseBetween:b.targets[j] and:c];
+        double pErr = [self pctErr:cur[3 + k] vs:truthP[k]];
+        pErrSum += pErr;
+        [solvedP addObject:@(cur[3 + k])];
+        [solvedGrp addObject:b.grps[j]];
+        [solve appendFormat:@"  %@[%@] P真=%.0f 解=%.2f(%.1f%%) RMSE=%.4f\n",
+            b.names[j], b.grps[j], truthP[k], cur[3 + k], pErr, rmse];
+    }
+    double avgPErr = pErrSum / (double)nyi;
+
+    /// C 组重复性 (乙的 3 条 P=32, 门控关键)
+    double cMin = 1e9, cMax = 0.0, cSum = 0.0; NSInteger cCnt = 0;
+    for (NSInteger k = 0; k < solvedP.count; k++) {
+        if ([solvedGrp[k] isEqualToString:@"C"]) {
+            double p = solvedP[k].doubleValue;
+            cMin = MIN(cMin, p); cMax = MAX(cMax, p); cSum += p; cCnt++;
+        }
+    }
+    double cSpread = (cCnt >= 2 && cSum > 0) ? (cMax - cMin) / (cSum / cCnt) * 100.0 : -1.0;
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2i 飞机乙4条] 联合标定 B' (多曲线+同架先验解单条欠定)\n"
+        @"%@\n"
+        @"标定机械常数: K_plant=%.2f (初值%.1f)  τM=%.5f (初值0.010)  dScale=%.6f (初值0.0007)\n"
+        @"%@\n"
+        @"平均P误差=%.1f%% (2g基线=8.9%%, 2h-a基线=23.1%%)\n"
+        @"C组重复性: P解极差/均值=%.1f%% (n=%ld)\n"
+        @"收敛: iter=%ld RMSE=%.5f %@\n"
+        @"判定: %@",
+        b.extractLog, curK, b.bestK, curT, curD,
+        solve, avgPErr, cSpread, (long)cCnt,
+        (long)iter, sqrt(cost / Ntotal), converged ? @"✅收敛" : @"⚠️未收敛",
+        (avgPErr < 8.0 && cSpread >= 0 && cSpread < 10.0 && converged)
+            ? @"✅ P<8%且C组一致且收敛 → B'数学成立, 机械常数被同架先验钉住, 进生产化(加联合标定到PIDReverseSolver)"
+            : (converged
+                ? @"🔶 收敛但精度/一致性未达 → 机械常数fit没帮上, 可能forward模型偏差或曲线提取噪声(见2f悬案)"
+                : @"⚠️ 联合LM不收敛 → 7维病态(P与K_plant在ωn²乘积耦合), 需参数归一化或Tikhonov正则")];
+    [report writeToFile:@"/tmp/realsolve_yi_joint.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    free(tgt); free(fwd0); free(fwdPert); free(r0); free(diff);
+    XCTAssertGreaterThan(curK, 0, @"K_plant 应被标定为正");
+}
+
+/// C 辅助: 缩参版 cur[nUnk] (K_plant + 各 P) → curFull[7] (插回钉死的 τM/dScale), 复用 evalJointForward
+/// ponytail: 单一映射函数, 避免在 LM 三处调用点重复 4 行填充 (DRY)
+static void FillCurFullReduced(const double *src, double *dstFull,
+                               NSInteger nyi, double tauM, double dScale) {
+    dstFull[0] = src[0];                                      // K_plant (fit)
+    dstFull[1] = tauM;                                        // τM (钉死)
+    dstFull[2] = dScale;                                      // dScale (钉死)
+    for (NSInteger k = 0; k < nyi; k++) dstFull[3 + k] = src[1 + k];  // P_k (fit)
+}
+
+/// 🎯 阶段3.3b-2i-缩参版: 飞机乙4条联合标定 (τM/dScale 钉死, 只 fit K_plant+4P = 5未知)
+///
+/// 2i 7参版证伪(31% P误差, τM/dScale塌0): 状态方程 ÿ=(K_plant·Kp·err−...)/τM 里
+/// P↔K_plant↔τM 乘积耦合(只辨比值 K_plant·Kp/τM), τM/dScale 不可辨→LM推边界吸收误差.
+/// 本测试: 钉死 τM=0.010/dScale=0.0007 (2g 参考值), 只 fit K_plant + 每条P = 5未知,
+///         4×N 约束仍过定. 验证缩参后 B' 数学是否成立.
+/// 判定: P平均<10% 且 C组极差<10% 且收敛 → B'缩参成立(7参过头), 进生产化.
+///       否则 → τM 必须独立标(电机阶跃反推), 联合标定方向暂搁.
+- (void)testJointCalibration_YiAircraft_4Curves_ReducedParams {
+    Wu6ReverseBundle *b = [self extractWu6Bundle];
+    XCTAssertNotNil(b, @"提取6条曲线失败");
+    NSInteger valid = (NSInteger)b.names.count;
+
+    /// 筛飞机乙 (grp ∈ {B,C} = HAKRCF722V2; A 组=MAMBAF722 不参与)
+    NSMutableArray<NSNumber *> *yiIdxList = [NSMutableArray array];
+    for (NSInteger j = 0; j < valid; j++) {
+        if (![b.grps[j] isEqualToString:@"A"]) [yiIdxList addObject:@((NSInteger)j)];
+    }
+    const NSInteger nyi = (NSInteger)yiIdxList.count;
+    XCTAssertGreaterThanOrEqual(nyi, 4, @"飞机乙不足4条 (got %ld)", (long)nyi);
+
+    /// C 数组: 乙的 4 条索引/点数/真值P, 拼接总长
+    NSInteger yiIdx[8] = {0}; NSInteger Ns[8] = {0}; double truthP[8] = {0}; double Ntotal = 0;
+    for (NSInteger k = 0; k < nyi; k++) {
+        yiIdx[k] = yiIdxList[k].integerValue;
+        Ns[k] = b.Nv[yiIdx[k]].integerValue;
+        truthP[k] = b.Pv[yiIdx[k]].doubleValue;
+        Ntotal += Ns[k];
+    }
+
+    /// 工作缓冲 (拼接版: 4 条 target/forward 拼成一条大残差向量)
+    double *tgt     = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *fwd0    = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *fwdPert = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *r0      = (double *)malloc((size_t)Ntotal * sizeof(double));
+    const int nUnk = 1 + (int)nyi;  // 5 = K_plant + 4 P (τM/dScale 钉死不 fit)
+    double *diff   = (double *)malloc((size_t)Ntotal * (size_t)nUnk * sizeof(double));
+    XCTAssertTrue(tgt && fwd0 && fwdPert && r0 && diff, @"缩参联合标定 malloc 失败");
+    {   /// 拼接 4 条 target
+        NSInteger off = 0;
+        for (NSInteger k = 0; k < nyi; k++) {
+            NSArray<NSNumber *> *t = b.targets[yiIdx[k]];
+            NSInteger n = MIN(Ns[k], (NSInteger)t.count);
+            for (NSInteger i = 0; i < n; i++) tgt[off + i] = t[i].doubleValue;
+            off += n;
+        }
+    }
+
+    /// 🔑 钉死的机械常数 (2g 参考值, 不 fit) — 解 P↔K_plant↔τM 乘积耦合的不可辨
+    const double kTauM = 0.010;
+    const double kDScale = 0.0007;
+
+    /// cur[nUnk=5]: cur[0]=K_plant, cur[1+k]=第k条P. 初值 K=2g标定值, P=真值×1.1 小扰动让 LM 有梯度.
+    double cur[8] = {0};
+    cur[0] = b.bestK;
+    for (int k = 0; k < nyi; k++) cur[1 + k] = truthP[k] * 1.1;
+    double curFull[8] = {0};        // 7 元, 喂给 evalJointForward
+
+    /// per-param 雅可比步长 (K/P 同量级, floor=1.0; τM/dScale 已 fit 外, 不需小量纲保护)
+    double stepFloor[8] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+    const double kJacStep = 1e-4;
+    const double kRMSETol = 1e-4;
+    const NSInteger kMaxIter = 100;
+    const double kLambdaInit = 1e-3, kLambdaUp = 3.0, kLambdaDown = 0.3;
+
+    /// 初始 forward + 残差 + cost
+    FillCurFullReduced(cur, curFull, nyi, kTauM, kDScale);
+    [self evalJointForward:curFull yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwd0];
+    double cost = 0.0;
+    for (NSInteger i = 0; i < Ntotal; i++) { r0[i] = fwd0[i] - tgt[i]; cost += r0[i] * r0[i]; }
+
+    double lambda = kLambdaInit;
+    NSInteger iter = 0;
+    BOOL converged = (sqrt(cost / Ntotal) < kRMSETol);
+
+    while (!converged && iter < kMaxIter) {
+        iter++;
+        /// ---- 数值雅可比: nUnk 个自由参各扰动, 全曲线重算 ----
+        for (int jj = 0; jj < nUnk; jj++) {
+            double save = cur[jj];
+            double h = kJacStep * fmax(fabs(cur[jj]), stepFloor[jj]);
+            cur[jj] = save + h;
+            FillCurFullReduced(cur, curFull, nyi, kTauM, kDScale);
+            [self evalJointForward:curFull yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwdPert];
+            cur[jj] = save;
+            for (NSInteger i = 0; i < Ntotal; i++) diff[i * nUnk + jj] = (fwdPert[i] - fwd0[i]) / h;
+        }
+        /// ---- JᵀJ (AtA) + Jᵀr (grad) ----
+        double AtA[64] = {0}; double grad[8] = {0};
+        for (int a = 0; a < nUnk; a++) {
+            for (int bb = a; bb < nUnk; bb++) {
+                double s = 0.0;
+                for (NSInteger i = 0; i < Ntotal; i++) s += diff[i * nUnk + a] * diff[i * nUnk + bb];
+                AtA[a * nUnk + bb] = s; AtA[bb * nUnk + a] = s;
+            }
+            double g = 0.0;
+            for (NSInteger i = 0; i < Ntotal; i++) g += diff[i * nUnk + a] * r0[i];
+            grad[a] = g;
+        }
+        /// ---- LM 试步: (AtA+λdiag)·step = -grad ----
+        double trialLambda = lambda;
+        BOOL accepted = NO;
+        for (int retry = 0; retry < 12; retry++) {
+            double AtAtrial[64];
+            memcpy(AtAtrial, AtA, sizeof(double) * nUnk * nUnk);
+            for (int a = 0; a < nUnk; a++) AtAtrial[a * nUnk + a] *= (1.0 + trialLambda);
+            double step[8] = {0};
+            memcpy(step, grad, sizeof(double) * nUnk);
+            for (int a = 0; a < nUnk; a++) step[a] = -step[a];
+            SolveLinearSystemN(AtAtrial, step, nUnk);
+
+            /// 试新解 + 正值保护 (cur 不动, 改 trialCur; 接受时才 commit)
+            double trialCur[8];
+            memcpy(trialCur, cur, sizeof(double) * nUnk);
+            for (int jj = 0; jj < nUnk; jj++) trialCur[jj] += step[jj];
+            if (trialCur[0] < 1e-6) trialCur[0] = 1e-6;                            // K_plant > 0
+            for (int k = 0; k < nyi; k++) if (trialCur[1 + k] < 1e-9) trialCur[1 + k] = 1e-9;  // P > 0
+
+            double trialCurFull[8] = {0};
+            FillCurFullReduced(trialCur, trialCurFull, nyi, kTauM, kDScale);
+            [self evalJointForward:trialCurFull yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwdPert];
+            double newCost = 0.0;
+            for (NSInteger i = 0; i < Ntotal; i++) { double dr = fwdPert[i] - tgt[i]; newCost += dr * dr; }
+
+            if (newCost < cost) {
+                memcpy(cur, trialCur, sizeof(double) * nUnk);   // 接受: commit
+                cost = newCost;
+                lambda = fmax(trialLambda * kLambdaDown, 1e-12);
+                memcpy(fwd0, fwdPert, sizeof(double) * Ntotal);
+                for (NSInteger i = 0; i < Ntotal; i++) r0[i] = fwd0[i] - tgt[i];
+                accepted = YES;
+                break;
+            }
+            trialLambda *= kLambdaUp;  // 拒绝: 增阻尼重试 (cur 未动, 天然回滚)
+        }
+        if (!accepted) break;
+        if (sqrt(cost / Ntotal) < kRMSETol) converged = YES;
+    }
+
+    /// 每条最终 RMSE + P 误差 (用最终 cur 重算每条 forward)
+    NSMutableString *solve = [NSMutableString stringWithString:
+        @"联合反解 (τM/dScale钉死=0.010/0.0007, fit K_plant+4P, D/FF/I固定header):\n"];
+    double pErrSum = 0.0;
+    NSMutableArray<NSNumber *> *solvedP = [NSMutableArray array];
+    NSMutableArray<NSString *> *solvedGrp = [NSMutableArray array];
+    const double curK = cur[0];
+    for (NSInteger k = 0; k < nyi; k++) {
+        NSInteger j = yiIdx[k];
+        BFMechConstants *m = [BFMechConstants withKPlant:curK tauM:kTauM dScale:kDScale
+                                                    dMin:b.dMv[j].doubleValue dMinGain:b.dGv[j].doubleValue];
+        PIDValues *pid = [PIDValues new];
+        pid.p = cur[1 + k];
+        pid.i = b.Iv[j].doubleValue; pid.d = b.Dv[j].doubleValue; pid.ff = b.Fv[j].doubleValue;
+        NSArray<NSNumber *> *c = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+            mechConstants:m filterConfig:b.filters[j] length:Ns[k] duration:0.5];
+        double rmse = [self rmseBetween:b.targets[j] and:c];
+        double pErr = [self pctErr:cur[1 + k] vs:truthP[k]];
+        pErrSum += pErr;
+        [solvedP addObject:@(cur[1 + k])];
+        [solvedGrp addObject:b.grps[j]];
+        [solve appendFormat:@"  %@[%@] P真=%.0f 解=%.2f(%.1f%%) RMSE=%.4f\n",
+            b.names[j], b.grps[j], truthP[k], cur[1 + k], pErr, rmse];
+    }
+    double avgPErr = pErrSum / (double)nyi;
+
+    /// C 组重复性 (乙的 3 条 P=32, 门控关键)
+    double cMin = 1e9, cMax = 0.0, cSum = 0.0; NSInteger cCnt = 0;
+    for (NSInteger k = 0; k < solvedP.count; k++) {
+        if ([solvedGrp[k] isEqualToString:@"C"]) {
+            double p = solvedP[k].doubleValue;
+            cMin = MIN(cMin, p); cMax = MAX(cMax, p); cSum += p; cCnt++;
+        }
+    }
+    double cSpread = (cCnt >= 2 && cSum > 0) ? (cMax - cMin) / (cSum / cCnt) * 100.0 : -1.0;
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2i-缩参 飞机乙4条] 联合标定 (τM/dScale钉死, fit K_plant+4P=5未知)\n"
+        @"%@\n"
+        @"标定 K_plant=%.2f (初值%.1f, τM/dScale钉死=0.010/0.0007)\n"
+        @"%@\n"
+        @"平均P误差=%.1f%% (2g基线=8.9%%, 2i-7参=31.0%%)\n"
+        @"C组重复性: P解极差/均值=%.1f%% (n=%ld)\n"
+        @"收敛: iter=%ld RMSE=%.5f %@\n"
+        @"判定: %@",
+        b.extractLog, curK, b.bestK, solve, avgPErr, cSpread, (long)cCnt,
+        (long)iter, sqrt(cost / Ntotal), converged ? @"✅收敛" : @"⚠️未收敛",
+        (avgPErr < 10.0 && cSpread >= 0 && cSpread < 10.0 && converged)
+            ? @"✅ P<10%且C组一致且收敛 → B'缩参成立, 7参过头, 进生产化(联合标定加到PIDReverseSolver, τM/dScale固定)"
+            : (converged
+                ? @"🔶 收敛但精度/一致性未达 → forward模型偏差或曲线噪声, τM独立标可能解"
+                : @"⚠️ 5参仍不收敛 → K_plant↔P 耦合仍未解, τM必须独立标(电机阶跃反推)")];
+    [report writeToFile:@"/tmp/realsolve_yi_joint_reduced.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    free(tgt); free(fwd0); free(fwdPert); free(r0); free(diff);
+    XCTAssertGreaterThan(curK, 0, @"K_plant 应被标定为正");
+}
+
+/// 🎯 阶段3.3b-2j-pre: iTerm Relax 零 fork 探针 (判据实验, 验证 relax 是否值得 fork)
+///
+/// iTerm Relax 本质 = 阶跃瞬态抑制 I 项. 本探针不动任何源码, 只调生产 forward 接口:
+/// 固定 K_plant + header P/D/FF, 对比 I=header(裸积分, 现状) vs I=0(完全抑制, relax 上界).
+/// 分前段(0~0.1s 瞬态) / 后段(0.1~0.5s 稳态) 看 RMSE, 判定 I 瞬态是否 RMSE 主因.
+/// 判据: 前段 I=0 显著降 RMSE(>15%) → relax 方向对, fork 完整版值得;
+///       前段未降 → I 非主因, τM 独立标优先 (假设①).
+- (void)testForward_ITermRelax_Probe {
+    Wu6ReverseBundle *b = [self extractWu6Bundle];
+    XCTAssertNotNil(b, @"提取6条曲线失败");
+    NSInteger valid = (NSInteger)b.names.count;
+
+    /// 飞机乙 4 条 (非 A 组)
+    NSMutableArray<NSNumber *> *yiIdxList = [NSMutableArray array];
+    for (NSInteger j = 0; j < valid; j++) {
+        if (![b.grps[j] isEqualToString:@"A"]) [yiIdxList addObject:@((NSInteger)j)];
+    }
+    const NSInteger nyi = (NSInteger)yiIdxList.count;
+    XCTAssertGreaterThanOrEqual(nyi, 4, @"飞机乙不足4条");
+
+    const double tauM = 0.010, dScale = 0.0007;
+    const double duration = 0.5;
+    const double frontEnd = 0.1;       // 前段 = 瞬态 0~0.1s
+    /// 扫两个 K_plant: 50(2g 稳定值) + 145(2i 缩参暴涨值), 看 I 贡献是否随 K 变
+    const double kSweep[2] = {50.0, 145.0};
+    const NSInteger nK = 2;
+
+    NSMutableString *report = [NSMutableString stringWithString:
+        @"[2j-pre iTerm Relax 探针] 飞机乙4条, τM=0.010/dScale=0.0007, header P/D/FF\n"
+        @"对比 I=header(裸积分,现状) vs I=0(完全抑制,relax上界) 的 forward RMSE, 分前/后段\n\n"];
+
+    /// 每个 K 下: 4 条平均的前段/后段/整体 RMSE (I=header vs I=0)
+    double avgFrontA[2] = {0}, avgFrontB[2] = {0};
+    double avgBackA[2] = {0},  avgBackB[2] = {0};
+    double avgAllA[2] = {0},   avgAllB[2] = {0};
+
+    for (NSInteger ki = 0; ki < nK; ki++) {
+        double K = kSweep[ki];
+        [report appendFormat:@"--- K_plant=%.0f ---\n", K];
+        double sFA=0,sFB=0,sBA=0,sBB=0,sAA=0,sAB=0;
+
+        for (NSInteger k = 0; k < nyi; k++) {
+            NSInteger j = yiIdxList[k].integerValue;
+            NSInteger N = b.Nv[j].integerValue;
+            NSArray<NSNumber *> *target = b.targets[j];
+
+            BFMechConstants *m = [BFMechConstants withKPlant:K tauM:tauM dScale:dScale
+                                                        dMin:b.dMv[j].doubleValue dMinGain:b.dGv[j].doubleValue];
+            BFFilterConfig *filt = b.filters[j];
+
+            /// A: I=header (裸积分, 现状) / B: I=0 (完全抑制, relax 上界)
+            PIDValues *pidA = [PIDValues new];
+            pidA.p = b.Pv[j].doubleValue; pidA.i = b.Iv[j].doubleValue;
+            pidA.d = b.Dv[j].doubleValue;  pidA.ff = b.Fv[j].doubleValue;
+            PIDValues *pidB = [PIDValues new];
+            pidB.p = b.Pv[j].doubleValue; pidB.i = 0.0;
+            pidB.d = b.Dv[j].doubleValue;  pidB.ff = b.Fv[j].doubleValue;
+
+            NSArray<NSNumber *> *cA = [PIDReverseSolver forwardCurveTimeDomainWithPID:pidA
+                mechConstants:m filterConfig:filt length:N duration:duration];
+            NSArray<NSNumber *> *cB = [PIDReverseSolver forwardCurveTimeDomainWithPID:pidB
+                mechConstants:m filterConfig:filt length:N duration:duration];
+
+            /// 分段 RMSE: 前段(瞬态) / 后段(稳态) / 整体
+            NSInteger n = MIN(N, (NSInteger)MIN((NSInteger)target.count, (NSInteger)MIN(cA.count, cB.count)));
+            NSInteger frontIdx = MAX(1, (NSInteger)(frontEnd / duration * (double)(n - 1)));
+            double qFA=0,qFB=0,qBA=0,qBB=0,qAA=0,qAB=0;
+            NSInteger nf=0, nb=0;
+            for (NSInteger i = 0; i < n; i++) {
+                double tg = target[i].doubleValue;
+                double dA = cA[i].doubleValue - tg;
+                double dB = cB[i].doubleValue - tg;
+                qAA += dA*dA; qAB += dB*dB;
+                if (i < frontIdx) { qFA += dA*dA; qFB += dB*dB; nf++; }
+                else              { qBA += dA*dA; qBB += dB*dB; nb++; }
+            }
+            double rmFA = nf? sqrt(qFA/nf):0, rmFB = nf? sqrt(qFB/nf):0;
+            double rmBA = nb? sqrt(qBA/nb):0, rmBB = nb? sqrt(qBB/nb):0;
+            double rmAA = sqrt(qAA/n), rmAB = sqrt(qAB/n);
+            sFA+=rmFA; sFB+=rmFB; sBA+=rmBA; sBB+=rmBB; sAA+=rmAA; sAB+=rmAB;
+
+            [report appendFormat:@"  %@[%@] P=%.0f I=%.0f: 前段 %.4f→%.4f(%+.1f%%) 后段 %.4f→%.4f(%+.1f%%) 整体 %.4f→%.4f(%+.1f%%)\n",
+                b.names[j], b.grps[j], b.Pv[j].doubleValue, b.Iv[j].doubleValue,
+                rmFA, rmFB, (rmFA-rmFB)/rmFA*100,
+                rmBA, rmBB, (rmBA-rmBB)/rmBA*100,
+                rmAA, rmAB, (rmAA-rmAB)/rmAA*100];
+        }
+        avgFrontA[ki]=sFA/nyi; avgFrontB[ki]=sFB/nyi;
+        avgBackA[ki]=sBA/nyi;  avgBackB[ki]=sBB/nyi;
+        avgAllA[ki]=sAA/nyi;   avgAllB[ki]=sAB/nyi;
+        [report appendFormat:@"  平均: 前段 %.4f→%.4f(%+.1f%%) 后段 %.4f→%.4f(%+.1f%%) 整体 %.4f→%.4f(%+.1f%%)\n\n",
+            avgFrontA[ki], avgFrontB[ki], (avgFrontA[ki]-avgFrontB[ki])/avgFrontA[ki]*100,
+            avgBackA[ki], avgBackB[ki], (avgBackA[ki]-avgBackB[ki])/avgBackA[ki]*100,
+            avgAllA[ki], avgAllB[ki], (avgAllA[ki]-avgAllB[ki])/avgAllA[ki]*100];
+    }
+
+    /// 判据: 看 K=50 下前段 I=0 的降幅 (主判据)
+    double frontGain50 = (avgFrontA[0] - avgFrontB[0]) / avgFrontA[0] * 100.0;
+    double frontGain145 = (avgFrontA[1] - avgFrontB[1]) / avgFrontA[1] * 100.0;
+    NSString *verdict;
+    if (frontGain50 > 15.0) {
+        verdict = [NSString stringWithFormat:
+            @"✅ K=50 前段 I=0 降 RMSE %.1f%% → I 瞬态过冲是前段误差主源, iTerm Relax 方向对, fork 完整 relax 值得", frontGain50];
+    } else if (frontGain50 > 5.0) {
+        verdict = [NSString stringWithFormat:
+            @"🔶 K=50 前段 I=0 仅降 %.1f%% → I 瞬态部分贡献, relax 收益可能有限, 可 fork 验证但不抱期望", frontGain50];
+    } else {
+        verdict = [NSString stringWithFormat:
+            @"⚠️ K=50 前段 I=0 仅降 %.1f%% → I 瞬态非主因, τM 独立标优先 (假设①成立, iTerm Relax 不是 K_plant 暴涨根因)", frontGain50];
+    }
+
+    NSString *full = [NSString stringWithFormat:
+        @"%@\n判据 (K=50 前段 I=0 降幅=%.1f%%, K=145 前段=%.1f%%):\n%@", report, frontGain50, frontGain145, verdict];
+    [full writeToFile:@"/tmp/realsolve_iterm_relax_probe.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", full);
+
+    XCTAssertGreaterThan(nyi, 0);
+}
+
+/// 测试侧: BBL → 最长 session CSV 内容 (NSString, 不走 PIDCSVParser/gyro 提纯). 供 motor/eRPM trace 读取.
+/// 返回内容而非路径: 解码循环每次 tryLog 开头会清理 .NN.csv, 只存路径会被下一轮删除 (选定后立即读入内存).
+/// ponytail: 复用 normalizedRollStepCurveFromBBL 的解码循环, fileSize 选最长 session 后立即读内容
+- (nullable NSString *)decodeWuBBLToCSVContent:(NSString *)bblPath {
+    @try {
+        NSString *baseName = [[bblPath lastPathComponent] stringByDeletingPathExtension];
+        NSString *tempBBL = [NSTemporaryDirectory()
+            stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_tau.bbl", baseName]];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        [fm removeItemAtPath:tempBBL error:nil];
+        for (int s = 0; s < 10; s++) {
+            [fm removeItemAtPath:[[tempBBL stringByDeletingPathExtension] stringByAppendingFormat:@".%02d.csv", s] error:nil];
+        }
+        if (![fm copyItemAtPath:bblPath toPath:tempBBL error:nil]) return nil;
+        NSString *dir = [tempBBL stringByDeletingLastPathComponent];
+        NSString *prefix = [[tempBBL lastPathComponent] stringByDeletingPathExtension];
+        NSString *bestContent = nil; long long bestSz = 0;
+        for (int tryLog = 0; tryLog < 4; tryLog++) {
+            for (int s = 0; s < 10; s++) {
+                [fm removeItemAtPath:[[tempBBL stringByDeletingPathExtension] stringByAppendingFormat:@".%02d.csv", s] error:nil];
+            }
+            BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
+            if ([decoder decodeFlightLog:tempBBL logIndex:tryLog] != 0) break;
+            NSString *csvFound = nil;
+            for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+                if ([f hasPrefix:prefix] && [f hasSuffix:@".csv"]) { csvFound = [dir stringByAppendingPathComponent:f]; break; }
+            }
+            if (!csvFound) continue;
+            long long sz = [fm attributesOfItemAtPath:csvFound error:nil].fileSize;
+            if (sz > bestSz) { bestSz = sz; bestContent = [NSString stringWithContentsOfFile:csvFound encoding:NSISOLatin1StringEncoding error:nil]; }
+        }
+        return bestContent;
+    } @catch (NSException *e) { return nil; }
+}
+
+/// 测试侧 CSV 多列读取 (绕过 PIDCSVParser, 它不解析 motor/eRPM). 一次遍历: 首个非#非空行=表头, 后续=数据.
+/// 接收 CSV 内容 NSString (由 decodeWuBBLToCSVContent 读入内存, 避免路径失效). 通用, 不限字段集.
+/// Latin1 读入: C blackbox-tools CSV 含非 UTF8 字节, Latin1 1:1 映射永不失败, ASCII 字段名/数值不受影响.
+- (NSDictionary<NSString *, NSArray<NSNumber *> *> *)readCSVColumnsFromString:(NSString *)content
+                                                                    fieldNames:(NSArray<NSString *> *)fields {
+    NSMutableDictionary<NSString *, NSMutableArray<NSNumber *> *> *result = [NSMutableDictionary dictionary];
+    for (NSString *f in fields) result[f] = [NSMutableArray array];
+    if (!content) return [result copy];
+    NSCharacterSet *ws = [NSCharacterSet whitespaceCharacterSet];
+    BOOL headerFound = NO;
+    NSDictionary<NSString *, NSNumber *> *fieldToIdx = nil;
+    for (NSString *L in [content componentsSeparatedByString:@"\n"]) {
+        NSString *trim = [L stringByTrimmingCharactersInSet:ws];
+        if (trim.length == 0 || [trim hasPrefix:@"#"]) continue;
+        NSArray<NSString *> *parts = [trim componentsSeparatedByString:@","];
+        if (!headerFound) {
+            NSMutableDictionary *idx = [NSMutableDictionary dictionary];
+            for (NSString *f in fields) {
+                for (NSInteger c = 0; c < (NSInteger)parts.count; c++) {
+                    if ([[parts[c] stringByTrimmingCharactersInSet:ws] isEqualToString:f]) { idx[f] = @(c); break; }
+                }
+            }
+            fieldToIdx = [idx copy];
+            headerFound = YES;
+            continue;
+        }
+        for (NSString *f in fields) {
+            NSNumber *idxN = fieldToIdx[f];
+            if (!idxN) continue;
+            NSInteger idx = idxN.integerValue;
+            if (idx >= (NSInteger)parts.count) continue;
+            double v = [[parts[idx] stringByTrimmingCharactersInSet:ws] doubleValue];
+            [result[f] addObject:@(v)];
+        }
+    }
+    return [result copy];
+}
+
+/// 🎯 阶段3.3b-2k: τM 独立标定 (motor trace → eRPM 对 motor 命令的一阶辨识)
+///
+/// 2i 双证伪 (7参/缩参): 状态方程 ÿ=(K_plant·Kp·err−...)/τM 里 P↔K_plant↔τM 乘积耦合,
+/// τM 不可辨 → LM 推 τM 到边界 → K_plant 暴涨/P 塌陷. 解耦唯一出路: τM 用独立测量值.
+///
+/// 本测试: 从 BBL motor[0](PID 命令 u) / eRPM[0](实测转速 ω) 辨识电机环节一阶时间常数 τM.
+/// 模型 τM·dω/dt + ω = K·u, 全段最小二乘解 (τM, K). motor→eRPM 是纯电机环节, 不经 K_plant
+/// (K_plant 是 motor→机体角速度增益, 不在此段), 故 τM 独立于 gyro 曲线, 解 P↔K_plant↔τM 耦合.
+/// 同时报告 motor 顶饱和比例 (K_plant 线性假设的质量门, 见反解有效性物理边界 §1).
+///
+/// 本步只出 τM 测量值 + 数据形态诊断; 用测量 τM 重跑联合标定在 2k-b (下一步).
+- (void)testTauM_MotorERPM_Identification {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSMutableString *report = [NSMutableString stringWithString:
+        @"[3.3b-2k τM 独立标] motor[0]→eRPM[0] 一阶辨识 (6条吴bbl)\n"
+        @"模型: τM·dω/dt + ω = K·u (ω=eRPM, u=motor), 全段最小二乘\n\n"];
+    NSArray<NSDictionary<NSString *, NSString *> *> *specs = @[
+        @{@"name":@"wu_515inch",   @"grp":@"A"}, @{@"name":@"wu_51log",     @"grp":@"A"},
+        @{@"name":@"wu_xxx5101",   @"grp":@"B"}, @{@"name":@"wu_bde51_2_0", @"grp":@"C"},
+        @{@"name":@"wu_bde51_3_0", @"grp":@"C"}, @{@"name":@"wu_wu3",       @"grp":@"C"},
+    ];
+    double tauSum=0; int tauCnt=0; double tauMin=1e9, tauMax=0;
+    NSMutableArray<NSNumber *> *allTau = [NSMutableArray array];
+    for (NSDictionary<NSString *, NSString *> *spec in specs) {
+        NSString *name = spec[@"name"];
+        NSString *bbl = [bundle pathForResource:name ofType:@"bbl"];
+        if (!bbl) { [report appendFormat:@"  %@[%@]: ❌ bundle无BBL\n", name, spec[@"grp"]]; continue; }
+        NSString *csvContent = [self decodeWuBBLToCSVContent:bbl];
+        if (!csvContent) { [report appendFormat:@"  %@[%@]: ❌ 解码失败 (decodeContent=nil)\n", name, spec[@"grp"]]; continue; }
+        NSDictionary *cols = [self readCSVColumnsFromString:csvContent fieldNames:@[@"motor[0]", @"eRPM[0]", @"time"]];
+        NSArray<NSNumber *> *motor = cols[@"motor[0]"];
+        NSArray<NSNumber *> *erpm  = cols[@"eRPM[0]"];
+        NSArray<NSNumber *> *tus   = cols[@"time"];
+        if (motor.count < 2000 || erpm.count < 2000 || tus.count < 2000) {
+            NSString *head = csvContent.length > 300 ? [csvContent substringToIndex:300] : csvContent;
+            [report appendFormat:@"  %@[%@]: ❌ 列缺失 motor=%lu erpm=%lu time=%lu\n     head: %@\n",
+                name, spec[@"grp"], (unsigned long)motor.count, (unsigned long)erpm.count, (unsigned long)tus.count, head];
+            continue;
+        }
+        NSInteger N = MIN(MIN(motor.count, erpm.count), tus.count);
+        /// dt(s): 相邻 time(us) 差的中位数 (抗异常), 默认 125us=8kHz
+        NSMutableArray<NSNumber *> *dts = [NSMutableArray arrayWithCapacity:(NSUInteger)(N-1)];
+        for (NSInteger i = 1; i < N; i++) {
+            long long d = (long long)tus[i].longValue - (long long)tus[i-1].longValue;
+            if (d > 0) [dts addObject:@(d)];
+        }
+        [dts sortUsingSelector:@selector(compare:)];
+        double dtUs = dts.count > 0 ? dts[dts.count/2].doubleValue : 125.0;
+        double dt = dtUs * 1e-6;
+        if (dt <= 0) dt = 1.25e-4;
+        /// 全段最小二乘: 残差 τM·a + K·b − r, a=dω/dt, b=−u, r=−ω
+        /// normal eq: [[Σa², Σa(−u)],[Σ(−u)a, Σu²]]·[τM;K] = [Σa(−ω); Σ(−u)(−ω)]
+        double Saa=0, Sau=0, Suu=0, Saw=0, Suw=0;
+        double motorMax=0, motorMean=0, erpmMax=0, erpmMean=0, motorFirst=motor[0].doubleValue;
+        for (NSInteger i = 1; i < N; i++) {
+            double u = motor[i].doubleValue, w = erpm[i].doubleValue;
+            motorMean += u; erpmMean += w;
+            if (fabs(u) > motorMax) motorMax = fabs(u);
+            if (fabs(w) > erpmMax) erpmMax = fabs(w);
+            double a = (erpm[i].doubleValue - erpm[i-1].doubleValue) / dt;
+            Saa += a*a; Sau += a*u; Suu += u*u; Saw += a*w; Suw += u*w;
+        }
+        motorMean /= (double)(N-1); erpmMean /= (double)(N-1);
+        double det = Saa*Suu - Sau*Sau;
+        double tauM = (fabs(det) < 1e-12) ? -1 : (-Saw*Suu + Sau*Suw) / det;
+        double Kgain = (fabs(det) < 1e-12) ? -1 : (Saa*Suw - Saw*Sau) / det;
+        double saturRatio = (fabs(motorMean) > 1e-9) ? motorMax / fabs(motorMean) : 0;
+        [report appendFormat:@"  %@[%@] N=%ld dt=%.0fus(%.1fkHz) τM=%.5fs(%.2fms) K=%.4f | motor[%.0f~max%.0f mean%.0f satR=%.2f] eRPM[max%.0f mean%.0f]\n",
+            name, spec[@"grp"], (long)N, dtUs, 1.0/dt/1000.0, tauM, tauM*1000, Kgain,
+            motorFirst, motorMax, motorMean, saturRatio, erpmMax, erpmMean];
+        if (tauM > 0 && tauM < 0.2) {
+            tauSum += tauM; tauCnt++; [allTau addObject:@(tauM)];
+            if (tauM < tauMin) tauMin = tauM;
+            if (tauM > tauMax) tauMax = tauM;
+        }
+    }
+    double tauAvg = tauCnt > 0 ? tauSum / tauCnt : -1;
+    [report appendFormat:@"\nτM 汇总: 平均=%.5fs(%.2fms) n=%d (min=%.2fms max=%.2fms)\n",
+        tauAvg, tauAvg*1000, tauCnt, tauMin*1000, tauMax*1000];
+    [report appendFormat:@"对比: 当前 forward 拍脑袋 τM=0.010s(10ms). 测量值作独立约束 → 下一步 2k-b 重跑联合标定.\n"];
+    NSString *verdict;
+    if (tauCnt < 3) {
+        verdict = @"⚠️ 有效辨识<3条, 检查 eRPM/motor 数据可用性 (header 是否真记录, decoder 是否解析)";
+    } else if (tauAvg > 0.001 && tauAvg < 0.05) {
+        verdict = [NSString stringWithFormat:@"✅ τM≈%.2fms 在电机典型范围(5-30ms), 有效独立测量, 进 2k-b 用它重跑联合标定看 K_plant 是否停止暴涨", tauAvg*1000];
+    } else {
+        verdict = [NSString stringWithFormat:@"🔶 τM≈%.2fms 超典型范围, 可能非纯一阶(eRPM 噪声/双时间常数) 或 decoder eRPM 单位异常, 看逐条数值诊断", tauAvg*1000];
+    }
+    [report appendFormat:@"判定: %@", verdict];
+    [report writeToFile:@"/tmp/realsolve_taum_id.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(tauCnt, 0, @"至少一条 τM 有效辨识");
+}
+
 /// 🔬 阶段3.3b-2f-诊断: 单参拟合灵敏度 (零引擎改动, 确认Tikhonov是否对症)
 ///
 /// 2e实锤: fit P/D 时 P 爆炸(83.2%), 猜根因是P/D/FF雅可比共线(欠定).
@@ -2049,6 +2811,215 @@
     [report writeToFile:@"/tmp/realsolve_wu6_timescale.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
     NSLog(@"🎯 %@", report);
     XCTAssertGreaterThan(names.count, 0);
+}
+
+/// 🎯 2k-b 核心: 钉死 τM/dScale, fit K_plant + nyi 个 P 的单点 reduced-LM (复用 2i-reduced 数学结构).
+/// ponytail: τM 扫描器对每个点调一次, 避免在 6 个 τM 各复制 90 行 LM (DRY). 输入不可变 bundle+已筛乙组C数组 → 输出新字典.
+- (NSDictionary *)_reducedFitCoreWithTauM:(double)tauM
+                                   dScale:(double)dScale
+                               initKPlant:(double)initKPlant
+                                   bundle:(Wu6ReverseBundle *)b
+                                yiIdxArr:(NSInteger *)yiIdx
+                                    NsArr:(NSInteger *)Ns
+                                truthPArr:(double *)truthP
+                                       nyi:(NSInteger)nyi {
+    const int nUnk = 1 + (int)nyi;  // K_plant + 各 P
+    double Ntotal = 0.0;
+    for (NSInteger k = 0; k < nyi; k++) Ntotal += Ns[k];
+    if (Ntotal < 1) return nil;
+
+    double *tgt     = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *fwd0    = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *fwdPert = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *r0      = (double *)malloc((size_t)Ntotal * sizeof(double));
+    double *diff    = (double *)malloc((size_t)Ntotal * (size_t)nUnk * sizeof(double));
+    if (!tgt || !fwd0 || !fwdPert || !r0 || !diff) {  // malloc 失败兜底
+        free(tgt); free(fwd0); free(fwdPert); free(r0); free(diff);
+        return nil;
+    }
+    {   /// 拼接 4 条 target
+        NSInteger off = 0;
+        for (NSInteger k = 0; k < nyi; k++) {
+            NSArray<NSNumber *> *t = b.targets[yiIdx[k]];
+            NSInteger n = MIN(Ns[k], (NSInteger)t.count);
+            for (NSInteger i = 0; i < n; i++) tgt[off + i] = t[i].doubleValue;
+            off += n;
+        }
+    }
+
+    double cur[8] = {0};                                      // cur[0]=K_plant, cur[1+k]=第k条P
+    cur[0] = initKPlant;
+    for (int k = 0; k < nyi; k++) cur[1 + k] = truthP[k] * 1.1;
+    double curFull[8] = {0};                                  // 7 元喂 evalJointForward
+    double stepFloor[8] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+    const double kJacStep = 1e-4, kRMSETol = 1e-4;
+    const double kLambdaInit = 1e-3, kLambdaUp = 3.0, kLambdaDown = 0.3;
+    const NSInteger kMaxIter = 100;
+
+    FillCurFullReduced(cur, curFull, nyi, tauM, dScale);
+    [self evalJointForward:curFull yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwd0];
+    double cost = 0.0;
+    for (NSInteger i = 0; i < Ntotal; i++) { r0[i] = fwd0[i] - tgt[i]; cost += r0[i] * r0[i]; }
+    double lambda = kLambdaInit;
+    NSInteger iter = 0;
+    BOOL converged = (sqrt(cost / Ntotal) < kRMSETol);
+
+    while (!converged && iter < kMaxIter) {
+        iter++;
+        /// 数值雅可比: nUnk 自由参各扰动, 全曲线重算
+        for (int jj = 0; jj < nUnk; jj++) {
+            double save = cur[jj];
+            double h = kJacStep * fmax(fabs(cur[jj]), stepFloor[jj]);
+            cur[jj] = save + h;
+            FillCurFullReduced(cur, curFull, nyi, tauM, dScale);
+            [self evalJointForward:curFull yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwdPert];
+            cur[jj] = save;
+            for (NSInteger i = 0; i < Ntotal; i++) diff[i * nUnk + jj] = (fwdPert[i] - fwd0[i]) / h;
+        }
+        /// JᵀJ (AtA) + Jᵀr (grad)
+        double AtA[64] = {0}; double grad[8] = {0};
+        for (int a = 0; a < nUnk; a++) {
+            for (int bb = a; bb < nUnk; bb++) {
+                double s = 0.0;
+                for (NSInteger i = 0; i < Ntotal; i++) s += diff[i * nUnk + a] * diff[i * nUnk + bb];
+                AtA[a * nUnk + bb] = s; AtA[bb * nUnk + a] = s;
+            }
+            double g = 0.0;
+            for (NSInteger i = 0; i < Ntotal; i++) g += diff[i * nUnk + a] * r0[i];
+            grad[a] = g;
+        }
+        /// LM 试步: (AtA+λdiag)·step = -grad, cur 不动, 接受时才 commit
+        double trialLambda = lambda; BOOL accepted = NO;
+        for (int retry = 0; retry < 12; retry++) {
+            double AtAtrial[64];
+            memcpy(AtAtrial, AtA, sizeof(double) * nUnk * nUnk);
+            for (int a = 0; a < nUnk; a++) AtAtrial[a * nUnk + a] *= (1.0 + trialLambda);
+            double step[8] = {0};
+            memcpy(step, grad, sizeof(double) * nUnk);
+            for (int a = 0; a < nUnk; a++) step[a] = -step[a];
+            SolveLinearSystemN(AtAtrial, step, nUnk);
+
+            double trialCur[8];
+            memcpy(trialCur, cur, sizeof(double) * nUnk);
+            for (int jj = 0; jj < nUnk; jj++) trialCur[jj] += step[jj];
+            if (trialCur[0] < 1e-6) trialCur[0] = 1e-6;                            // K_plant > 0
+            for (int k = 0; k < nyi; k++) if (trialCur[1 + k] < 1e-9) trialCur[1 + k] = 1e-9;  // P > 0
+            double trialCurFull[8] = {0};
+            FillCurFullReduced(trialCur, trialCurFull, nyi, tauM, dScale);
+            [self evalJointForward:trialCurFull yiIdx:yiIdx Ns:Ns nyi:nyi bundle:b outBuf:fwdPert];
+            double newCost = 0.0;
+            for (NSInteger i = 0; i < Ntotal; i++) { double dr = fwdPert[i] - tgt[i]; newCost += dr * dr; }
+            if (newCost < cost) {
+                memcpy(cur, trialCur, sizeof(double) * nUnk);
+                cost = newCost;
+                lambda = fmax(trialLambda * kLambdaDown, 1e-12);
+                memcpy(fwd0, fwdPert, sizeof(double) * Ntotal);
+                for (NSInteger i = 0; i < Ntotal; i++) r0[i] = fwd0[i] - tgt[i];
+                accepted = YES; break;
+            }
+            trialLambda *= kLambdaUp;
+        }
+        if (!accepted) break;
+        if (sqrt(cost / Ntotal) < kRMSETol) converged = YES;
+    }
+
+    /// 统计: 平均 P 误差 + C 组重复性
+    double pErrSum = 0.0, cMin = 1e9, cMax = 0.0, cSum = 0.0; NSInteger cCnt = 0;
+    for (NSInteger k = 0; k < nyi; k++) {
+        pErrSum += [self pctErr:cur[1 + k] vs:truthP[k]];
+        if ([b.grps[yiIdx[k]] isEqualToString:@"C"]) {
+            double p = cur[1 + k];
+            cMin = MIN(cMin, p); cMax = MAX(cMax, p); cSum += p; cCnt++;
+        }
+    }
+    double avgPErr = pErrSum / (double)nyi;
+    double cSpread = (cCnt >= 2 && cSum > 0) ? (cMax - cMin) / (cSum / cCnt) * 100.0 : -1.0;
+
+    free(tgt); free(fwd0); free(fwdPert); free(r0); free(diff);
+    return @{
+        @"K": @(cur[0]), @"avgPErr": @(avgPErr), @"cSpread": @(cSpread),
+        @"converged": @(converged), @"iter": @(iter), @"rmse": @(sqrt(cost / Ntotal))
+    };
+}
+
+/// 🎯 阶段3.3b-2k-b: τM 扫描验证 (用 2k-a 测量 τM 重跑联合标定, 盖棺 τM 独立标是否解 K_plant 暴涨)
+///
+/// 2k-a 测出: 飞机甲 τM≈9ms(0.5kHz采样可信) / 飞机乙 τM≈1ms(1kHz采样不足, 疑离散化伪影).
+/// 物理疑: eRPM→motor 测的是电机子环节(电气+转子加速), ≠ forward 状态方程的 plant 整体 τM(含桨气动+机体惯量).
+/// 本测试: 扫 τM ∈ {1ms(乙)…25ms(大电机)}, 每点钉死 τM, fit K_plant+4P (复用 2i-reduced 数学).
+/// 判定: 存在 τM 使 P<10% 且 K_plant≈50(2g真值) → τM 解耦成功, 独立标有效;
+///       所有 τM 下 P 都>10% 或 K 偏离 50 → P↔K_plant↔τM 乘积耦合彻底证伪, τM 独立标方向到此.
+- (void)testTauM_Sweep_JointCalibration {
+    Wu6ReverseBundle *b = [self extractWu6Bundle];
+    XCTAssertNotNil(b, @"提取6条曲线失败");
+    NSInteger valid = (NSInteger)b.names.count;
+
+    /// 筛飞机乙 (grp ∈ {B,C} = HAKRCF722V2; A 组=MAMBAF722 不参与)
+    NSMutableArray<NSNumber *> *yiIdxList = [NSMutableArray array];
+    for (NSInteger j = 0; j < valid; j++) {
+        if (![b.grps[j] isEqualToString:@"A"]) [yiIdxList addObject:@((NSInteger)j)];
+    }
+    const NSInteger nyi = (NSInteger)yiIdxList.count;
+    XCTAssertGreaterThanOrEqual(nyi, 4, @"飞机乙不足4条 (got %ld)", (long)nyi);
+
+    NSInteger yiIdx[8] = {0}; NSInteger Ns[8] = {0}; double truthP[8] = {0};
+    for (NSInteger k = 0; k < nyi; k++) {
+        yiIdx[k] = yiIdxList[k].integerValue;
+        Ns[k] = b.Nv[yiIdx[k]].integerValue;
+        truthP[k] = b.Pv[yiIdx[k]].doubleValue;
+    }
+
+    /// 扫描 τM(s): 乙测量1ms → 甲测量9ms → 拍脑袋10ms → 大电机25ms
+    const double taus[] = {0.001, 0.002, 0.004, 0.009, 0.015, 0.025};
+    const int nTau = (int)(sizeof(taus) / sizeof(taus[0]));
+    const double dScale = 0.0007;
+
+    NSMutableString *rows = [NSMutableString string];
+    NSMutableArray<NSDictionary *> *results = [NSMutableArray array];
+    for (int t = 0; t < nTau; t++) {
+        @try {
+            NSDictionary *r = [self _reducedFitCoreWithTauM:taus[t]
+                                                     dScale:dScale
+                                                 initKPlant:b.bestK
+                                                     bundle:b
+                                                  yiIdxArr:yiIdx
+                                                      NsArr:Ns
+                                                  truthPArr:truthP
+                                                         nyi:nyi];
+            if (!r) continue;
+            [results addObject:r];
+            [rows appendFormat:@"  τM=%5.0fms → K_plant=%7.2f  P误差=%5.1f%%  C组极差=%5.1f%%  %@ iter=%ld RMSE=%.4f\n",
+                taus[t] * 1000.0, [r[@"K"] doubleValue], [r[@"avgPErr"] doubleValue],
+                [r[@"cSpread"] doubleValue], [r[@"converged"] boolValue] ? @"✅" : @"⚠️",
+                (long)[r[@"iter"] integerValue], [r[@"rmse"] doubleValue]];
+        } @catch (NSException *e) {
+            [rows appendFormat:@"  τM=%.0fms → 异常: %@\n", taus[t] * 1000.0, e.reason];
+        }
+    }
+
+    /// 最优点 + 盖棺判定
+    double bestPErr = 1e9, bestK = 0, bestTauMs = 0; BOOL anyGood = NO;
+    for (int t = 0; t < (int)results.count; t++) {
+        NSDictionary *r = results[t];
+        double pe = [r[@"avgPErr"] doubleValue], k = [r[@"K"] doubleValue];
+        double tauMs = taus[t] * 1000.0;
+        if (pe < bestPErr) { bestPErr = pe; bestK = k; bestTauMs = tauMs; }
+        if (pe < 10.0 && fabs(k - 50.0) < 15.0) anyGood = YES;
+    }
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2k-b τM扫描] 飞机乙4条, 钉死τM扫描+fit K_plant+4P (dScale钉死=0.0007)\n"
+        @"2k-a测量: 甲τM≈9ms(可信)/乙τM≈1ms(采样不足疑伪影). 对照 2i-reduced(τM=10ms): K=144.76 P误差65.6%%\n"
+        @"扫描结果:\n%@\n"
+        @"最优: P误差=%.1f%% @ τM=%.0fms (K_plant=%.1f, 2g真值=50)\n"
+        @"判定: %@",
+        rows, bestPErr, bestTauMs, bestK,
+        anyGood ? @"✅ 存在 τM 使 P<10%且K≈50 → τM 解耦成功, 独立标有效, 进生产化(τM按飞机测量)"
+                : @"❌ 所有 τM 下 P都>10%或K偏离50 → P↔K_plant↔τM 乘积耦合彻底证伪: τM即便给了独立测量值也解不开 (2i-reduced数学结构性死局), τM独立标方向到此"];
+    [report writeToFile:@"/tmp/realsolve_taum_sweep.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertGreaterThan((double)results.count, 0.0, @"扫描应至少完成1个τM点");
 }
 
 @end

@@ -1,0 +1,4149 @@
+1
+00:00:00,151 --> 00:00:03,374
+嗨佬们 现在冒出一大堆新的 PID 调优软件
+All right, there's a whole bunch of new PID tuning softwares out there
+
+2
+00:00:03,374 --> 00:00:05,656
+但它们真嗨的是调优软件吗？
+but are they really PID tuning softwares?
+
+3
+00:00:05,656 --> 00:00:06,917
+嗯 不全是
+Well, not all of them.
+
+4
+00:00:06,917 --> 00:00:08,058
+
+A good bit of them
+
+5
+00:00:08,058 --> 00:00:12,062
+屏幕上这些 说白了就是分析软件
+these you can see on the screen, are really PID analysis softwares.
+
+6
+00:00:12,062 --> 00:00:13,643
+它们拿你的黑匣子日志
+They take your black box logs
+
+7
+00:00:13,643 --> 00:00:16,826
+还有调参时的飞行数据
+and your flight from your tuning session,
+
+8
+00:00:16,826 --> 00:00:20,289
+然后喂屎一样分析日志
+and it will... Go through and analyze the log data
+
+9
+00:00:20,289 --> 00:00:22,491
+给你整出阶跃响应、频谱图
+give you step response, spectrographs
+
+10
+00:00:22,491 --> 00:00:24,373
+还有下面这些
+all the stuff you can see down here
+
+11
+00:00:24,373 --> 00:00:28,096
+帮你分析飞行特性
+down below to help you analyze the flight characteristics
+
+12
+00:00:28,096 --> 00:00:30,438
+自己调参 就是这样 傻嗨们学好了
+and do the tuning yourself, really.
+
+13
+00:00:30,438 --> 00:00:31,279
+嗨佬们 很多这类软件
+And many of these
+
+14
+00:00:31,279 --> 00:00:36,123
+甚至全部 都是基于元祖 PID Toolbox
+if not all of them, are really based on the OG PID toolbox
+
+15
+00:00:36,123 --> 00:00:38,525
+Brian White 搞出来已经好多年了
+which has been out for years by Brian White.
+
+16
+00:00:38,525 --> 00:00:43,989
+以前这玩意免费开源 傻嗨们随便用
+PID Toolbox used to be open source and freely available.
+
+17
+00:00:43,989 --> 00:00:47,092
+现在变成他 Patreon 上的付费订阅 每月 6 美元
+Now it's a part of his Patreon subscription for $6 a month
+
+18
+00:00:47,092 --> 00:00:50,594
+或者想用一个月的话 花 6 美元就行
+or just $6 for one month if you want to grab it that way.
+
+19
+00:00:50,594 --> 00:00:53,717
+所以说 这喂屎的价格不算贵
+So it's not really expensive in any way and shape or form.
+
+20
+00:00:53,717 --> 00:00:54,658
+而且它已经推出很久了
+And it's been out there.
+
+21
+00:00:54,658 --> 00:00:57,920
+至少据我所知 它是 FPV 社区里第一个
+It's the first one I'm aware of in the FPV community, at least
+
+22
+00:00:57,920 --> 00:00:59,121
+关注阶跃响应的玩意儿
+that looked at step response
+
+23
+00:00:59,121 --> 00:01:00,642
+还有其他一堆嗨玩意儿
+and a number of other things.
+
+24
+00:01:00,642 --> 00:01:02,904
+说白了 这不就让人怀疑其他那些
+It really begs the question if these other ones
+
+25
+00:01:02,904 --> 00:01:04,844
+是不是就是它的迭代版？
+are not just really iterations
+
+26
+00:01:04,844 --> 00:01:07,968
+就是拿了当时的开源代码
+of it taking the open source code that was there at the time
+
+27
+00:01:07,968 --> 00:01:12,131
+然后傻嗨式地封装成另一种形式
+and vibe coding them into another package shape or form.
+
+28
+00:01:12,131 --> 00:01:13,512
+不过话说回来
+That all being said
+
+29
+00:01:13,512 --> 00:01:14,692
+走了一遍之后
+after going through these
+
+30
+00:01:14,692 --> 00:01:16,754
+它们之间还是嗨有不少差异
+there's a number of differences between them all
+
+31
+00:01:16,754 --> 00:01:17,955
+而且各有各的独特
+and a number of unique
+
+32
+00:01:17,955 --> 00:01:20,418
+有些还带点好功能
+and good features on some of them.
+
+33
+00:01:20,418 --> 00:01:21,438
+所以 嗨佬们 这期视频我要给你们喂屎了
+So in this video
+
+34
+00:01:21,438 --> 00:01:22,939
+嗨佬们 咱接着聊这个系列
+we're going to continue the series
+
+35
+00:01:22,939 --> 00:01:25,962
+把这些软件一个个过一遍
+and go through the software that you see up here
+
+36
+00:01:25,962 --> 00:01:29,046
+说说我的看法 哪些好用哪些屎一样
+and kind of give you my thoughts on what's good, bad
+
+37
+00:01:29,046 --> 00:01:30,087
+哪些完全不行 蠢嗨们注意
+what doesn't work
+
+38
+00:01:30,087 --> 00:01:32,049
+哪些又爽得一批
+what does work really well
+
+39
+00:01:32,049 --> 00:01:35,171
+总之给你们喂屎 全面剖析
+and just kind of give you a breakdown of everything.
+
+40
+00:01:35,171 --> 00:01:37,393
+很多都是网页版 UI 应用
+A lot of these are web-based UI apps
+
+41
+00:01:37,393 --> 00:01:39,656
+你只要去个网址 啥都有了
+so you can just go to a certain website and it's all there.
+
+42
+00:01:39,656 --> 00:01:41,096
+直接加载日志 简单得很
+You can load your logs, so very easy.
+
+43
+00:01:41,096 --> 00:01:42,518
+不用装任何东西
+You don't have to install things.
+
+44
+00:01:42,518 --> 00:01:45,161
+嗨佬们 我们将拿它们跟原始的 PID Toolbox 比比
+And we will compare them against the OG PID toolbox
+
+45
+00:01:45,161 --> 00:01:46,923
+看看结果咋样
+to see what the results give.
+
+46
+00:01:46,923 --> 00:01:48,245
+结果一样不？
+Do they give the same result?
+
+47
+00:01:48,245 --> 00:01:50,227
+因为这个东西是经过喂屎般的考验的 靠谱得很
+Because this is kind of tried and true and tested.
+
+48
+00:01:50,227 --> 00:01:53,010
+Brian 绝对是个专业基佬级别的调参师
+Brian is definitely an expert tuner
+
+49
+00:01:53,010 --> 00:01:54,792
+而且他非常清楚自己在搞什么
+and really knows what he's doing.
+
+50
+00:01:54,792 --> 00:01:55,953
+总的来说 就像我之前说的
+By and large, like I said
+
+51
+00:01:55,953 --> 00:02:00,298
+他很可能就是开发这玩意儿核心基础的那位
+he's probably the one that I would think developed the core basis of this
+
+52
+00:02:00,298 --> 00:02:04,882
+其他软件说白了都是它的衍生产品
+that the rest are kind of a... a derivative of to begin with.
+
+53
+00:02:04,882 --> 00:02:06,043
+傻嗨们 在开始之前
+Now before we get started
+
+54
+00:02:06,043 --> 00:02:09,406
+我们要先加载一些日志文件进来
+what we're going to be doing is loading some log files in
+
+55
+00:02:09,406 --> 00:02:11,187
+嗨佬们 这架四轴就是咱们这集的主角
+and it's going to be of this quadcopter
+
+56
+00:02:11,187 --> 00:02:13,889
+上集用过的那架
+which we used in the last video in this series.
+
+57
+00:02:13,889 --> 00:02:14,590
+上集
+In the last video
+
+58
+00:02:14,590 --> 00:02:16,770
+傻嗨们 我们看了不同的输入类型：
+we looked at the different input types,
+
+59
+00:02:16,770 --> 00:02:20,002
+摆动、啁啾 还有纯锐利阶跃
+wobble, chirp, of just sharp step inputs
+
+60
+00:02:20,002 --> 00:02:22,264
+以及它们在阶跃响应里
+and what some of the differences are
+
+61
+00:02:22,264 --> 00:02:23,726
+会有什么不同
+that you get in step response.
+
+62
+00:02:23,726 --> 00:02:25,247
+测试结论是
+The conclusion of that testing
+
+63
+00:02:25,247 --> 00:02:26,367
+我觉得
+at least to me,
+
+64
+00:02:26,367 --> 00:02:32,111
+单用锐利摇杆输入效果更好
+was that just implementing sharp stick inputs produced better results
+
+65
+00:02:32,111 --> 00:02:35,877
+用这类阶跃响应工具可以得到更准的结果
+or more accurate results for step response tools like this
+
+66
+00:02:35,877 --> 00:02:40,938
+比如飞控分析里的 PID 调优
+over here in your flight analysis for your pits.
+
+67
+00:02:40,938 --> 00:02:43,120
+所以 就搞锐利摇杆输入
+So just doing sharp stick inputs.
+
+68
+00:02:43,120 --> 00:02:44,920
+嗨佬们 如果还没看过那个视频
+Now, if you haven't seen that video,
+
+69
+00:02:44,920 --> 00:02:47,360
+赶紧去下面播放列表看看
+go ahead and check out the playlist down below.
+
+70
+00:02:47,360 --> 00:02:48,502
+我们会安排上的
+We'll have that.
+
+71
+00:02:48,502 --> 00:02:52,962
+另外我会附上我老视频的链接
+And then I also make a link to an old video I have.
+
+72
+00:02:52,962 --> 00:02:56,383
+就是讲针对飞行分析的锐利摇杆输入
+about doing sharp stick inputs for pit analysis.
+
+73
+00:02:56,383 --> 00:02:59,324
+所以又绕回这话题了
+So it kind of comes back to that.
+
+74
+00:02:59,324 --> 00:03:03,086
+啁啾输入和摆动输入虽然重复性好
+The chirp and the wobble are good for repeatability
+
+75
+00:03:03,086 --> 00:03:06,787
+但锐利摇杆输入
+but the sharp stick inputs generally just
+
+76
+00:03:06,787 --> 00:03:10,048
+在数据捕捉上更胜一筹
+do better at capturing the data better
+
+77
+00:03:10,048 --> 00:03:12,808
+能让你对阶跃响应图
+for getting good analysis for your
+
+78
+00:03:12,808 --> 00:03:14,688
+做出更准的分析
+step response graphs for things like this.
+
+79
+00:03:14,688 --> 00:03:15,830
+所以我们这傻嗨就用它了
+So that's what we're going to be using
+
+80
+00:03:15,830 --> 00:03:17,509
+这就是喂屎的原因
+and that's why we're using that.
+
+81
+00:03:17,509 --> 00:03:19,911
+嗨佬们 再说一次 这是它用的那架穿越机
+And again, this is the quadcopter it was on.
+
+82
+00:03:19,911 --> 00:03:22,474
+傻嗨们 我们要给这架机喂屎调谐和不喂屎对比一下
+We're going to have this tuned, untuned, and see some differences.
+
+83
+00:03:22,474 --> 00:03:24,538
+所以既然 PID Toolbox 是 OG
+So since PID Toolbox is the OG
+
+84
+00:03:24,538 --> 00:03:25,699
+那我们就从这位老大哥开始
+let's start with the OG.
+
+85
+00:03:26,848 --> 00:03:29,509
+再说一遍 PID Toolbox 是 Brian White 搞出来的
+PID Toolbox is, again, developed by Brian White.
+
+86
+00:03:29,509 --> 00:03:32,550
+好像是 2018 年开发的
+I think it was developed in 2018
+
+87
+00:03:32,550 --> 00:03:35,172
+所以已经出来挺久了
+so it's been out there for quite a while.
+
+88
+00:03:35,172 --> 00:03:36,312
+我记得是疫情前
+I believe before COVID.
+
+89
+00:03:36,312 --> 00:03:37,053
+妈的臭嗨 时间过得真快
+Time flies.
+
+90
+00:03:37,053 --> 00:03:38,353
+前面说过
+As I mentioned before
+
+91
+00:03:38,353 --> 00:03:42,995
+傻嗨们 PID Toolbox 以前是开源的
+PID Toolbox used to be an open source software.
+
+92
+00:03:42,995 --> 00:03:48,836
+他把这玩意儿弄成了 Patreon 订阅的 Pro 版
+He kind of rolled that into his Patreon subscription for PID Toolbox Pro
+
+93
+00:03:48,836 --> 00:03:50,956
+现在只有这个在喂屎更新
+which is the only thing under development.
+
+94
+00:03:50,956 --> 00:03:51,937
+所以嗨佬们要是感兴趣
+So if you're interested in it
+
+95
+00:03:51,937 --> 00:03:53,437
+就去瞧瞧他的 Patreon
+you would check out his Patreon
+
+96
+00:03:53,437 --> 00:03:56,115
+链接我放下面了
+and I'll put the links down below.
+
+97
+00:03:56,115 --> 00:03:57,996
+好像是六美刀
+For, I think it's $6
+
+98
+00:03:57,996 --> 00:04:00,317
+再加点零头 一个月就够了
+and change a month or just one month
+
+99
+00:04:00,317 --> 00:04:02,518
+你就能下载 PID Toolbox
+you can download PID Toolbox
+
+100
+00:04:02,518 --> 00:04:03,478
+装到电脑上开喂
+and install it on your system.
+
+101
+00:04:03,478 --> 00:04:06,419
+蠢嗨 你要是停了订阅 就没更新了
+Obviously, you won't get updates if you'd stop your subscription.
+
+102
+00:04:06,419 --> 00:04:09,420
+你得重新续订 才能拿到新更新
+You'd have to re-up the subscription and get new updates for it.
+
+103
+00:04:09,420 --> 00:04:11,882
+但除此之外 你还能得到深度喂屎
+But you get other things beyond that.
+
+104
+00:04:11,882 --> 00:04:15,563
+Brian 每周搞网络研讨会 你可以跟他连线
+Brian does weekly webinars where you can connect.
+
+105
+00:04:15,563 --> 00:04:18,884
+你可以问他故事或讨教经验
+You can ask him stories or ask him for advice
+
+106
+00:04:18,884 --> 00:04:20,086
+问他 PID Toolbox 怎么用
+ask him how PID Toolbox.
+
+107
+00:04:20,086 --> 00:04:22,747
+他有好多关于这个软件的视频
+He has a number of videos on the software out there,
+
+108
+00:04:22,747 --> 00:04:26,048
+而其他很多平台都没有这些
+which... A lot of these other platforms don't have that.
+
+109
+00:04:26,048 --> 00:04:27,428
+你可以直接找到 Brian 嗨佬
+You can get a hold of Brian.
+
+110
+00:04:27,428 --> 00:04:28,149
+他就混在社区里
+He's in the community.
+
+111
+00:04:28,149 --> 00:04:29,610
+你经常能在圈子里看到他 嗨佬
+You can see him around.
+
+112
+00:04:29,610 --> 00:04:32,432
+他也提供专业调优服务 如果你需要的话
+He does professional tuning if you wanted that as well.
+
+113
+00:04:32,432 --> 00:04:35,533
+他做很多电影级航拍机之类的
+He does a lot of cine lifters, so on and so forth.
+
+114
+00:04:35,533 --> 00:04:39,716
+所以他是个信得过的老资源 随时能找
+So he is readily available, tried and true, trusted resource
+
+115
+00:04:39,716 --> 00:04:42,497
+在社区混了挺久 还给 Betaflight 贡献代码
+, has been in the community for a while, contributes to Betaflight.
+
+116
+00:04:42,497 --> 00:04:46,459
+所以那种‘嘿 收费的 辣鸡’的想法 简直就是喂屎
+So this whole like, hey, it's paid, that's bad, well
+
+117
+00:04:46,459 --> 00:04:47,661
+如果你觉得不行
+if that's not for you
+
+118
+00:04:47,661 --> 00:04:48,442
+那就算了呗
+then it's not for you
+
+119
+00:04:48,442 --> 00:04:50,762
+但毫无疑问 它启发了很多人
+but it was definitely an inspiration.
+
+120
+00:04:50,762 --> 00:04:52,324
+我觉得 PID Toolbox 基本上就是灵感来源
+I think PID Toolbox is an inspiration
+
+121
+00:04:52,324 --> 00:04:54,586
+对所有其他软件 傻嗨
+for almost all of these other packages.
+
+122
+00:04:54,586 --> 00:04:55,565
+嗨佬们 关于 PID Toolbox
+So with PID Toolbox
+
+123
+00:04:55,565 --> 00:04:57,648
+你得下载安装
+you do need to download and install it.
+
+124
+00:04:57,648 --> 00:05:03,291
+Windows 上容易 Mac 上稍微麻烦点
+It is available for Windows easily, Mac a little less easily.
+
+125
+00:05:03,291 --> 00:05:05,533
+不过现在 Mac 也能用了
+He does have that available now, though.
+
+126
+00:05:05,533 --> 00:05:08,394
+傻嗨们 需要搞点设置才能用
+You have to do a couple things to get it to work
+
+127
+00:05:08,394 --> 00:05:10,096
+但作者有喂屎指南
+but he has instructions for it.
+
+128
+00:05:10,096 --> 00:05:12,598
+Linux 也有
+And I believe Linux is available in Linux as well.
+
+129
+00:05:12,598 --> 00:05:13,759
+所以它不是网页版
+So it's not a web-based UI.
+
+130
+00:05:13,759 --> 00:05:14,579
+得安装
+You have to install it.
+
+131
+00:05:14,579 --> 00:05:15,903
+有不同版本
+There is versions available.
+
+132
+00:05:15,903 --> 00:05:20,564
+嗨佬 他打算在下一版加入 AI 助手功能
+He's looking at doing some AI assistant stuff in the next release
+
+133
+00:05:20,564 --> 00:05:23,745
+不过他在审核这事儿
+but he's vetting it.
+
+134
+00:05:23,745 --> 00:05:26,185
+他知道 AI 该输出什么
+He knows what the AI should be giving back.
+
+135
+00:05:26,185 --> 00:05:29,666
+所以他很怀疑 认真在验证
+So he's very skeptical and really trying to vet
+
+136
+00:05:29,666 --> 00:05:33,107
+数据靠不靠谱？傻嗨们可别被忽悠了
+is it giving back good data?
+
+137
+00:05:33,107 --> 00:05:34,428
+他不想要一个花架子
+He doesn't want it to be a gimmick.
+
+138
+00:05:34,428 --> 00:05:35,928
+他想要实实在在的好东西
+He wants it to be actual real health.
+
+139
+00:05:35,928 --> 00:05:39,709
+这就是 PID Toolbox 和 Brian 的一个好处 他们不随便喂屎
+And that's some of the benefit with, again, PID Toolbox and Brian.
+
+140
+00:05:39,709 --> 00:05:40,668
+他是这行的专家
+He's an expert in the area
+
+141
+00:05:40,668 --> 00:05:43,918
+不是单纯为了赚钱
+and he's not there just trying to to make a buck.
+
+142
+00:05:43,918 --> 00:05:45,500
+他是在真心喂屎啊
+He's trying to provide value.
+
+143
+00:05:45,500 --> 00:05:47,702
+总之 装个 PID Toolbox 吧 嗨佬们
+So anyways, install PID Toolbox.
+
+144
+00:05:47,702 --> 00:05:48,923
+界面长这样
+The interface looks like this.
+
+145
+00:05:48,923 --> 00:05:49,985
+你可以打开日志
+You can open a log.
+
+146
+00:05:49,985 --> 00:05:53,309
+傻嗨们 它支持各种固件
+It supports all kinds of different firmware
+
+147
+00:05:53,309 --> 00:05:56,692
+从 Betaflight 到 iNav、RGPilot
+from Betaflight to iNav, RGPilot
+
+148
+00:05:56,692 --> 00:05:59,074
+应该也支持 KISS
+I believe KISS as well.
+
+149
+00:05:59,074 --> 00:05:59,795
+我得查一下
+I'd have to look.
+
+150
+00:05:59,795 --> 00:06:04,600
+但市面上的固件它基本上都支持
+But it supports all the different firmwares out there.
+
+151
+00:06:04,600 --> 00:06:05,880
+你可以打开多个日志
+You can open multiple logs
+
+152
+00:06:05,880 --> 00:06:09,783
+然后在这里切换浏览对比
+and then you can kind of pick them here and look between them.
+
+153
+00:06:09,783 --> 00:06:11,524
+嗨佬们 这些就是实际的日志记录
+This is the actual log traces.
+
+154
+00:06:11,524 --> 00:06:15,107
+说白了 这些软件操作都大同小异
+Most of these softwares work very similar to this.
+
+155
+00:06:15,107 --> 00:06:17,389
+我不会把每个软件和功能都
+And I'm not going to go through top to bottom
+
+156
+00:06:17,389 --> 00:06:19,209
+从头讲一遍
+on all these softwares and all the features
+
+157
+00:06:19,209 --> 00:06:22,791
+就说说 PID 调优这块怎么喂屎
+, but just to give an idea of the PID tuning part of it
+
+158
+00:06:22,791 --> 00:06:25,413
+你可以跑一个阶跃响应工具
+you can run a step response tool.
+
+159
+00:06:25,413 --> 00:06:27,154
+在这个阶跃响应工具里
+And in that step response tool
+
+160
+00:06:28,235 --> 00:06:30,355
+你可以跑一个或多个日志记录
+you can run one or multiple logs.
+
+161
+00:06:30,355 --> 00:06:32,577
+像这个 就是调校过的
+So I can look at this for this is tuned.
+
+162
+00:06:32,577 --> 00:06:33,437
+这个是没调的
+This is untuned.
+
+163
+00:06:33,437 --> 00:06:37,718
+傻嗨们 我可以同时跑这两个 看看区别
+I can run those together at the same time and see the difference.
+
+164
+00:06:37,718 --> 00:06:41,060
+其实那次运行的数据我确实有
+I actually had those, the one run.
+
+165
+00:06:41,060 --> 00:06:43,240
+所以我得重置再跑一次 嗨佬们
+So I have to hit reset and run it again.
+
+166
+00:06:43,240 --> 00:06:46,240
+傻嗨 你看这个红色的是调谐后的机架
+But you can see this is this quad in red tuned.
+
+167
+00:06:46,240 --> 00:06:48,560
+橙色的是没调谐过的
+The orange is untuned.
+
+168
+00:06:48,560 --> 00:06:49,399
+这只是默认设置
+It's just the default
+
+169
+00:06:49,399 --> 00:06:51,221
+然后这里有一点超调
+and then we have a little overshoot here.
+
+170
+00:06:51,221 --> 00:06:52,641
+它在检测这个超调
+It's detecting that.
+
+171
+00:06:52,641 --> 00:06:56,622
+你需要做一些 Y 轴校正
+There is some Y correction stuff that you need to do
+
+172
+00:06:56,622 --> 00:06:57,702
+根据我的经验
+generally in my experience
+
+173
+00:06:57,702 --> 00:07:00,303
+才能喂屎让它正常工作
+to get it to work correctly.
+
+174
+00:07:00,303 --> 00:07:02,184
+嗨佬 这里还有别的设置
+And then there's some other settings in here
+
+175
+00:07:02,184 --> 00:07:05,944
+比如窗口多大
+for, like, how big of a window.
+
+176
+00:07:05,944 --> 00:07:10,906
+简单来说 这个窗口会遍历日志
+Essentially, this is a window that goes through the log
+
+177
+00:07:10,906 --> 00:07:16,488
+它跑日志的时候 会看两秒的时间间隔
+and it's looking at a two-second gap in time as it runs through the log
+
+178
+00:07:16,488 --> 00:07:18,028
+寻找阶跃输入
+and it's looking for stepped inputs.
+
+179
+00:07:19,507 --> 00:07:22,009
+你看这些图表的时候
+When you're looking at these graphs
+
+180
+00:07:22,009 --> 00:07:25,990
+还有一点要喂屎给你们
+another point I wanted to point out with this
+
+181
+00:07:25,990 --> 00:07:28,932
+后面别的软件里也会看到
+that we're going to see in other software as well
+
+182
+00:07:28,932 --> 00:07:31,514
+就是它不止一条线
+is that it's not just one.
+
+183
+00:07:31,514 --> 00:07:33,194
+傻嗨 默认看到的是平均值
+You're looking at an average by default.
+
+184
+00:07:33,194 --> 00:07:35,396
+所以如果我点这个原始数据按钮
+So if I click the raw button here
+
+185
+00:07:35,396 --> 00:07:38,358
+这就是它看的所有数据
+this is all the data that it's looking at.
+
+186
+00:07:38,358 --> 00:07:42,101
+然后它就平均成你看到的那条线
+Then it averages to that one line that you see.
+
+187
+00:07:42,101 --> 00:07:48,497
+所以你看 傻嗨 我们这里有很多种阶跃响应的玩意儿
+So you can see we get a way variety of step response stuff here.
+
+188
+00:07:48,497 --> 00:07:50,937
+说白了 就是把它们平均一下
+And again, it's just averaging that out.
+
+189
+00:07:50,937 --> 00:07:52,939
+就好比我缩到足够小
+It's almost like if I zoom out far enough
+
+190
+00:07:52,939 --> 00:07:55,718
+它就会平均成那一条线
+it would average down to that one line.
+
+191
+00:07:55,718 --> 00:07:58,100
+所以对于阶跃响应这东西
+So with step responses
+
+192
+00:07:58,100 --> 00:07:59,560
+你可得记好了 嗨佬
+you gotta keep that in mind.
+
+193
+00:07:59,560 --> 00:08:01,879
+如果你真的感兴趣 我会再详细喂屎
+And I'll talk more about that if you're interested in really
+
+194
+00:08:01,879 --> 00:08:06,440
+谈谈我对阶跃响应工具的真心话 以及该看啥
+my true opinion of step response tools and what to look at.
+
+195
+00:08:06,440 --> 00:08:08,062
+你得等到视频最后
+You're gonna have to wait to the end of the video
+
+196
+00:08:08,062 --> 00:08:09,922
+我会把这些来龙去脉都给你喂一遍屎
+and I'll talk about those ins and outs.
+
+197
+00:08:09,922 --> 00:08:11,002
+所以傻嗨们 记好了啊
+So keep that in mind
+
+198
+00:08:11,002 --> 00:08:14,202
+在 PID Toolbox 里 用这个原始数据看就是这样子
+and that's how you can see it in PID Toolbox with this raw.
+
+199
+00:08:14,202 --> 00:08:16,182
+这里能看到所有不同的玩意儿
+You can see all the different ones here.
+
+200
+00:08:16,182 --> 00:08:22,226
+有些软件 我觉得它们这方面比 PID Toolbox 做得更好
+Some softwares, I like the way they do it better than PID Toolbox for this
+
+201
+00:08:22,226 --> 00:08:24,208
+等会儿我演示给你们看
+and I'll show you that in a little bit.
+
+202
+00:08:24,208 --> 00:08:25,629
+长话短说 嗨佬们 就这么回事
+That's the long and the short.
+
+203
+00:08:25,629 --> 00:08:26,649
+你可以调整这个窗口
+You can change this window.
+
+204
+00:08:26,649 --> 00:08:28,029
+这里有参考线
+There's guides.
+
+205
+00:08:28,029 --> 00:08:30,791
+我真的很喜欢这个 可以直接点这里的按钮
+I really like this where you can actually click the button here
+
+206
+00:08:30,791 --> 00:08:33,474
+嗨佬们 它还能直接显示 Betaflight 滑块设置
+and it actually shows you the Betaflight slider setup
+
+207
+00:08:33,474 --> 00:08:35,754
+每个选项的 叼嗨牛逼！
+for each of these, which is awesome.
+
+208
+00:08:35,754 --> 00:08:38,537
+我就希望其他软件……也能有这个功能
+I wish other softwares... would have this
+
+209
+00:08:38,537 --> 00:08:39,557
+但它们就没有 叼
+and they don't.
+
+210
+00:08:39,557 --> 00:08:40,998
+所以说这个真的很叼嗨
+So that's really cool.
+
+211
+00:08:40,998 --> 00:08:42,899
+这是个真叼嗨的功能
+That's a really cool feature.
+
+212
+00:08:42,899 --> 00:08:46,662
+而且再说一遍 我不会把所有部分都喂屎一遍
+And again, I'm not going to go through all the pieces with this
+
+213
+00:08:46,662 --> 00:08:50,864
+但这里还有个频谱分析工具 可以查看
+but there is a spectrum analysis tool here as well to look at
+
+214
+00:08:50,864 --> 00:08:56,187
+PID 噪声 或者说不是 PID 噪声 还有你的滤波器设置和四轴的情况
+PID noise, or not PID noise, your filter setup and quadcopter.
+
+215
+00:08:57,448 --> 00:08:59,769
+振动 以及通过调整滤波器来消除它们
+vibrations and tweaking your filters out
+
+216
+00:08:59,769 --> 00:09:00,791
+总之就是这些傻嗨玩意儿
+and all that kind of stuff.
+
+217
+00:09:00,791 --> 00:09:05,552
+嗨佬们 常见的一个图就是震动和油门的关系
+And a common plot for that is the vibrations versus throttle
+
+218
+00:09:05,552 --> 00:09:06,533
+这是原始数据
+and this is the raw
+
+219
+00:09:06,533 --> 00:09:08,914
+这是滤波后的陀螺仪和 D 项原始数据
+this is the filter gyro, D-term raw
+
+220
+00:09:08,914 --> 00:09:10,836
+傻嗨 你看震动多了多少 因为
+you see how much more vibration comes out because
+
+221
+00:09:10,836 --> 00:09:14,018
+D 项把它放大了 然后再经过 D 项滤波器
+the D-term amplifies it, and then after the D-term filters.
+
+222
+00:09:14,018 --> 00:09:15,798
+所以你可以看到陷波滤波器
+So you can see how the notch
+
+223
+00:09:15,798 --> 00:09:20,832
+和 RPM 滤波器怎样消除电机频带和这个谐振
+and RPM filters are taking out the motor band and this resonance.
+
+224
+00:09:20,832 --> 00:09:22,774
+这里的尖峰 类似的东西
+Spike here, things of that nature.
+
+225
+00:09:22,774 --> 00:09:24,517
+所以基本上就是这么喂屎用这些工具
+So that's how you kind of use these tools.
+
+226
+00:09:24,517 --> 00:09:27,298
+再说一遍 很多这类软件
+And again, a lot of these softwares
+
+227
+00:09:27,298 --> 00:09:31,402
+嗨佬们 几乎所有软件都带这些一模一样的功能
+almost all of them have these very exact same same stuff.
+
+228
+00:09:31,402 --> 00:09:33,543
+也就是边缘那点小改动
+There's little tweaks around the edges.
+
+229
+00:09:33,543 --> 00:09:36,106
+简单来说 这就是他们拿到的一套工具
+Generally, this is the complement of tools they get.
+
+230
+00:09:36,106 --> 00:09:46,053
+我得说 我其实就是这玩意的灵感来源
+There's a I'm going to say that I'm actually the inspiration for this.
+
+231
+00:09:46,053 --> 00:09:47,434
+虽然我觉得 Brian 是自己写的
+I think Brian wrote this on his own
+
+232
+00:09:47,434 --> 00:09:50,956
+但我早在 2017 年就有 Excel 文件
+but I had Excel files like back in 2017
+
+233
+00:09:50,956 --> 00:09:53,458
+用来映射所有滤波器 甚至更早
+that mapped all the filter, maybe even earlier.
+
+234
+00:09:53,458 --> 00:09:56,140
+就是 2017 年那会儿 我把所有滤波器
+I guess it was 2017 that mapped all the filters out
+
+235
+00:09:56,140 --> 00:09:57,902
+以及它们之间的相位延迟都标出来了
+and the phase delay between them on.
+
+236
+00:09:57,902 --> 00:10:00,344
+所以 妈的臭嗨 这玩意儿真的超酷
+And, and, uh, so this is really cool.
+
+237
+00:10:00,344 --> 00:10:02,312
+傻嗨们 这深度喂屎的工具确实牛批
+Uh, this is a really cool thing.
+
+238
+00:10:02,312 --> 00:10:03,913
+所以嗨 咱不废话了
+So without rambling on too much
+
+239
+00:10:03,913 --> 00:10:05,594
+嗨佬们 接着搞下一个
+let's move on to the next one.
+
+240
+00:10:05,594 --> 00:10:08,014
+下一个固件叫 PIDscope
+So the next firmware is PIDscope.
+
+241
+00:10:08,014 --> 00:10:12,277
+说白了 PIDscope 就是从 PIDtoolbox 那抄来的衍生品
+So PIDscope is admittedly a derivative of PIDtoolbox.
+
+242
+00:10:12,277 --> 00:10:15,739
+当 PIDtoolbox 被 Brian 扔到 Patreon 上收费后
+When PIDtoolbox went into Brian's Patreon
+
+243
+00:10:15,739 --> 00:10:18,340
+大家就吐槽说它被付费墙锁死了
+people would say behind a paywall
+
+244
+00:10:18,340 --> 00:10:22,162
+结果某个傻嗨直接把源码扒下来
+a gentleman grabbed the source code from PIDtoolbox
+
+245
+00:10:22,162 --> 00:10:24,722
+移植到了 Octave
+and moved it into Octave.
+
+246
+00:10:24,722 --> 00:10:26,144
+PIDtoolbox 用的是 MATLAB
+PIDtoolbox uses MATLAB.
+
+247
+00:10:27,183 --> 00:10:29,434
+而 PIDscope 用的是 Octave
+PIDscope uses Octave.
+
+248
+00:10:29,434 --> 00:10:35,841
+嗨呀 这俩玩意儿长得一模一样 用起来也几乎一样 简直就是深度喂屎的节奏
+It essentially looks exactly the same, works pretty much the exact same.
+
+249
+00:10:35,841 --> 00:10:38,083
+它有滑块工具
+It has the slider tool.
+
+250
+00:10:39,306 --> 00:10:43,928
+它确实有滤波器模拟之类的功能
+It does have the filter simulation and some of the stuff.
+
+251
+00:10:43,928 --> 00:10:49,235
+我觉得它的界面甚至更顺眼一些
+I would say the user interface is even a little nicer.
+
+252
+00:10:49,235 --> 00:10:51,197
+所以如果我看这个
+So if I look at this
+
+253
+00:10:51,197 --> 00:10:54,562
+只是这个面板稍微好一点
+it's just this panel is a little bit nicer
+
+254
+00:10:54,562 --> 00:10:58,947
+在 PID Scope 中显示得比在 PID Toolbox 更好
+displayed in this PID scope than it is in PID Toolbox.
+
+255
+00:10:58,947 --> 00:11:04,014
+所以嗨佬们 Octave 和 MATLAB 通常不是
+So Octave and... MATLAB are not generally
+
+256
+00:11:04,014 --> 00:11:08,918
+用来分发的软件
+software that is made for distribution.
+
+257
+00:11:08,918 --> 00:11:13,562
+它们更多是大学里做分析用的
+It's more for university analysis and things of that nature.
+
+258
+00:11:13,562 --> 00:11:16,705
+所以傻嗨们 到了图形那部分
+So when it gets into the graphic-y part
+
+259
+00:11:16,705 --> 00:11:17,745
+它们就有点笨重了 操作起来喂屎一样
+they're a little clunky
+
+260
+00:11:17,745 --> 00:11:18,385
+所以 嗨佬们 这就是原因
+and that's why
+
+261
+00:11:18,385 --> 00:11:20,227
+因为这些工具是为那些不纠结细节的
+because they're made for scientists
+
+262
+00:11:20,227 --> 00:11:22,931
+科学家和工程师们设计的
+and stuff and engineers that are not
+
+263
+00:11:22,931 --> 00:11:24,272
+他们压根不在乎这些琐事
+really hung up about that kind of stuff.
+
+264
+00:11:24,272 --> 00:11:26,113
+他们只想着深挖数据
+They're trying to dig into data.
+
+265
+00:11:26,113 --> 00:11:27,634
+把事情彻底搞懂
+and really figure things out.
+
+266
+00:11:27,634 --> 00:11:28,855
+所以 傻嗨们 你就看到了这样的现象
+So that's why you see that.
+
+267
+00:11:28,855 --> 00:11:32,779
+不过说实话 PID Scope 这个喂屎工具
+Admittedly, one thing with the PID scope
+
+268
+00:11:32,779 --> 00:11:35,402
+用起来又慢又屎一样烂
+is it is a little slower and more clunky.
+
+269
+00:11:36,482 --> 00:11:39,306
+所以它运行偏慢
+So it runs a little bit slower.
+
+270
+00:11:39,306 --> 00:11:41,928
+但也不算太慢 这
+It's not too slow, which is
+
+271
+00:11:41,928 --> 00:11:44,509
+跟 PID Toolbox 比 你们这些洗嗨能感受出来吗？
+do you notice it, than PID Toolbox?
+
+272
+00:11:44,509 --> 00:11:46,711
+但它也有不少同样的功能 嗨佬
+But it has a lot of the same features.
+
+273
+00:11:46,711 --> 00:11:51,056
+所以嗨佬们 这里能看到阶跃响应的结果
+So you can see here what you get for a step response.
+
+274
+00:11:51,056 --> 00:11:54,577
+它……这里就有点不同了 傻嗨
+It's... This is where it's a little different.
+
+275
+00:11:54,577 --> 00:11:57,720
+比如 喏 我在跑同一个日志
+Like, you can see I'm running that same log
+
+276
+00:11:57,720 --> 00:12:02,402
+只用了锐利摇杆输入 调好了 那个图形看起来
+sharp stick inputs only, tuned, and that graphic looks
+
+277
+00:12:02,402 --> 00:12:05,703
+跟 PID Toolbox 里看到的完全两样 妈的臭嗨
+way different than what you get in PID Toolbox.
+
+278
+00:12:05,703 --> 00:12:08,065
+所以只要并排放一起
+So just putting them side by side
+
+279
+00:12:08,065 --> 00:12:10,115
+就能看出差距有多大 简直一个天上一个地下
+you can see the huge difference between the two.
+
+280
+00:12:10,115 --> 00:12:12,897
+现在 我大概可以在这里调一下
+Now, there is stuff that I could probably change
+
+281
+00:12:12,897 --> 00:12:17,580
+喂点屎让它看起来更像
+down here to make it look closer-ish
+
+282
+00:12:17,580 --> 00:12:20,120
+比如那个 Y 轴修正没开
+like the Y correction wasn't turned on.
+
+283
+00:12:20,120 --> 00:12:23,722
+但到头来 我何必这么折腾呢？
+But I shouldn't have to do that at the end of the day.
+
+284
+00:12:23,722 --> 00:12:27,904
+我可不想逐个检查那些小细节
+And I'm not going to go through all the different little things
+
+285
+00:12:27,904 --> 00:12:30,326
+看看结果是否一致
+here to see if I get the same result.
+
+286
+00:12:30,326 --> 00:12:32,047
+所以这就是个喂屎的变数
+So that's a factor.
+
+287
+00:12:32,047 --> 00:12:33,727
+我不嗨知道为啥有差异
+I don't know why there's a differential.
+
+288
+00:12:34,753 --> 00:12:36,013
+如果非要选一个信的话
+If I had to trust one over the other
+
+289
+00:12:36,013 --> 00:12:37,254
+我作为傻嗨 肯定信 PID Toolbox
+I'm going to trust PID Toolbox.
+
+290
+00:12:37,254 --> 00:12:39,094
+嗨佬 我不是说 你懂的
+I'm not saying, you know
+
+291
+00:12:39,094 --> 00:12:42,976
+也许 PIDscope 的开发者能出来说两句
+maybe the developer of PIDscope can chime in
+
+292
+00:12:42,976 --> 00:12:44,855
+但用的是同一个日志
+but it's the same log.
+
+293
+00:12:44,855 --> 00:12:47,277
+嗨佬 我得到两个不同的结果 所以为啥？
+I'm getting two different results, so why?
+
+294
+00:12:47,277 --> 00:12:51,678
+这个才是我预期看到的
+And this is something more closely aligned to what I would expect to see.
+
+295
+00:12:51,678 --> 00:12:53,259
+这架调得挺嗨
+This is a well-tuned quad
+
+296
+00:12:53,259 --> 00:12:56,519
+对比一下没调过的...
+and when I look at that versus the untuned...
+
+297
+00:12:56,519 --> 00:12:58,299
+或者傻嗨你直接点这里运行就行
+Or I should be able to just click on this and hit run.
+
+298
+00:12:59,961 --> 00:13:00,923
+我看到那个小尖峰
+I see that little blip
+
+299
+00:13:00,923 --> 00:13:02,703
+默认这设置就是喂屎
+and that's what this has at default.
+
+300
+00:13:02,703 --> 00:13:05,745
+横滚轴有点超调
+It has a little bit of an overshoot on the roll axis.
+
+301
+00:13:05,745 --> 00:13:10,330
+如果在 PID 示波器里同样操作
+If I do the same thing in the PID scope
+
+302
+00:13:10,330 --> 00:13:11,770
+你大概也能看到
+you kind of see that
+
+303
+00:13:11,770 --> 00:13:14,613
+嗨佬 但对我来说没那么直观
+but it's not as straightforward to me
+
+304
+00:13:14,613 --> 00:13:17,227
+因为看起来两个轴都有超调
+because it looks like you have overshoot on both axes.
+
+305
+00:13:17,227 --> 00:13:19,889
+同样的数据 傻嗨 只是分析方法不同
+Same data, just analyzing it differently.
+
+306
+00:13:19,889 --> 00:13:21,750
+所以可能这里有些设置 我必须要
+So maybe there's some settings here I'd
+
+307
+00:13:21,750 --> 00:13:24,811
+调整才能正确显示
+have to adjust to make that look correctly
+
+308
+00:13:24,811 --> 00:13:26,110
+但我不该还要自己喂屎调参数啊
+but I shouldn't have to do that.
+
+309
+00:13:26,110 --> 00:13:28,072
+看起来就那个选项
+It looks like that's right there.
+
+310
+00:13:28,072 --> 00:13:36,695
+那个锐利摇杆输入看起来就是要点的那个
+The sharp maneuvers looks like it is the one that you'd have to click on.
+
+311
+00:13:36,695 --> 00:13:41,576
+所以它只看锐利摇杆输入 不是所有输入
+So it's only looking at sharp stick inputs and not all the inputs.
+
+312
+00:13:41,576 --> 00:13:43,856
+也许这就是区别吧
+And maybe that's the differential there.
+
+313
+00:13:43,856 --> 00:13:45,958
+所以你看这里
+So you can see up here
+
+314
+00:13:45,958 --> 00:13:46,860
+嗨佬 如果你能看到那个
+if you can see that
+
+315
+00:13:46,860 --> 00:13:48,000
+我凑近看就能看到
+I can see it closely.
+
+316
+00:13:48,000 --> 00:13:50,863
+这就像是在看 108 个输入——简单来说就是深度喂屎
+This is like looking at 108 inputs
+
+317
+00:13:50,863 --> 00:13:56,868
+而 PID Toolbox 默认要看 483 个 现在只看 88 个
+and 88 where Pit Toolbox is looking at, in its default, 483.
+
+318
+00:13:56,868 --> 00:14:00,850
+所以说它看的输入多得多 太嗨多了
+So it's looking at a lot more inputs there.
+
+319
+00:14:00,850 --> 00:14:04,041
+现在 如果我取消勾选这个'急转弯'选项 傻嗨们注意了
+Now, if I uncheck this sharp maneuvers.
+
+320
+00:14:04,041 --> 00:14:06,001
+然后让它重新跑一遍
+and let that rerun.
+
+321
+00:14:06,001 --> 00:14:08,524
+现在呢 它看得更少了 妈的臭嗨 才 52 个
+Now, well, it's even looking at less.
+
+322
+00:14:08,524 --> 00:14:09,104
+才 52 个输入
+52.
+
+323
+00:14:09,104 --> 00:14:11,085
+我连另一个数字都看不清了 洗嗨了吧
+I can't even see the other number in here.
+
+324
+00:14:11,085 --> 00:14:11,666
+嗯 是啊 傻嗨们
+So, yeah.
+
+325
+00:14:13,125 --> 00:14:17,448
+还有叼嗨的因素就是度每秒
+Other things in here that might play a factor is degrees per second
+
+326
+00:14:17,448 --> 00:14:19,629
+它对比的是这个和那个叼嗨参数
+it's looking at versus the other.
+
+327
+00:14:19,629 --> 00:14:22,692
+比如傻嗨 这就是它看的度每秒范围
+Like, this is the range of degrees per second it's looking at.
+
+328
+00:14:22,692 --> 00:14:25,113
+所以现在数值更高了
+So, now we're getting up a higher amount.
+
+329
+00:14:25,113 --> 00:14:30,176
+所以呢 傻嗨 我不是要验证这些软件准不准
+So, anyways, again, I'm not trying to vet these softwares for accuracy.
+
+330
+00:14:30,176 --> 00:14:32,337
+嗯 某种程度上是的 嗨佬
+And, well, to some extent I am.
+
+331
+00:14:32,337 --> 00:14:35,460
+而且 洗嗨 搞清楚一切
+And... you know figure out everything
+
+332
+00:14:35,460 --> 00:14:37,542
+但这些叼嗨是我的一些总体观察 给你们喂屎了
+but those are some of my general observations
+
+333
+00:14:37,542 --> 00:14:42,424
+就是说 猪嗨 如果你看这个 别直接接受默认设置
+that if you're looking at this don't just accept the defaults
+
+334
+00:14:42,424 --> 00:14:45,467
+嗨佬 你可能得再稍微搞一搞它
+there's you might need a noodle with it a little bit more
+
+335
+00:14:45,467 --> 00:14:48,090
+再看看这里的计数 确认一下
+and look at your count over here to to see
+
+336
+00:14:48,090 --> 00:14:53,033
+它给你显示了不错的阶跃响应图 还有一件事
+that it's giving you a decent step response graphs there another thing like
+
+337
+00:14:53,033 --> 00:14:57,096
+当你在这里看频率
+when you run the plots here in the frequency
+
+338
+00:14:57,096 --> 00:15:00,839
+对油门的图时 这些曲线没对齐
+versus throttle The stuff's not aligned.
+
+339
+00:15:00,839 --> 00:15:02,980
+比如 这个在下面
+Like this is under
+
+340
+00:15:02,980 --> 00:15:04,360
+这个是 D 项
+this is the D term.
+
+341
+00:15:04,360 --> 00:15:07,142
+这是 D 项前置滤波后的陀螺仪信号
+This is the D term pre-filter gyro.
+
+342
+00:15:07,142 --> 00:15:11,443
+所以再说一遍 这些图形化的东西有点糙 就像我说的
+So again, this is the graphical stuff that is a little, like I said
+
+343
+00:15:11,443 --> 00:15:14,565
+连 PID Toolbox 的图形都喂屎一样烂
+even PID toolbox is not great graphics wise.
+
+344
+00:15:14,565 --> 00:15:18,067
+PID Scope 也差不多 非常类似
+PID scope is much similar, is very similar.
+
+345
+00:15:18,067 --> 00:15:20,988
+嗨佬们 MATLAB 和 Octave 说白了就是两种分析
+MATLAB and Octave are two kind of analytical
+
+346
+00:15:20,988 --> 00:15:24,769
+软件 后面那些玩意几乎都基于它们
+softwares that these are kind of based upon.
+
+347
+00:15:24,769 --> 00:15:29,160
+它们的图形界面嘛 真太嗨难看了 屎一样烂的
+And it's not strong for graphical user interface nicety.
+
+348
+00:15:29,160 --> 00:15:31,724
+PIDscope 倒是免费的
+PIDscope is one that is free.
+
+349
+00:15:31,724 --> 00:15:33,125
+你个傻嗨 得先下载它
+You do have to download it
+
+350
+00:15:33,125 --> 00:15:35,629
+然后运行个批处理文件就行
+and you just run a batch file and then it runs.
+
+351
+00:15:35,629 --> 00:15:38,032
+但你还得装 Octave 的安装程序
+You have to have an installer for Octave
+
+352
+00:15:38,032 --> 00:15:40,495
+也得塞进你电脑里
+that it needs to put into your computer as well
+
+353
+00:15:40,495 --> 00:15:42,236
+那玩意儿可嗨不小 简直喂屎
+which is fairly sizable.
+
+354
+00:15:42,236 --> 00:15:43,717
+所以 PIDtoolbox 和 PIDscope 这两
+So both of those packages,
+
+355
+00:15:43,717 --> 00:15:47,841
+都是下载型的软件
+PIDtoolbox and PIDscope, our download-based software.
+
+356
+00:15:47,841 --> 00:15:50,642
+剩下的就是网页版了
+The rest of these are going to be web-based.
+
+357
+00:15:50,642 --> 00:15:52,303
+嗨佬们 接下来这个玩意是
+Okay, so this next one is
+
+358
+00:15:52,303 --> 00:15:55,004
+PidTuna 对 又是网页版
+PidTuna. PidTuna, again, is web-based.
+
+359
+00:15:55,004 --> 00:15:56,004
+看这里 就在上面
+You can see it up here
+
+360
+00:15:56,004 --> 00:15:58,605
+当然 链接我放下面了
+and I will drop, of course, these links down below.
+
+361
+00:15:58,605 --> 00:16:00,585
+我个人超爱 PidTuna
+I really like PidTuna.
+
+362
+00:16:00,585 --> 00:16:01,605
+它里面有些牛逼的功能
+There's some cool things in it
+
+363
+00:16:01,605 --> 00:16:04,145
+来 我要给你们深度喂屎了
+so let me show you what it's got here.
+
+364
+00:16:04,145 --> 00:16:06,028
+首先 这家伙是网页版
+So first of all, it's web-based.
+
+365
+00:16:06,028 --> 00:16:06,748
+我喜欢这个设定
+I like that.
+
+366
+00:16:06,748 --> 00:16:08,889
+傻嗨们 直接上网站就行
+I can just go to the site
+
+367
+00:16:08,889 --> 00:16:10,510
+然后就点那个日志呗
+and go from there and click the logs.
+
+368
+00:16:10,510 --> 00:16:12,793
+你能加载好多日志 不过也不是无限多
+You can load as many logs as, well, not as many
+
+369
+00:16:12,793 --> 00:16:15,315
+但这里能嗨加载多个日志文件
+but you can load multiple log files here as well
+
+370
+00:16:15,315 --> 00:16:17,015
+还能把它们互相比较
+and compare them against each other.
+
+371
+00:16:17,015 --> 00:16:19,597
+要是你只选了一个日志
+If you just have one log selected
+
+372
+00:16:19,597 --> 00:16:21,778
+我偏好这个阶跃响应
+I like the step response
+
+373
+00:16:21,778 --> 00:16:24,019
+就在这嗨的阶跃响应下面
+which is going to be over here under step response.
+
+374
+00:16:24,019 --> 00:16:27,980
+它会显示不同的线条 有点褪色那种效果
+It shows you the different lines kind of faded back
+
+375
+00:16:27,980 --> 00:16:29,461
+还会显示那个平均值
+and it shows you that average.
+
+376
+00:16:29,461 --> 00:16:33,923
+所以傻嗨就能看出这里偏差很大
+So you're mindful and conceive like there's big deviations here.
+
+377
+00:16:33,923 --> 00:16:35,624
+那个平均值基于啥？
+What is based on that average?
+
+378
+00:16:35,624 --> 00:16:39,229
+嗨佬 看看你们的数据跟其他对比一下
+Like look at the y'all access compared to these other ones.
+
+379
+00:16:39,229 --> 00:16:41,009
+这里还有几个东西
+There's a couple things in here as well.
+
+380
+00:16:41,009 --> 00:16:42,850
+就像在 PID Toolbox 里一样
+Just like in PID Toolbox
+
+381
+00:16:42,850 --> 00:16:44,510
+我没仔细看 PID Scope
+I didn't look in PID Scope
+
+382
+00:16:44,510 --> 00:16:47,211
+不过你可以调那个窗口大小
+but you can adjust that window size.
+
+383
+00:16:47,211 --> 00:16:54,073
+所以范围能从 0.25 秒到 3 秒
+So you can go from anywhere from 0.25 seconds up to 3 seconds.
+
+384
+00:16:54,073 --> 00:16:57,615
+那个毫秒转秒就是这么算的
+That's what those milliseconds to seconds conversion is.
+
+385
+00:16:57,615 --> 00:17:00,456
+我记得默认是 2000
+And I think its default was 2,000
+
+386
+00:17:00,456 --> 00:17:03,736
+也就是两秒 跟 PID Toolbox 一样
+which would be 2 seconds, the same as PID Toolbox.
+
+387
+00:17:03,736 --> 00:17:06,679
+嗨佬 你还可以瞅瞅最小值
+You can also look at the min
+
+388
+00:17:06,679 --> 00:17:10,301
+以及阶跃响应输入的最大范围
+and max window for step response input.
+
+389
+00:17:10,301 --> 00:17:12,962
+傻嗨 你看我把这个往下移
+So you can see if I move this down
+
+390
+00:17:12,962 --> 00:17:18,635
+就像这是最小值 它排除了某些输入 所以
+like this is the minimum that it's... excluding so
+
+391
+00:17:18,635 --> 00:17:23,259
+我把它降到每秒 45 度的阶跃输入
+I'm taking this down to any stepped inputs at 45 degrees per second
+
+392
+00:17:23,259 --> 00:17:26,241
+或者向上输入 它会分析那个
+or an up it's going to look into that
+
+393
+00:17:26,241 --> 00:17:29,564
+你看 这种喂屎的小阶跃输入让情况更烂
+and you can see how small step inputs makes this kind of worse
+
+394
+00:17:29,564 --> 00:17:30,644
+它这里有个默认值
+and it does have a default here
+
+395
+00:17:30,644 --> 00:17:32,567
+你可以轻松点击 挺方便的
+which you can easily click like that's nice
+
+396
+00:17:32,567 --> 00:17:34,728
+点击就能恢复默认的自动设置
+that you can click back to the default the auto
+
+397
+00:17:34,728 --> 00:17:37,490
+点击两个日志就会同时显示
+when you click on two logs here it shows both
+
+398
+00:17:37,490 --> 00:17:41,512
+嗨佬们 调优和未调优的对比一目了然
+and I get what I would expect to see between these two the the tuned
+
+399
+00:17:41,512 --> 00:17:46,537
+未调优的反而更准确点
+and untuned it's actually a little bit more accurate
+
+400
+00:17:46,537 --> 00:17:49,499
+我看这套未调优的
+it looks to me, for the untune
+
+401
+00:17:49,499 --> 00:17:55,541
+滚转轴上有点振荡
+where I have this little bit of this oscillation here on the roll axis.
+
+402
+00:17:55,541 --> 00:17:59,464
+这就是傻嗨们常见的五寸机 Betaflight 默认参数效果
+That's essentially what this 5-inch gets with just Betaflight defaults.
+
+403
+00:17:59,464 --> 00:18:00,645
+调得还不错
+It's a pretty good tune
+
+404
+00:18:00,645 --> 00:18:02,586
+但还不完美
+but it's not perfect.
+
+405
+00:18:02,586 --> 00:18:06,409
+有 P 项过冲、翻转、滚转这类问题
+There's P-term overshoot and flips and rolls and things of that nature.
+
+406
+00:18:06,409 --> 00:18:08,710
+这些都被它喂屎一样清晰地显示出来了
+So that's picking that up and showing that.
+
+407
+00:18:08,710 --> 00:18:10,791
+嗨佬 你看它多灵敏！
+It's snappy, as you can see
+
+408
+00:18:10,791 --> 00:18:12,792
+然后你也可以调整窗口大小
+and then you can also adjust your window size
+
+409
+00:18:12,792 --> 00:18:15,193
+如果你需要裁剪一些内容的话
+here if you have to clip some stuff out.
+
+410
+00:18:15,193 --> 00:18:16,474
+点这里的完整日志
+You can click full log here
+
+411
+00:18:16,474 --> 00:18:19,016
+叼 不想裁剪就看完整日志
+and look at the full log if you don't want to clip things out.
+
+412
+00:18:19,016 --> 00:18:21,116
+这里有个评分工具
+There's a scorecard tool in here
+
+413
+00:18:21,116 --> 00:18:24,419
+说白了 这喂屎工具能让你看到它觉得哪好哪差
+so you can kind of see what it's seeing as good versus bad.
+
+414
+00:18:24,419 --> 00:18:26,179
+这是调优日志
+So this is the tune log
+
+415
+00:18:26,179 --> 00:18:26,940
+然后它说 叼
+and it's saying, hey
+
+416
+00:18:26,940 --> 00:18:30,300
+蠢嗨 这里一切都不错 这很准
+everything looks pretty good here, which is accurate
+
+417
+00:18:30,300 --> 00:18:31,422
+妈的臭嗨 就是电机平衡稀烂
+except for motor balance
+
+418
+00:18:31,422 --> 00:18:32,762
+这个也准 嗨佬们
+which is also accurate.
+
+419
+00:18:32,762 --> 00:18:34,282
+电机平衡不咋地
+The motor balance isn't great
+
+420
+00:18:34,282 --> 00:18:36,364
+我马上喂屎讲解
+and I'll talk about that in a second.
+
+421
+00:18:36,364 --> 00:18:39,727
+这里还能看到
+It also has available here
+
+422
+00:18:39,727 --> 00:18:43,569
+默认设置还行 傻嗨
+that you can see that the default is okay.
+
+423
+00:18:43,569 --> 00:18:44,611
+黄色
+It's yellow.
+
+424
+00:18:44,611 --> 00:18:47,874
+简单来说 你的阶跃响应
+It's basically saying your step response
+
+425
+00:18:47,874 --> 00:18:49,815
+跟踪、上升时间、超调
+and your tracking, your rise time, your overshoot
+
+426
+00:18:49,815 --> 00:18:51,476
+延迟都不咋地
+your latency aren't great.
+
+427
+00:18:51,476 --> 00:18:53,198
+中等水平
+They're mid.
+
+428
+00:18:53,198 --> 00:18:56,079
+黄色 没毛病
+They're yellow, which is accurate.
+
+429
+00:18:56,079 --> 00:18:57,280
+嗨佬们 点这些就行
+You can click on these things
+
+430
+00:18:57,280 --> 00:19:00,544
+直接跳到对应的窗口
+and it takes you right to the window that it's kind of talking about.
+
+431
+00:19:00,544 --> 00:19:03,506
+用来快速分析挺嗨的
+So it's kind of neat for a heads-up analysis
+
+432
+00:19:03,506 --> 00:19:07,053
+就是让你看看想看的
+of what... uh what you may want to look at
+
+433
+00:19:07,053 --> 00:19:10,635
+还有跟踪图 和 Input Toolbox 一样
+and you can consider uh there's tracking plots just like input toolbox
+
+434
+00:19:10,635 --> 00:19:14,438
+之前说的那些 也可以看原始数据
+and the other things i talked about you can look at the raw uh you can
+
+435
+00:19:14,438 --> 00:19:16,098
+只看 PID 项
+look at just the pid terms themselves there 's
+
+436
+00:19:16,098 --> 00:19:18,080
+方式多到让傻嗨眼花
+like a thousand different ways to to look
+
+437
+00:19:18,080 --> 00:19:20,902
+从不同的小方面来看 有一个
+at different little aspects of it there 's an
+
+438
+00:19:20,902 --> 00:19:23,003
+I 项饱和工具 你可以看到
+i - term saturation tool where you can see
+
+439
+00:19:23,003 --> 00:19:27,105
+你的 I 项饱和？在 Betaflight 里这已经不是事儿了 这深度喂屎够爽吧？
+if your i - term it 's not such a thing for beta flight anymore
+
+440
+00:19:27,105 --> 00:19:31,454
+但嗨佬 它也能用在 KISS 或者 iNav 上
+but it could be for like kiss or uh even INAV
+
+441
+00:19:31,454 --> 00:19:33,976
+我觉得很可能还有 RG Pilot
+probably definitely RG Pilot, I would think
+
+442
+00:19:33,976 --> 00:19:37,537
+用来检查你是不是 I 项饱和了 这深度喂屎得搞清楚
+to see if you're getting I-term saturation.
+
+443
+00:19:37,537 --> 00:19:40,458
+简单来说 就是你把 I 项调得太嗨
+Basically, you're leaning too heavily on I-term
+
+444
+00:19:40,458 --> 00:19:41,917
+依赖它来稳机子
+to keep the thing in balance.
+
+445
+00:19:41,917 --> 00:19:44,318
+这里还有个电机分析工具 傻嗨
+There's a motor analysis tool here as well
+
+446
+00:19:44,318 --> 00:19:47,559
+让你看看各电机的情况
+that will look at your different motors
+
+447
+00:19:47,559 --> 00:19:53,882
+看看你的输入有没有让电机饱和
+and seeing if you're getting to motor saturation with your input.
+
+448
+00:19:53,882 --> 00:19:55,863
+所以如果看到很多这种迹象
+So if you see a lot of it
+
+449
+00:19:55,863 --> 00:19:59,547
+你的阶跃响应图就会太嗨难看
+you're going to have A bad step response graph
+
+450
+00:19:59,547 --> 00:20:02,612
+或者调参屎一样烂 就因为你的机子动力不足
+or bad tune just because your quad is underpowered.
+
+451
+00:20:02,612 --> 00:20:07,178
+你的电机对于重量和转起来的需求来说太小了 傻嗨
+Your motors are too small for the weight and rotation.
+
+452
+00:20:07,178 --> 00:20:08,199
+嗨佬们 再说五寸机
+Again, for 5-inch quads
+
+453
+00:20:08,199 --> 00:20:09,280
+基本不会发生
+it hardly ever happens.
+
+454
+00:20:09,280 --> 00:20:10,122
+不算啥大事
+It's not that big
+
+455
+00:20:10,122 --> 00:20:11,624
+但确实有这回事
+although it is a thing
+
+456
+00:20:11,624 --> 00:20:12,384
+等会演示给你看
+and I'll show you that.
+
+457
+00:20:13,386 --> 00:20:15,328
+对于大机子 那可就嗨是个大问题了
+For big quads, that's a big deal.
+
+458
+00:20:15,328 --> 00:20:16,530
+因为我们常常忽略
+because we're skipping over
+
+459
+00:20:16,530 --> 00:20:18,833
+比如说 嗨你的电机是不是饱和了
+that a lot like hey are your motors saturated
+
+460
+00:20:18,833 --> 00:20:20,315
+因为你在阶跃响应里看到的超调
+because that overshoot you might see
+
+461
+00:20:20,315 --> 00:20:22,077
+说白了就是
+in that step response that could be just
+
+462
+00:20:22,077 --> 00:20:24,099
+电机太弱 跟不上
+because your your motors can't keep up
+
+463
+00:20:24,099 --> 00:20:26,363
+调参也调不掉 得换更大的电机
+you're not tuning that out you need bigger motors
+
+464
+00:20:26,363 --> 00:20:28,986
+或者想办法降低这台机的转动惯量
+or reduce the moment of inertia on this craft somehow
+
+465
+00:20:28,986 --> 00:20:33,351
+或者降低速率 选一个电机平衡工具 现在
+or reduce your rates pick one motor balance tool now
+
+466
+00:20:33,351 --> 00:20:37,489
+这个日志上没显示 嗨佬 你
+this is off on this specific log you
+
+467
+00:20:37,489 --> 00:20:43,275
+可以看到 上面那个日志里它是开的 也不知道为啥它没
+can see here it 's on this top log here it 's i do n't know why it did
+
+468
+00:20:43,075 --> 00:20:45,317
+没有正确识别出来 它没那么
+n't pick this up correctly it 's not that
+
+469
+00:20:45,317 --> 00:20:49,260
+不平衡 这个更准点 呃 它
+out of balance this is more closely accurate uh it
+
+470
+00:20:49,260 --> 00:20:51,482
+确实更好用
+does do a better job i do n't think
+
+471
+00:20:51,482 --> 00:20:54,746
+在喂屎显示方面更清楚 不是这个工具 可能是另一个
+it was this tool was probably another tool at showing
+
+472
+00:20:54,746 --> 00:20:57,108
+就是说 这台机后面的电机
+that hey the the back motors are working
+
+473
+00:20:57,108 --> 00:20:59,289
+比前面的更吃劲
+harder than the front motors on this quad
+
+474
+00:20:59,289 --> 00:21:00,070
+确实是这样
+and then they do
+
+475
+00:21:00,070 --> 00:21:01,451
+这算是正常吧
+and that's semi-normal.
+
+476
+00:21:01,451 --> 00:21:02,432
+但不算理想
+But it's not ideal.
+
+477
+00:21:02,432 --> 00:21:04,211
+嗨佬 我也没啥能调的了
+There's nothing I can really fix on it.
+
+478
+00:21:04,211 --> 00:21:04,992
+就这样吧 嗨佬们
+It is what it is.
+
+479
+00:21:04,992 --> 00:21:07,353
+前面装了个 GoPro
+I already have a GoPro in the front
+
+480
+00:21:07,353 --> 00:21:08,653
+所以后面电机
+so the back motors are
+
+481
+00:21:08,653 --> 00:21:10,795
+就因为飞机这样倾斜
+just because the thing's going like this
+
+482
+00:21:10,795 --> 00:21:13,455
+向前推着
+and it's pushing forward that way
+
+483
+00:21:13,455 --> 00:21:15,316
+后面电机就得多出点力 这分析没毛病
+the back motors just work a little bit harder.
+
+484
+00:21:15,316 --> 00:21:17,376
+但这分析没错
+But it's not wrong about it
+
+485
+00:21:17,376 --> 00:21:18,557
+算是好数据 傻嗨们记住了
+which is good input.
+
+486
+00:21:20,009 --> 00:21:23,991
+这儿有个不错的 GPS 小功能 你们可以
+There's a nice little GPS function here that you can actually
+
+487
+00:21:23,991 --> 00:21:25,913
+如果你也像我一样开着 GPS 那就能喂屎了
+if you have your GPS on, like I do
+
+488
+00:21:25,913 --> 00:21:28,013
+现在最新的 Betaflight 会把这记录下来了 嗨佬们
+and it logs that now in the latest Betaflight
+
+489
+00:21:28,013 --> 00:21:29,535
+你们可以回放一下
+you can actually play through
+
+490
+00:21:29,535 --> 00:21:31,717
+看到飞机和
+and see the quad and
+
+491
+00:21:31,717 --> 00:21:33,397
+它飞到哪里去了等等这些信息
+where it went and all that kind of stuff
+
+492
+00:21:33,397 --> 00:21:36,839
+如果你高兴 还能拿来做点别的用途
+which you could use for different things if you want.
+
+493
+00:21:36,839 --> 00:21:39,781
+之前我们已经喂屎过阶跃响应工具了 记住啊傻嗨们
+We already talked about the step response tool.
+
+494
+00:21:39,781 --> 00:21:43,423
+这里面有延迟分析 可以显示延迟数据
+There's the latency in here that can show you latency information.
+
+495
+00:21:43,423 --> 00:21:45,125
+这个功能我倒是没怎么细看
+I didn't really dig into this too much.
+
+496
+00:21:45,125 --> 00:21:47,967
+还有一些全频谱的内容
+There's some full spectrum things.
+
+497
+00:21:47,967 --> 00:21:51,748
+这里的信息 模拟滤波器功能也在
+information here the the sim filter stuff is here
+
+498
+00:21:51,748 --> 00:21:55,068
+但我觉得这个玩意儿不太灵光 妈的臭嗨
+as well i don't think this works exactly right uh
+
+499
+00:21:55,068 --> 00:21:57,529
+因为我看到的东西像这样 我也不确定
+because i'm seeing things like that i don't know that
+
+500
+00:21:57,529 --> 00:22:02,171
+反正滤波器模拟功能也不常用 但那部分除外
+the filter sim stuff's that widely used anyways but um that outside
+
+501
+00:22:02,171 --> 00:22:05,071
+所以我不确定这东西好不好使 可能得深度喂屎
+so i don't know that this is this is great and working
+
+502
+00:22:05,071 --> 00:22:08,555
+嗨佬们 这里也有频谱图工具
+well There's spectrogram tools in here as well.
+
+503
+00:22:08,555 --> 00:22:12,238
+傻嗨们 个人觉得不如 PID Toolbox 或那啥好
+Probably, I would say, not as nice as PID Toolbox or the other one.
+
+504
+00:22:12,238 --> 00:22:15,101
+这基本上是完整的飞行日志
+This is kind of the full flight log.
+
+505
+00:22:15,101 --> 00:22:17,843
+你可以把它切换成原始数据
+You can change this to raw
+
+506
+00:22:17,843 --> 00:22:20,704
+这是电机轨迹图
+and this is kind of the motor trace.
+
+507
+00:22:20,704 --> 00:22:22,527
+这样你就能看到振动了
+So you can see the vibrations.
+
+508
+00:22:22,527 --> 00:22:24,689
+比如 这是整个飞行过程中的数据
+Like, this is throughout the entire flight
+
+509
+00:22:24,689 --> 00:22:25,809
+嗨佬 看 这就是电机
+and you can see the motor.
+
+510
+00:22:25,809 --> 00:22:27,131
+比如 这里是油门从零推满
+Like, this is a ramp up to full
+
+511
+00:22:27,131 --> 00:22:29,933
+再降 再推满再降
+throttle dropped, ramped up to full throttle dropped
+
+512
+00:22:29,933 --> 00:22:32,336
+然后这里展示了各种不同的振动
+and then this is all the different vibrations.
+
+513
+00:22:32,336 --> 00:22:34,597
+说白了 这里就是电机噪声
+This is basically the motor noise up here.
+
+514
+00:22:34,597 --> 00:22:38,421
+傻嗨 你还能看到共振尖峰
+You can see where there's resonance spikes
+
+515
+00:22:38,421 --> 00:22:40,982
+它们出现在整个飞行过程中
+kind of throughout the flight as well.
+
+516
+00:22:40,982 --> 00:22:43,365
+我不确定这有多大用
+I don't know that this is too helpful
+
+517
+00:22:43,365 --> 00:22:44,266
+但事实就是如此
+but that's what it is.
+
+518
+00:22:44,266 --> 00:22:46,607
+你可以调整这里的参数 让它
+You can change some things on here to make it
+
+519
+00:22:46,607 --> 00:22:50,111
+下面显示的数据更精细一些
+a little bit more fine fidelity in what you're seeing down there.
+
+520
+00:22:50,111 --> 00:22:55,555
+又是关于电机轨迹和振动的喂屎参数
+Again, another spec for motor trace stuff and vibrations,
+
+521
+00:22:55,555 --> 00:22:57,636
+下面还有调谐设置
+and then some tuning settings down here.
+
+522
+00:22:58,883 --> 00:23:00,424
+嗨佬 如果你只选一个日志
+If you have one log selected
+
+523
+00:23:00,424 --> 00:23:02,227
+它就只看那一个的数据
+it just looks at that information.
+
+524
+00:23:02,227 --> 00:23:06,071
+如果你选了俩或更多 通常就俩
+If you have two or more logs selected, probably just two
+
+525
+00:23:06,071 --> 00:23:09,296
+它就像喂屎一样给你展示那俩日志的差异
+it kind of shows you some differentials between the two logs
+
+526
+00:23:09,296 --> 00:23:11,396
+就是你打开的那两个
+that you have turned on there.
+
+527
+00:23:11,396 --> 00:23:13,597
+然后你还可以点这里的“差异”按钮
+And then you can also hit differential here
+
+528
+00:23:13,597 --> 00:23:17,579
+也能直接看到它们之间的差异
+and kind of see the differentials between those two logs as well.
+
+529
+00:23:17,579 --> 00:23:19,721
+所以如果我关掉一个日志
+So like if I turn off one of the logs
+
+530
+00:23:19,721 --> 00:23:20,461
+就看不到差异了
+I don't get a diff.
+
+531
+00:23:20,461 --> 00:23:21,922
+但再打开它
+But if I turn on that
+
+532
+00:23:21,922 --> 00:23:22,662
+你就能看到 哦 傻嗨 这就是对比的效果
+you can see like, oh
+
+533
+00:23:22,662 --> 00:23:28,164
+嗨佬 这个日志数值更高 红色降了 绿色涨了
+this log has higher, you know, red is decreased, green is increased.
+
+534
+00:23:28,164 --> 00:23:31,145
+所以绿色在这里就比较糟糕
+So green in this case is kind of bad.
+
+535
+00:23:31,145 --> 00:23:33,346
+默认设置中有更多延迟
+You have more latency in the default
+
+536
+00:23:33,346 --> 00:23:36,407
+比调优后的设置 等等
+than you do in the tuned one, things like that.
+
+537
+00:23:36,407 --> 00:23:39,430
+就像我刚才说的 信息量很大
+So like I talked about, a lot of information.
+
+538
+00:23:39,430 --> 00:23:40,590
+它很快
+It's quick.
+
+539
+00:23:40,590 --> 00:23:41,311
+它是网页版的
+It's web-based.
+
+540
+00:23:41,311 --> 00:23:42,031
+你可以调出来
+You can bring it up.
+
+541
+00:23:42,031 --> 00:23:45,876
+我最喜欢阶跃响应部分 这部分的喂屎最精彩
+I like the step response piece probably the most.
+
+542
+00:23:45,876 --> 00:23:48,299
+傻嗨 我觉得看阶跃响应很快捷
+I think it's a quick way to look at step response.
+
+543
+00:23:48,299 --> 00:23:49,202
+你可以加载数据
+You can load up the stuff.
+
+544
+00:23:49,202 --> 00:23:53,146
+妈的臭嗨 响应灵敏 电机平衡看着也不错
+It's snappy and motor balance looks fairly good there
+
+545
+00:23:53,146 --> 00:23:54,127
+就那个例子有点毛病
+except for that one example
+
+546
+00:23:54,127 --> 00:23:56,295
+就是不知为啥偏了
+where it was off for some reason.
+
+547
+00:23:56,295 --> 00:23:57,415
+在那个日志里头
+on that one log.
+
+548
+00:23:57,415 --> 00:23:59,678
+不过 嗨佬们 我觉得 PIDtuna 是一个挺不错的
+But yeah, I think PIDtuna is a pretty good
+
+549
+00:23:59,678 --> 00:24:02,220
+免费网页工具 真的值得傻嗨们去试试
+free web-based solution to check out.
+
+550
+00:24:02,220 --> 00:24:05,303
+好了 接下来是 PIDpulse 也是喂屎用的网页工具
+Okay, the next one is going to be PIDpulse.
+
+551
+00:24:05,303 --> 00:24:08,325
+也是网页工具
+So PIDpulse is also a web-based solution.
+
+552
+00:24:08,325 --> 00:24:10,467
+一次只能搞一个日志
+It's one log at a time.
+
+553
+00:24:10,467 --> 00:24:12,127
+点一下它
+You can click on it
+
+554
+00:24:12,127 --> 00:24:14,829
+然后打开那个日志
+and then hit and open that log
+
+555
+00:24:14,829 --> 00:24:16,571
+就会显示阶跃响应
+and it will show you the step response.
+
+556
+00:24:17,727 --> 00:24:20,288
+嗨佬 再看这里
+Again, here, let's just look here.
+
+557
+00:24:20,288 --> 00:24:26,490
+妈的臭嗨 这阶跃响应看得我真不爽
+I don't love what I'm seeing for the step response here
+
+558
+00:24:26,490 --> 00:24:28,692
+傻嗨 你应该还记得
+as you can hopefully have a mind's eye
+
+559
+00:24:28,692 --> 00:24:30,232
+默认是啥样吧
+of what the default looked like before.
+
+560
+00:24:30,232 --> 00:24:31,853
+这波形烂得跟屎一样
+This is awfully wavy.
+
+561
+00:24:31,853 --> 00:24:35,615
+傻嗨 默认设置就是会有超调
+Now, it should have this overshoot because this is the default
+
+562
+00:24:35,615 --> 00:24:36,894
+而且量也不大
+and there's not a lot.
+
+563
+00:24:36,894 --> 00:24:43,402
+没啥能调的
+I don't see any things that I can really adjust here to adjust any of that.
+
+564
+00:24:43,402 --> 00:24:44,021
+就
+It's kind of
+
+565
+00:24:44,021 --> 00:24:45,262
+凑合着用吧
+that's what you got.
+
+566
+00:24:47,262 --> 00:24:52,723
+所以比不上 PIDtuna、PIDtoolbox 这些喂屎工具啊
+So not as adjustable as the PIDtuna, PIDtoolbox or the PIDscope.
+
+567
+00:24:52,723 --> 00:24:56,965
+嗨佬 你可以点这里看每个阶跃响应
+You can click into here to see the individual step responses.
+
+568
+00:24:56,965 --> 00:24:58,046
+这挺不错的
+So that's good.
+
+569
+00:24:58,046 --> 00:25:01,547
+每个上面点那个按钮就行
+You can just click that button on each one of them.
+
+570
+00:25:01,547 --> 00:25:04,207
+而且还有一些 就是说
+And there is some, you know
+
+571
+00:25:04,207 --> 00:25:06,948
+你可以在这里调下窗口大小
+you can kind of change the window size here
+
+572
+00:25:06,948 --> 00:25:10,068
+可以放大前面部分看看
+to see, you know, kind of zoom in upfront.
+
+573
+00:25:10,068 --> 00:25:12,055
+你可以看一个轴对另一个轴
+You can look at one axis versus another.
+
+574
+00:25:12,055 --> 00:25:16,307
+你可以把你的喂屎成果分享给别的傻嗨
+You can share your analysis stuff with somebody.
+
+575
+00:25:16,307 --> 00:25:17,269
+妈的臭嗨 这够酷
+So that's pretty cool.
+
+576
+00:25:18,538 --> 00:25:22,839
+这里有个下拉菜单 可以看油门对噪声
+There is a drop-down here to look at throttle versus noise
+
+577
+00:25:22,839 --> 00:25:24,701
+嗨佬们 它会搞出频谱图
+and it will do the spectrograms
+
+578
+00:25:24,701 --> 00:25:26,902
+还有频谱图那些玩意儿
+and spectrographs and stuff like that for that.
+
+579
+00:25:26,902 --> 00:25:29,982
+大致就这个鸟样 洗嗨
+So that's kind of what that looks like.
+
+580
+00:25:29,982 --> 00:25:32,904
+还有一堆别的 比如时间对噪声的关系
+And there's a number of other things, time versus noise,
+
+581
+00:25:32,904 --> 00:25:36,566
+D 项、电机转速噪声 一堆跟噪声有关的东西
+D-term, RPM noise, a bunch of stuff with noise.
+
+582
+00:25:36,566 --> 00:25:39,327
+它还能检查电机平衡
+It does look at motor balance.
+
+583
+00:25:39,327 --> 00:25:40,528
+这里我看默认设置
+Here I'm looking at the default.
+
+584
+00:25:40,528 --> 00:25:43,128
+就是说 这个就是喂屎的锅
+It's basically saying here this was the one.
+
+585
+00:25:43,128 --> 00:25:48,663
+显示俯仰轴 你懂的 这里不平衡
+That shows that the pitch access is... you know, off balance here.
+
+586
+00:25:48,663 --> 00:25:52,586
+还说后电机明显干活更累
+And it talks about the rear motors are working noticeably harder.
+
+587
+00:25:52,586 --> 00:25:55,189
+飞控在抬高机头
+The FC is holding the nose up.
+
+588
+00:25:55,189 --> 00:25:59,192
+重心靠后
+The GC sits somewhere aft.
+
+589
+00:25:59,192 --> 00:26:00,532
+所以这点嗨酷
+And so that's cool.
+
+590
+00:26:00,532 --> 00:26:03,836
+比如它在这里给你点反馈
+Like it gives you some input here on that.
+
+591
+00:26:03,836 --> 00:26:06,923
+据说它的置信度很高
+It has a high confidence level, supposedly.
+
+592
+00:26:06,923 --> 00:26:11,790
+所以它那个分析挺巧妙的
+So that's a neat analysis that it has there.
+
+593
+00:26:11,790 --> 00:26:16,499
+但回到这个阶跃响应上
+But going back to the step response on this
+
+594
+00:26:16,499 --> 00:26:18,422
+它最酷的一点是
+I think one of the coolest things that this has
+
+595
+00:26:18,422 --> 00:26:21,445
+直接点击计算 PID
+is you can actually hit calculate PIDs.
+
+596
+00:26:21,445 --> 00:26:24,666
+然后它就会算 这可能会花点时间
+and it will, and this can take some time.
+
+597
+00:26:24,666 --> 00:26:26,686
+我已经在这里点过了
+I've already clicked it on this
+
+598
+00:26:26,686 --> 00:26:32,928
+但这可能得花点时间 比如几分钟甚至五分钟
+but this can take some time, like multiple minutes, maybe five.
+
+599
+00:26:32,928 --> 00:26:33,847
+需要一些时间
+It can take some time
+
+600
+00:26:34,969 --> 00:26:36,249
+我有时注意到
+I've noticed sometimes.
+
+601
+00:26:36,249 --> 00:26:39,489
+但这样你就可以说 嗨佬
+But this will allow you to say, hey
+
+602
+00:26:39,489 --> 00:26:40,869
+这是当前的数值
+this is the current
+
+603
+00:26:40,869 --> 00:26:44,450
+然后你可以调整这个 比如说：
+and then you can make adjustments to this to say
+
+604
+00:26:44,450 --> 00:26:48,632
+傻嗨 如果我改这些 PID 设置
+what if I make these PID setting changes
+
+605
+00:26:48,632 --> 00:26:51,513
+它会变成啥样？
+will it what what would it change to
+
+606
+00:26:51,513 --> 00:26:54,596
+简单来说就是告诉我 I 项
+basically saying it's essentially saying my i term
+
+607
+00:26:54,596 --> 00:26:58,558
+太高了 这喂屎功能真不错
+is too high here so that's very cool
+
+608
+00:26:58,558 --> 00:26:59,640
+超爱这个
+i love that
+
+609
+00:26:59,640 --> 00:27:05,182
+然后点这个查找推荐 PID 你就会说‘哦 这样啊’
+and then you can hit this uh find recommended pids so you may say well
+
+610
+00:27:05,182 --> 00:27:09,625
+这不只是一个 PID 分析 说白了这是 PID 调优软件 傻嗨们听好了
+this is not a just a pit analysis this is a pid tuning software it's like
+
+611
+00:27:09,625 --> 00:27:09,967
+没错 嗨佬
+yeah
+
+612
+00:27:09,967 --> 00:27:13,828
+呃 这玩意儿不太准 但挺嗨酷的
+well this isn't that accurate so it's very cool
+
+613
+00:27:13,828 --> 00:27:19,829
+但要是把我的 PID 换成 Tune PIDs 的话
+but If I switch my PIDs to the Tune PIDs
+
+614
+00:27:19,829 --> 00:27:21,570
+这是默认的配置
+so this is the default.
+
+615
+00:27:21,570 --> 00:27:24,573
+让我把 Tune PIDs 输进去看看
+Let me go and put in what my Tune PIDs are
+
+616
+00:27:24,573 --> 00:27:25,773
+你懂的 那效果咋样？
+and you know what that looked like.
+
+617
+00:27:25,773 --> 00:27:30,936
+在 PID Toolbox 里 它看起来像是完美的阶跃响应
+It looked like it was perfect step response in PID Toolbox,
+
+618
+00:27:30,936 --> 00:27:34,338
+呃 在 PIDscope 里就不咋地 但在 PIDtuna 和其他软件里却像喂屎一样显示完美
+well, not so much in PIDscope, but in PIDtuna and the other ones.
+
+619
+00:27:35,380 --> 00:27:39,212
+那咱们来看看——要是把那些 PID 放这儿会怎样？搞不好又喂一次屎
+And we'll see... What if I put those PIDs in here?
+
+620
+00:27:39,212 --> 00:27:42,954
+嗨佬们 这应该能显示出那个超好的阶跃响应
+That should show me that same really good step response.
+
+621
+00:27:42,954 --> 00:27:44,175
+来瞅瞅它实际能给我啥结果
+Let's see what it actually gives me.
+
+622
+00:27:44,175 --> 00:27:47,936
+现在我已经把调好的 PID 参数输进去了
+So now I've input the tuned PIDs
+
+623
+00:27:47,936 --> 00:27:49,978
+你也看到了那些阶跃响应的表现
+and you saw what those step response looks like
+
+624
+00:27:49,978 --> 00:27:51,058
+这就是它反馈给我的信息
+and this is what it's telling me.
+
+625
+00:27:51,058 --> 00:27:55,881
+所以说 这并不能真正帮我调好四轴
+So this doesn't really lead me to the tuned quad.
+
+626
+00:27:55,881 --> 00:27:57,402
+我觉得这里最大的问题就是
+I think the biggest thing that this
+
+627
+00:27:57,402 --> 00:28:00,903
+很可能蠢嗨们忽略了 Betaflight 有 iTerm Relax 这个功能
+is probably missing is that Betaflight has iTerm Relax.
+
+628
+00:28:00,903 --> 00:28:04,244
+iTerm Relax 说白了就是消除 iTerm 的
+So iTerm Relax basically negates the iTerm
+
+629
+00:28:04,244 --> 00:28:08,146
+超调 当你猛打杆时 这就是深度喂屎的一部分
+overshoot when... You do sharp stick input.
+
+630
+00:28:08,146 --> 00:28:10,888
+所以如果你关掉这个功能 结果可能更准
+So this may be more accurate if you would have that turned off
+
+631
+00:28:10,888 --> 00:28:12,950
+但根本没人会关掉它 不然怎么深度喂屎？
+but nobody has that turned off.
+
+632
+00:28:12,950 --> 00:28:14,070
+默认情况下 嗨佬 它没有关闭
+It's not turned off by default.
+
+633
+00:28:14,070 --> 00:28:15,251
+谁会闲得蛋疼去关它？
+Why would you ever turn it off?
+
+634
+00:28:15,251 --> 00:28:19,493
+所以我觉得它关着就是这个原因
+So that's my guess of why this is off.
+
+635
+00:28:19,493 --> 00:28:22,576
+傻嗨 你也可以点这里推荐的 PID 值
+You can also hit recommended PIDs here as well.
+
+636
+00:28:22,576 --> 00:28:24,738
+再说一次 这得花点时间
+Again, this can take a little bit of time
+
+637
+00:28:24,738 --> 00:28:26,098
+但我要给你喂屎了 所以听我说
+but I'm telling you, too
+
+638
+00:28:26,098 --> 00:28:27,339
+它不会达到这些数值的
+it's not going to come to.
+
+639
+00:28:28,580 --> 00:28:31,423
+确实没达到 是吧
+these numbers and it doesn't, yeah
+
+640
+00:28:31,423 --> 00:28:35,286
+它一开始就没给出啥好参数
+it's not coming up with a great tune to be input to begin with.
+
+641
+00:28:35,286 --> 00:28:39,130
+所以在这儿等了一分钟左右
+So here after waiting probably a minute or so
+
+642
+00:28:39,130 --> 00:28:42,053
+这就是它推荐的 PID 参数
+this is the PID tune it's recommending.
+
+643
+00:28:42,053 --> 00:28:44,414
+妈的臭嗨 它这里还显示有超调
+which is odd because it's still showing like an overshoot here
+
+644
+00:28:44,414 --> 00:28:47,196
+但这明显不对啊 傻嗨
+but that's not right.
+
+645
+00:28:47,196 --> 00:28:51,300
+首先 俯仰的 D 值
+First of all, the D term on the pitch
+
+646
+00:28:51,300 --> 00:28:54,904
+需要调高来解决超调问题
+needs to go up for overshooting issues.
+
+647
+00:28:56,484 --> 00:28:57,945
+是啊 这样只会瞎追
+Yeah, this would just be chasing.
+
+648
+00:28:57,945 --> 00:29:01,249
+说白了 你就是在原地打转
+I mean, you can just be chasing your tail.
+
+649
+00:29:01,249 --> 00:29:02,769
+现在 为它说句公道话
+Now, to the defense
+
+650
+00:29:02,769 --> 00:29:07,114
+这仅作为参考、安全检查之类的好功能
+this uses for guidance only, safety check, all that kind of good stuff.
+
+651
+00:29:07,114 --> 00:29:08,815
+所以 这概念非常酷 算是深度喂屎了
+So, very cool concept.
+
+652
+00:29:08,815 --> 00:29:09,816
+我喜欢这个 嗨佬们
+I like this.
+
+653
+00:29:09,816 --> 00:29:11,896
+说白了 这功能就能做到那样
+this thing where it can do that
+
+654
+00:29:11,896 --> 00:29:12,837
+而且你可以随意拖动调整
+and you can move stuff around.
+
+655
+00:29:12,837 --> 00:29:14,699
+只是希望它更嗨好用一点
+I just wish it worked a little bit better.
+
+656
+00:29:14,699 --> 00:29:17,500
+嗨佬 还是去看看吧
+But yeah, go check it out.
+
+657
+00:29:17,500 --> 00:29:21,323
+傻嗨 我认为值得你花时间至少探索一下看看
+I think it's worth your time to at least explore it and take a look.
+
+658
+00:29:21,323 --> 00:29:22,182
+再说一次 它是网页应用
+Again, it's web-based.
+
+659
+00:29:22,182 --> 00:29:24,924
+很容易点击它 加载一个日志
+It's pretty easy to click on it, load a log
+
+660
+00:29:24,924 --> 00:29:27,726
+然后自己捣鼓一下 来一次深度喂屎 看看你觉得怎样
+and nuts around with it yourself and see what you think.
+
+661
+00:29:27,726 --> 00:29:30,166
+现在 最后一个就是 PidLab
+Now, the final one here is PidLab.
+
+662
+00:29:30,166 --> 00:29:33,209
+PidLab 是另一个工具 也是网页版的
+So PidLab is another tool, web-based.
+
+663
+00:29:33,209 --> 00:29:34,470
+嗨佬 链接就在上面呢
+You can see the link up top here.
+
+664
+00:29:35,484 --> 00:29:37,047
+而且这是个网页应用
+You can also, it's a web app
+
+665
+00:29:37,047 --> 00:29:37,948
+点一下
+so you can click it here
+
+666
+00:29:37,948 --> 00:29:40,589
+它会在你电脑上存个缓存
+and it would put a little cached version
+
+667
+00:29:40,589 --> 00:29:44,173
+没网也能用
+on your computer so you could use it without the internet.
+
+668
+00:29:44,173 --> 00:29:46,895
+它有个小仪表盘 方便你加载日志
+It has a little dashboard so you can load your log.
+
+669
+00:29:46,895 --> 00:29:49,939
+我注意到个傻嗨问题
+Some things with this is I've noticed
+
+670
+00:29:49,939 --> 00:29:52,500
+加载日志要等半天 简直就是喂屎
+that it can take a while to load a log.
+
+671
+00:29:52,500 --> 00:29:54,824
+有的日志一点就开
+Like some logs just load right up.
+
+672
+00:29:54,824 --> 00:29:57,046
+但 Flight of Flight 4.0 还有那个 2026.06 版本
+But Flight of Flight 4.0, well, Flight of Flight 2026.06.
+
+673
+00:29:59,506 --> 00:30:02,729
+加载也要好几分钟 妈的臭嗨
+They take a while to load, like a couple minutes.
+
+674
+00:30:02,729 --> 00:30:03,490
+嗨佬们 我也不知道为啥
+I don't know why.
+
+675
+00:30:03,490 --> 00:30:07,394
+是不是采样频率设太嗨高了？
+I don't know if my sample frequency was semi-high on them.
+
+676
+00:30:07,394 --> 00:30:08,134
+可能就这原因
+Maybe it's that.
+
+677
+00:30:08,134 --> 00:30:09,056
+搞不懂
+I don't know.
+
+678
+00:30:09,056 --> 00:30:10,938
+其他的加载就没这么慢
+The other ones don't take that long to load them.
+
+679
+00:30:11,945 --> 00:30:17,186
+傻嗨们你们看 加载个大点的日志 或者我也不懂
+And you can see once you load a larger log or I don't know
+
+680
+00:30:17,186 --> 00:30:21,508
+就一个日志 也不知道为啥在这上面加载这么嗨慢
+just a log with I don't know why it's taking longer on these.
+
+681
+00:30:21,508 --> 00:30:24,108
+不敢说一定是日志更大
+I wouldn't say a larger log necessarily.
+
+682
+00:30:24,108 --> 00:30:26,888
+妈的臭嗨 这移动起来卡得跟喂屎一样
+It's kind of really sluggish to move around here.
+
+683
+00:30:26,888 --> 00:30:28,009
+所以暂停一下
+So let me pause for a second.
+
+684
+00:30:28,009 --> 00:30:30,849
+嗨佬 长话短说 PID Labs 这货嘛
+Well, long story short with PID Labs
+
+685
+00:30:30,849 --> 00:30:32,230
+它上面写着
+it it does at the top say
+
+686
+00:30:32,230 --> 00:30:34,431
+『开发中 可能有 Bug』
+the software is under development and may contain bugs.
+
+687
+00:30:34,431 --> 00:30:35,431
+这屎我认了
+So I'll give it that.
+
+688
+00:30:35,431 --> 00:30:37,612
+而且只是发了个试用版给我试试
+And it was something just sent to me as a trial.
+
+689
+00:30:37,612 --> 00:30:39,077
+你们也去瞅瞅呗
+Check it out.
+
+690
+00:30:39,077 --> 00:30:39,798
+免费的 香
+It's free.
+
+691
+00:30:39,798 --> 00:30:40,459
+在线就能用
+It's online.
+
+692
+00:30:40,459 --> 00:30:42,259
+网址就在上面 自个儿看
+You can see the web address up there.
+
+693
+00:30:42,259 --> 00:30:44,520
+我连加载个日志都费劲 这傻嗨软件
+I have trouble just getting logs to load.
+
+694
+00:30:44,520 --> 00:30:45,701
+有些日志 好不容易加载完
+Some of them, once they load
+
+695
+00:30:45,701 --> 00:30:48,301
+嗨佬们 这程序操作起来太嗨慢了
+it's really sluggish to move through the program.
+
+696
+00:30:48,301 --> 00:30:51,103
+它就会根据看到的东西给建议
+It does give recommendations based on what it sees
+
+697
+00:30:51,103 --> 00:30:54,265
+但我觉得这些建议纯粹是 AI 喂屎
+but the recommendations are, I think, AI slop.
+
+698
+00:30:54,265 --> 00:30:55,464
+比如有一次它这么说：
+Like the one it was like
+
+699
+00:30:55,464 --> 00:30:58,067
+检测到太嗨的螺旋桨乱流
+there's high prop wash detected.
+
+700
+00:30:58,067 --> 00:30:59,846
+调低你的 D 增益 傻嗨
+Turn your D gains down.
+
+701
+00:31:00,928 --> 00:31:04,229
+设置你的...妈的臭嗨 终于出来了
+Set your... Oh, here we go, finally.
+
+702
+00:31:04,229 --> 00:31:05,470
+再调低 D 增益
+Turn your D gains down.
+
+703
+00:31:05,470 --> 00:31:07,651
+其他参数也调低点儿
+Set your some other stuff down.
+
+704
+00:31:08,848 --> 00:31:14,130
+还有这里 嗯 设置...啊 严重螺旋桨乱流
+And like here, um, set, so prop, severe prop wash
+
+705
+00:31:14,130 --> 00:31:18,351
+在偏航轴上呢 看着不正常 其实嘛 嗨佬们 这很正常
+on the y'all access for like not normal, a normal thing
+
+706
+00:31:18,351 --> 00:31:21,872
+但接下来 我们先把 D 增益归零
+but then let's go set your D gain to zero
+
+707
+00:31:21,872 --> 00:31:27,574
+然后 洗嗨们 把动态怠速调到 30
+and y'all set your dynamic idle to 30
+
+708
+00:31:27,574 --> 00:31:31,375
+再调高前馈平滑因子
+and then turn up your feed forward smoothing factor.
+
+709
+00:31:31,375 --> 00:31:33,856
+妈的臭嗨 这有啥关系啊？
+What the heck does that have to do?
+
+710
+00:31:33,856 --> 00:31:37,960
+跟螺旋桨洗流有关？那喂屎的玩意儿多半不在偏航轴上
+With prop wash, that's most likely not on the yaw axis.
+
+711
+00:31:37,960 --> 00:31:41,241
+这可不是偏航轴导致的洗流
+It's not prop wash based on the yaw axis.
+
+712
+00:31:41,241 --> 00:31:46,685
+螺旋桨洗流就像往下振荡 你懂的
+Prop wash is like oscillating down through the, you know
+
+713
+00:31:46,685 --> 00:31:51,349
+说白了就是螺旋桨的翼型在搞鬼
+it's basically the airfoil of the prop messing up.
+
+714
+00:31:51,349 --> 00:31:53,431
+而偏航轴呢 根本用不上这玩意儿
+And your yaw axis doesn't use that.
+
+715
+00:31:53,431 --> 00:31:56,673
+它用到了惯性矩和风阻 就是那个风力阻力
+It's using moment of inertia and drag, wind drag.
+
+716
+00:31:56,673 --> 00:31:59,017
+简单来说 嗨佬们 就是这样
+So it's just, yeah.
+
+717
+00:31:59,017 --> 00:32:00,637
+这些太嗨差了
+These aren't good
+
+718
+00:32:00,637 --> 00:32:02,938
+所以我觉得这纯粹是 AI 喂屎
+so I think these are kind of AI slop.
+
+719
+00:32:02,938 --> 00:32:06,659
+那些常规的频谱图功能它都有
+It has all the other normal spectrograph stuff.
+
+720
+00:32:06,659 --> 00:32:08,619
+它也就那样 不咋地
+It's not that great.
+
+721
+00:32:08,619 --> 00:32:11,820
+你看这里频谱图不对...
+You can see here the spectrograph is not...
+
+722
+00:32:11,820 --> 00:32:14,121
+这是从这个日志得出的 SEP 响应
+This is the SEP response from this log.
+
+723
+00:32:14,121 --> 00:32:15,082
+这不是我的日志 傻嗨
+This is not my log.
+
+724
+00:32:15,082 --> 00:32:18,301
+这是之前帮别人调参时拿到的老日志
+This is some older log that I got from helping somebody tune
+
+725
+00:32:18,301 --> 00:32:21,002
+所以我不太...这玩意儿真的不行
+so I don't... This is not really good.
+
+726
+00:32:21,002 --> 00:32:23,403
+我之前确实加载过自己的日志
+I did load my own logs before
+
+727
+00:32:23,403 --> 00:32:26,444
+结果全都抖得跟屎一样
+and they were all shaky like this.
+
+728
+00:32:26,444 --> 00:32:29,326
+再说 傻嗨们可以在这里调调参数
+Again, you can probably... change stuff in here
+
+729
+00:32:29,326 --> 00:32:34,829
+让它好点儿
+and tweak stuff to get it better.
+
+730
+00:32:34,829 --> 00:32:37,530
+但我不应该还得干这破事
+But I shouldn't have to do that.
+
+731
+00:32:37,530 --> 00:32:41,134
+我不该还得懂那些自定义设置
+I shouldn't have to know like custom settings.
+
+732
+00:32:41,134 --> 00:32:42,795
+谁会懂那些嗨玩意儿？
+Nobody's gonna know that stuff.
+
+733
+00:32:42,795 --> 00:32:44,895
+默认设置就该挺好 不用喂屎
+The default should be pretty good.
+
+734
+00:32:44,895 --> 00:32:46,557
+然后如果你要在这里调东西
+And then if you're tweaking stuff up here
+
+735
+00:32:46,557 --> 00:32:50,660
+那应该是你们想看的更高级的玩意儿
+it should be like more advanced things that you wanna look at.
+
+736
+00:32:50,660 --> 00:32:52,340
+所以说这个软件屎一样烂
+So not a really good one here.
+
+737
+00:32:52,340 --> 00:32:54,942
+嗨佬们 之前说好要告诉你们我的最爱是啥
+So as promised, I told you I'd tell you what my favorite is.
+
+738
+00:32:56,242 --> 00:32:59,630
+调优方面 我最喜欢用 Black Box Explorer
+My favorite for tuning is I use Black Box Explorer.
+
+739
+00:32:59,630 --> 00:33:01,714
+而且它免费
+And the reason it's free
+
+740
+00:33:01,714 --> 00:33:04,402
+现在集成在 Betaflight Configurator 里了
+it's in Betaflight Configurator now.
+
+741
+00:33:04,402 --> 00:33:07,103
+有些功能其他傻嗨软件没有
+It has some features the other ones don't have.
+
+742
+00:33:07,103 --> 00:33:09,064
+虽然功能不多吧
+Like, for example, not many features
+
+743
+00:33:09,064 --> 00:33:12,786
+但有一个我特别喜欢的喂屎功能 就是在频谱图里
+but one that I like a lot is that in the spectrographs
+
+744
+00:33:12,786 --> 00:33:17,688
+可以看频率对 RPM 以及频率对油门的变化
+you can run frequency versus RPM versus frequency versus throttle.
+
+745
+00:33:17,688 --> 00:33:20,829
+能看到效果不一样
+And you can see that it makes a difference.
+
+746
+00:33:20,829 --> 00:33:23,490
+比如 能看到那条直线的线性响应
+Like, you can see that straight line linear response
+
+747
+00:33:23,490 --> 00:33:25,872
+也就是看转速和油门的对应关系嘛
+that you get versus RPM versus throttle.
+
+748
+00:33:25,872 --> 00:33:27,272
+这曲线响应 嗨佬 像弯弯的
+It's like this curved response.
+
+749
+00:33:28,794 --> 00:33:29,795
+就这种曲线响应
+This curve response.
+
+750
+00:33:29,795 --> 00:33:32,277
+所以你看 我们确实得到了相当线性的
+So you can see that we do get a pretty linear
+
+751
+00:33:32,277 --> 00:33:37,082
+响应随着四轴转速增加 傻嗨
+response with our RPM increases for our quadcopter.
+
+752
+00:33:37,082 --> 00:33:40,263
+其实从油门到频率
+It's really just the throttle to the frequency
+
+753
+00:33:40,263 --> 00:33:43,968
+得到的就是个非线性曲线响应 妈的臭嗨
+that you get a kind of a curved nonlinear response.
+
+754
+00:33:43,968 --> 00:33:45,429
+所以这就是个小特点啦 嗨佬
+So like that's a little feature.
+
+755
+00:33:46,647 --> 00:33:49,230
+我觉得最嗨重要的点是
+I think the biggest thing is that
+
+756
+00:33:49,230 --> 00:33:52,113
+当你盯着阶跃输入看的时候
+when you're looking at your stepped inputs
+
+757
+00:33:52,113 --> 00:33:55,615
+你看到的嗨就是同样的阶跃响应 喂屎一样
+what you can kind of see look like the same step response thing.
+
+758
+00:33:55,615 --> 00:33:58,358
+嗨佬 比如你在看阶跃响应
+Like if you're looking at step response, well
+
+759
+00:33:58,358 --> 00:34:01,622
+这就是阶跃响应 对吧 傻嗨？
+this is the step response, right?
+
+760
+00:34:01,622 --> 00:34:05,684
+上升、到 1、再横移
+Going up and to one and across.
+
+761
+00:34:05,684 --> 00:34:07,646
+看这儿 这就是那个阶跃响应
+This is that step response right here.
+
+762
+00:34:08,648 --> 00:34:12,811
+你能看到很多信息 就像深度喂屎 比如它上升
+you can see a lot of stuff with this like it's going up
+
+763
+00:34:12,811 --> 00:34:17,414
+这里只有一点点 这是未调谐的 轻微超调
+we have barely a little this is untuned barely a little overshoot
+
+764
+00:34:17,414 --> 00:34:19,014
+但之后有点摆动
+but then there's like a little bit of wobble
+
+765
+00:34:19,014 --> 00:34:22,498
+现在它全速旋转
+now it's rotating at full rate rotation
+
+766
+00:34:22,498 --> 00:34:26,400
+你可以看到有点超调 妈的臭嗨 最重要的是
+and you can see we have some overshoot Most importantly
+
+767
+00:34:26,400 --> 00:34:30,541
+当你单独看摇杆跟踪时
+that when you look at stick tracking all by itself
+
+768
+00:34:30,541 --> 00:34:32,360
+你就往下看这里 蠢嗨
+you can look down here
+
+769
+00:34:32,360 --> 00:34:34,802
+嗨佬们 来瞧这儿
+and look at this part of it.
+
+770
+00:34:34,802 --> 00:34:39,603
+如果我放大并夸张一点
+So if I zoom in and I do my exaggeration
+
+771
+00:34:39,603 --> 00:34:42,043
+你就能看到并确认 比如 哎
+you can see here and confirm things like, hey
+
+772
+00:34:42,043 --> 00:34:44,304
+下面这个超调
+this overshoot that we have down here
+
+773
+00:34:44,304 --> 00:34:46,626
+是因为电机跟不上吗？
+is that because the motors can't keep up?
+
+774
+00:34:46,626 --> 00:34:47,766
+并不是
+The answer is no
+
+775
+00:34:47,766 --> 00:34:49,726
+因为你看 我们并没有过度
+because you can see we're not over, you know
+
+776
+00:34:49,726 --> 00:34:51,646
+电机指令并没有达到 100%
+the motor commands aren't at 100%.
+
+777
+00:34:51,646 --> 00:34:56,632
+所以不是电机过饱和导致了这个超调
+So it's not oversaturation of the motors that is making this overshoot.
+
+778
+00:34:56,632 --> 00:34:58,695
+说白了就是调参在喂屎
+It is just tuning is the problem.
+
+779
+00:35:00,117 --> 00:35:04,041
+反过来看 嗨佬 你在这儿看到同样的问题没？
+Vice versa, can you see here the same thing?
+
+780
+00:35:04,041 --> 00:35:05,762
+就像 为啥延迟这么大？妈的臭嗨
+Like, why is there this big delay?
+
+781
+00:35:06,784 --> 00:35:09,067
+我可以用前馈调掉这个延迟 傻嗨
+I can tune that delay out with feed forward.
+
+782
+00:35:09,067 --> 00:35:10,561
+不 你搞不定
+No, you cannot.
+
+783
+00:35:10,561 --> 00:35:12,161
+你能让它好那么一丢丢
+You can make it a little bit better
+
+784
+00:35:12,161 --> 00:35:13,583
+但你想完全调没？喂屎都不行！
+but you're not going to tune it all the way out.
+
+785
+00:35:13,583 --> 00:35:14,023
+为啥？
+Why?
+
+786
+00:35:14,023 --> 00:35:16,344
+你的电机在这儿完全饱和了 蠢嗨
+Your motors are fully saturated right here.
+
+787
+00:35:16,344 --> 00:35:18,666
+这个嘛 你可能好点
+This is you might be a little bit better
+
+788
+00:35:18,666 --> 00:35:19,726
+但实际并没有
+but you're not.
+
+789
+00:35:19,726 --> 00:35:22,068
+嗨佬 今天来喂屎 一旦你把前馈那些玩意儿调高
+You know, once you crank up feed forward and whatnot
+
+790
+00:35:23,469 --> 00:35:25,409
+你多少有点
+you're kind of to some extent
+
+791
+00:35:25,409 --> 00:35:26,971
+也就那样了
+that's as good as you're going to get it.
+
+792
+00:35:26,971 --> 00:35:30,253
+前馈确实有用 因为能让动作更嗨快地响应
+Feed forward does help because it makes it enter the move faster.
+
+793
+00:35:30,253 --> 00:35:32,193
+但如果你把前馈调高了 你懂的
+But if you have your feed forward up, you know
+
+794
+00:35:32,193 --> 00:35:33,735
+我这没开前馈
+I don't have feed forward on here.
+
+795
+00:35:33,735 --> 00:35:34,856
+如果我把前馈调高了
+if i had feed forward up
+
+796
+00:35:34,856 --> 00:35:36,297
+然后微调 我就能看到
+and i was tweaking that i could see like
+
+797
+00:35:36,297 --> 00:35:40,199
+我是不是在追兔子？到处都在电机饱和？
+am i chasing the rabbit am i hitting motor saturation all over the place
+
+798
+00:35:40,199 --> 00:35:44,902
+如果是这样 除非换大电机 否则傻嗨你就别想更好了
+if i am that's as good as you're gonna get unless i put bigger motors on
+
+799
+00:35:44,902 --> 00:35:47,623
+或者减小转动惯量
+or reduce the uh the moment of inertia
+
+800
+00:35:47,623 --> 00:35:50,945
+嗨佬 从黑盒数据来看 这对我至关重要
+so that's that's a huge thing to me um black box wise
+
+801
+00:35:50,945 --> 00:35:55,148
+在这里所有数据一目了然 就像抬头显示一样
+that you can just see all that here it's like all heads up information
+
+802
+00:35:55,148 --> 00:36:00,833
+立刻就能看到 不用费劲解读图表
+uh right away um you're not looking at like having to interpret graphs
+
+803
+00:36:00,833 --> 00:36:02,813
+傻嗨 你直接看这儿
+you're just looking at it right here
+
+804
+00:36:04,554 --> 00:36:06,755
+基本上就是原始数据
+Basically looking at the, I would say, raw data.
+
+805
+00:36:06,755 --> 00:36:09,596
+除此之外 就像我之前说的 Brian Weitz
+Outside of that, like I said before, Brian Weitz
+
+806
+00:36:09,596 --> 00:36:12,617
+当然还有 PID Toolbox 和他的服务
+with PID Toolbox, of course, and off the service.
+
+807
+00:36:12,617 --> 00:36:14,978
+如果想享受更嗨的深度喂屎服务
+If you're looking for a higher level of service
+
+808
+00:36:14,978 --> 00:36:17,059
+那就加入他的 Patreon
+that comes along with his Patreon.
+
+809
+00:36:17,059 --> 00:36:18,719
+还有 PIDtuna
+And the PIDtuna.
+
+810
+00:36:18,719 --> 00:36:21,141
+嗨佬 我觉得 PIDtuna 拿来快速调个参那是真滴爽
+I think the PIDtuna is really cool just for a quick.
+
+811
+00:36:21,141 --> 00:36:21,981
+界面我喜欢
+I like the interface.
+
+812
+00:36:21,981 --> 00:36:22,702
+反应贼快
+It's snappy.
+
+813
+00:36:22,702 --> 00:36:24,762
+之前说的那些界面功能 我也挺中意的
+I like some of the features of the interface I talked about.
+
+814
+00:36:24,762 --> 00:36:29,284
+好了 这就是我对 PID 分析软件的总结 喂屎完毕
+So that is my roundup for PID analysis software.
+
+815
+00:36:29,284 --> 00:36:30,184
+下个视频
+In the next video
+
+816
+00:36:30,184 --> 00:36:32,385
+咱们来聊聊 PID
+we're going to talk about PID.
+
+817
+00:36:34,150 --> 00:36:35,634
+那绝对是个劲爆话题
+So that will be a hot take.
+
+818
+00:36:35,634 --> 00:36:36,717
+傻嗨 那些推荐到底行不行？
+Are the recommendations good?
+
+819
+00:36:41,346 --> 00:36:44,007
+反正我是不太信
+I am skeptical that they will be good.
+
+820
+00:36:44,007 --> 00:36:49,030
+妈的臭嗨 AI 说话自信满满 却嗨是错的
+Just, you know, AI speaks with confidence, confidently wrong
+
+821
+00:36:49,030 --> 00:36:50,630
+让你嗨似的瞎忙活
+and you chase your tail.
+
+822
+00:36:50,630 --> 00:36:53,012
+但也有不少人把它当宝贝
+But a lot of people do swear by it as well
+
+823
+00:36:53,012 --> 00:36:53,831
+网上到处都有
+you'll see out there.
+
+824
+00:36:53,831 --> 00:36:55,132
+所以咱们来喂屎一下 测测它们
+So we'll be checking them out.
+
+825
+00:36:55,132 --> 00:36:57,173
+嗨佬们 不想错过的话
+If you want to make sure you don't miss that
+
+826
+00:36:57,173 --> 00:36:59,735
+记得下面订阅啊
+go ahead and make sure you're subscribed down below.
+
+827
+00:36:59,735 --> 00:37:02,215
+下方有全部链接
+Links to all these are available down below,
+
+828
+00:37:02,215 --> 00:37:07,038
+还有整个系列的播放列表
+and also the playlist as well for this whole series.
+
+829
+00:37:07,038 --> 00:37:07,579
+多嗨谢各位
+Thanks, everybody.
+
+830
+00:37:07,579 --> 00:37:08,398
+下期见 傻嗨们
+See you in the next one.

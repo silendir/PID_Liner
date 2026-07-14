@@ -1,0 +1,4148 @@
+1
+00:00:00,151 --> 00:00:03,374
+All right, there's a whole bunch of new PID tuning softwares out there
+
+
+2
+00:00:03,374 --> 00:00:05,656
+but are they really PID tuning softwares?
+
+
+3
+00:00:05,656 --> 00:00:06,917
+Well, not all of them.
+
+
+4
+00:00:06,917 --> 00:00:08,058
+A good bit of them
+
+
+5
+00:00:08,058 --> 00:00:12,062
+these you can see on the screen, are really PID analysis softwares.
+
+
+6
+00:00:12,062 --> 00:00:13,643
+They take your black box logs
+
+
+7
+00:00:13,643 --> 00:00:16,826
+and your flight from your tuning session,
+
+
+8
+00:00:16,826 --> 00:00:20,289
+and it will... Go through and analyze the log data
+
+
+9
+00:00:20,289 --> 00:00:22,491
+give you step response, spectrographs
+
+
+10
+00:00:22,491 --> 00:00:24,373
+all the stuff you can see down here
+
+
+11
+00:00:24,373 --> 00:00:28,096
+down below to help you analyze the flight characteristics
+
+
+12
+00:00:28,096 --> 00:00:30,438
+and do the tuning yourself, really.
+
+
+13
+00:00:30,438 --> 00:00:31,279
+And many of these
+
+
+14
+00:00:31,279 --> 00:00:36,123
+if not all of them, are really based on the OG PID toolbox
+
+
+15
+00:00:36,123 --> 00:00:38,525
+which has been out for years by Brian White.
+
+
+16
+00:00:38,525 --> 00:00:43,989
+PID Toolbox used to be open source and freely available.
+
+
+17
+00:00:43,989 --> 00:00:47,092
+Now it's a part of his Patreon subscription for $6 a month
+
+
+18
+00:00:47,092 --> 00:00:50,594
+or just $6 for one month if you want to grab it that way.
+
+
+19
+00:00:50,594 --> 00:00:53,717
+So it's not really expensive in any way and shape or form.
+
+
+20
+00:00:53,717 --> 00:00:54,658
+And it's been out there.
+
+
+21
+00:00:54,658 --> 00:00:57,920
+It's the first one I'm aware of in the FPV community, at least
+
+
+22
+00:00:57,920 --> 00:00:59,121
+that looked at step response
+
+
+23
+00:00:59,121 --> 00:01:00,642
+and a number of other things.
+
+
+24
+00:01:00,642 --> 00:01:02,904
+It really begs the question if these other ones
+
+
+25
+00:01:02,904 --> 00:01:04,844
+are not just really iterations
+
+
+26
+00:01:04,844 --> 00:01:07,968
+of it taking the open source code that was there at the time
+
+
+27
+00:01:07,968 --> 00:01:12,131
+and vibe coding them into another package shape or form.
+
+
+28
+00:01:12,131 --> 00:01:13,512
+That all being said
+
+
+29
+00:01:13,512 --> 00:01:14,692
+after going through these
+
+
+30
+00:01:14,692 --> 00:01:16,754
+there's a number of differences between them all
+
+
+31
+00:01:16,754 --> 00:01:17,955
+and a number of unique
+
+
+32
+00:01:17,955 --> 00:01:20,418
+and good features on some of them.
+
+
+33
+00:01:20,418 --> 00:01:21,438
+So in this video
+
+
+34
+00:01:21,438 --> 00:01:22,939
+we're going to continue the series
+
+
+35
+00:01:22,939 --> 00:01:25,962
+and go through the software that you see up here
+
+
+36
+00:01:25,962 --> 00:01:29,046
+and kind of give you my thoughts on what's good, bad
+
+
+37
+00:01:29,046 --> 00:01:30,087
+what doesn't work
+
+
+38
+00:01:30,087 --> 00:01:32,049
+what does work really well
+
+
+39
+00:01:32,049 --> 00:01:35,171
+and just kind of give you a breakdown of everything.
+
+
+40
+00:01:35,171 --> 00:01:37,393
+A lot of these are web-based UI apps
+
+
+41
+00:01:37,393 --> 00:01:39,656
+so you can just go to a certain website and it's all there.
+
+
+42
+00:01:39,656 --> 00:01:41,096
+You can load your logs, so very easy.
+
+
+43
+00:01:41,096 --> 00:01:42,518
+You don't have to install things.
+
+
+44
+00:01:42,518 --> 00:01:45,161
+And we will compare them against the OG PID toolbox
+
+
+45
+00:01:45,161 --> 00:01:46,923
+to see what the results give.
+
+
+46
+00:01:46,923 --> 00:01:48,245
+Do they give the same result?
+
+
+47
+00:01:48,245 --> 00:01:50,227
+Because this is kind of tried and true and tested.
+
+
+48
+00:01:50,227 --> 00:01:53,010
+Brian is definitely an expert tuner
+
+
+49
+00:01:53,010 --> 00:01:54,792
+and really knows what he's doing.
+
+
+50
+00:01:54,792 --> 00:01:55,953
+By and large, like I said
+
+
+51
+00:01:55,953 --> 00:02:00,298
+he's probably the one that I would think developed the core basis of this
+
+
+52
+00:02:00,298 --> 00:02:04,882
+that the rest are kind of a... a derivative of to begin with.
+
+
+53
+00:02:04,882 --> 00:02:06,043
+Now before we get started
+
+
+54
+00:02:06,043 --> 00:02:09,406
+what we're going to be doing is loading some log files in
+
+
+55
+00:02:09,406 --> 00:02:11,187
+and it's going to be of this quadcopter
+
+
+56
+00:02:11,187 --> 00:02:13,889
+which we used in the last video in this series.
+
+
+57
+00:02:13,889 --> 00:02:14,590
+In the last video
+
+
+58
+00:02:14,590 --> 00:02:16,770
+we looked at the different input types,
+
+
+59
+00:02:16,770 --> 00:02:20,002
+wobble, chirp, of just sharp step inputs
+
+
+60
+00:02:20,002 --> 00:02:22,264
+and what some of the differences are
+
+
+61
+00:02:22,264 --> 00:02:23,726
+that you get in step response.
+
+
+62
+00:02:23,726 --> 00:02:25,247
+The conclusion of that testing
+
+
+63
+00:02:25,247 --> 00:02:26,367
+at least to me,
+
+
+64
+00:02:26,367 --> 00:02:32,111
+was that just implementing sharp stick inputs produced better results
+
+
+65
+00:02:32,111 --> 00:02:35,877
+or more accurate results for step response tools like this
+
+
+66
+00:02:35,877 --> 00:02:40,938
+over here in your flight analysis for your pits.
+
+
+67
+00:02:40,938 --> 00:02:43,120
+So just doing sharp stick inputs.
+
+
+68
+00:02:43,120 --> 00:02:44,920
+Now, if you haven't seen that video,
+
+
+69
+00:02:44,920 --> 00:02:47,360
+go ahead and check out the playlist down below.
+
+
+70
+00:02:47,360 --> 00:02:48,502
+We'll have that.
+
+
+71
+00:02:48,502 --> 00:02:52,962
+And then I also make a link to an old video I have.
+
+
+72
+00:02:52,962 --> 00:02:56,383
+about doing sharp stick inputs for pit analysis.
+
+
+73
+00:02:56,383 --> 00:02:59,324
+So it kind of comes back to that.
+
+
+74
+00:02:59,324 --> 00:03:03,086
+The chirp and the wobble are good for repeatability
+
+
+75
+00:03:03,086 --> 00:03:06,787
+but the sharp stick inputs generally just
+
+
+76
+00:03:06,787 --> 00:03:10,048
+do better at capturing the data better
+
+
+77
+00:03:10,048 --> 00:03:12,808
+for getting good analysis for your
+
+
+78
+00:03:12,808 --> 00:03:14,688
+step response graphs for things like this.
+
+
+79
+00:03:14,688 --> 00:03:15,830
+So that's what we're going to be using
+
+
+80
+00:03:15,830 --> 00:03:17,509
+and that's why we're using that.
+
+
+81
+00:03:17,509 --> 00:03:19,911
+And again, this is the quadcopter it was on.
+
+
+82
+00:03:19,911 --> 00:03:22,474
+We're going to have this tuned, untuned, and see some differences.
+
+
+83
+00:03:22,474 --> 00:03:24,538
+So since PID Toolbox is the OG
+
+
+84
+00:03:24,538 --> 00:03:25,699
+let's start with the OG.
+
+
+85
+00:03:26,848 --> 00:03:29,509
+PID Toolbox is, again, developed by Brian White.
+
+
+86
+00:03:29,509 --> 00:03:32,550
+I think it was developed in 2018
+
+
+87
+00:03:32,550 --> 00:03:35,172
+so it's been out there for quite a while.
+
+
+88
+00:03:35,172 --> 00:03:36,312
+I believe before COVID.
+
+
+89
+00:03:36,312 --> 00:03:37,053
+Time flies.
+
+
+90
+00:03:37,053 --> 00:03:38,353
+As I mentioned before
+
+
+91
+00:03:38,353 --> 00:03:42,995
+PID Toolbox used to be an open source software.
+
+
+92
+00:03:42,995 --> 00:03:48,836
+He kind of rolled that into his Patreon subscription for PID Toolbox Pro
+
+
+93
+00:03:48,836 --> 00:03:50,956
+which is the only thing under development.
+
+
+94
+00:03:50,956 --> 00:03:51,937
+So if you're interested in it
+
+
+95
+00:03:51,937 --> 00:03:53,437
+you would check out his Patreon
+
+
+96
+00:03:53,437 --> 00:03:56,115
+and I'll put the links down below.
+
+
+97
+00:03:56,115 --> 00:03:57,996
+For, I think it's $6
+
+
+98
+00:03:57,996 --> 00:04:00,317
+and change a month or just one month
+
+
+99
+00:04:00,317 --> 00:04:02,518
+you can download PID Toolbox
+
+
+100
+00:04:02,518 --> 00:04:03,478
+and install it on your system.
+
+
+101
+00:04:03,478 --> 00:04:06,419
+Obviously, you won't get updates if you'd stop your subscription.
+
+
+102
+00:04:06,419 --> 00:04:09,420
+You'd have to re-up the subscription and get new updates for it.
+
+
+103
+00:04:09,420 --> 00:04:11,882
+But you get other things beyond that.
+
+
+104
+00:04:11,882 --> 00:04:15,563
+Brian does weekly webinars where you can connect.
+
+
+105
+00:04:15,563 --> 00:04:18,884
+You can ask him stories or ask him for advice
+
+
+106
+00:04:18,884 --> 00:04:20,086
+ask him how PID Toolbox.
+
+
+107
+00:04:20,086 --> 00:04:22,747
+He has a number of videos on the software out there,
+
+
+108
+00:04:22,747 --> 00:04:26,048
+which... A lot of these other platforms don't have that.
+
+
+109
+00:04:26,048 --> 00:04:27,428
+You can get a hold of Brian.
+
+
+110
+00:04:27,428 --> 00:04:28,149
+He's in the community.
+
+
+111
+00:04:28,149 --> 00:04:29,610
+You can see him around.
+
+
+112
+00:04:29,610 --> 00:04:32,432
+He does professional tuning if you wanted that as well.
+
+
+113
+00:04:32,432 --> 00:04:35,533
+He does a lot of cine lifters, so on and so forth.
+
+
+114
+00:04:35,533 --> 00:04:39,716
+So he is readily available, tried and true, trusted resource
+
+
+115
+00:04:39,716 --> 00:04:42,497
+, has been in the community for a while, contributes to Betaflight.
+
+
+116
+00:04:42,497 --> 00:04:46,459
+So this whole like, hey, it's paid, that's bad, well
+
+
+117
+00:04:46,459 --> 00:04:47,661
+if that's not for you
+
+
+118
+00:04:47,661 --> 00:04:48,442
+then it's not for you
+
+
+119
+00:04:48,442 --> 00:04:50,762
+but it was definitely an inspiration.
+
+
+120
+00:04:50,762 --> 00:04:52,324
+I think PID Toolbox is an inspiration
+
+
+121
+00:04:52,324 --> 00:04:54,586
+for almost all of these other packages.
+
+
+122
+00:04:54,586 --> 00:04:55,565
+So with PID Toolbox
+
+
+123
+00:04:55,565 --> 00:04:57,648
+you do need to download and install it.
+
+
+124
+00:04:57,648 --> 00:05:03,291
+It is available for Windows easily, Mac a little less easily.
+
+
+125
+00:05:03,291 --> 00:05:05,533
+He does have that available now, though.
+
+
+126
+00:05:05,533 --> 00:05:08,394
+You have to do a couple things to get it to work
+
+
+127
+00:05:08,394 --> 00:05:10,096
+but he has instructions for it.
+
+
+128
+00:05:10,096 --> 00:05:12,598
+And I believe Linux is available in Linux as well.
+
+
+129
+00:05:12,598 --> 00:05:13,759
+So it's not a web-based UI.
+
+
+130
+00:05:13,759 --> 00:05:14,579
+You have to install it.
+
+
+131
+00:05:14,579 --> 00:05:15,903
+There is versions available.
+
+
+132
+00:05:15,903 --> 00:05:20,564
+He's looking at doing some AI assistant stuff in the next release
+
+
+133
+00:05:20,564 --> 00:05:23,745
+but he's vetting it.
+
+
+134
+00:05:23,745 --> 00:05:26,185
+He knows what the AI should be giving back.
+
+
+135
+00:05:26,185 --> 00:05:29,666
+So he's very skeptical and really trying to vet
+
+
+136
+00:05:29,666 --> 00:05:33,107
+is it giving back good data?
+
+
+137
+00:05:33,107 --> 00:05:34,428
+He doesn't want it to be a gimmick.
+
+
+138
+00:05:34,428 --> 00:05:35,928
+He wants it to be actual real health.
+
+
+139
+00:05:35,928 --> 00:05:39,709
+And that's some of the benefit with, again, PID Toolbox and Brian.
+
+
+140
+00:05:39,709 --> 00:05:40,668
+He's an expert in the area
+
+
+141
+00:05:40,668 --> 00:05:43,918
+and he's not there just trying to to make a buck.
+
+
+142
+00:05:43,918 --> 00:05:45,500
+He's trying to provide value.
+
+
+143
+00:05:45,500 --> 00:05:47,702
+So anyways, install PID Toolbox.
+
+
+144
+00:05:47,702 --> 00:05:48,923
+The interface looks like this.
+
+
+145
+00:05:48,923 --> 00:05:49,985
+You can open a log.
+
+
+146
+00:05:49,985 --> 00:05:53,309
+It supports all kinds of different firmware
+
+
+147
+00:05:53,309 --> 00:05:56,692
+from Betaflight to iNav, RGPilot
+
+
+148
+00:05:56,692 --> 00:05:59,074
+I believe KISS as well.
+
+
+149
+00:05:59,074 --> 00:05:59,795
+I'd have to look.
+
+
+150
+00:05:59,795 --> 00:06:04,600
+But it supports all the different firmwares out there.
+
+
+151
+00:06:04,600 --> 00:06:05,880
+You can open multiple logs
+
+
+152
+00:06:05,880 --> 00:06:09,783
+and then you can kind of pick them here and look between them.
+
+
+153
+00:06:09,783 --> 00:06:11,524
+This is the actual log traces.
+
+
+154
+00:06:11,524 --> 00:06:15,107
+Most of these softwares work very similar to this.
+
+
+155
+00:06:15,107 --> 00:06:17,389
+And I'm not going to go through top to bottom
+
+
+156
+00:06:17,389 --> 00:06:19,209
+on all these softwares and all the features
+
+
+157
+00:06:19,209 --> 00:06:22,791
+, but just to give an idea of the PID tuning part of it
+
+
+158
+00:06:22,791 --> 00:06:25,413
+you can run a step response tool.
+
+
+159
+00:06:25,413 --> 00:06:27,154
+And in that step response tool
+
+
+160
+00:06:28,235 --> 00:06:30,355
+you can run one or multiple logs.
+
+
+161
+00:06:30,355 --> 00:06:32,577
+So I can look at this for this is tuned.
+
+
+162
+00:06:32,577 --> 00:06:33,437
+This is untuned.
+
+
+163
+00:06:33,437 --> 00:06:37,718
+I can run those together at the same time and see the difference.
+
+
+164
+00:06:37,718 --> 00:06:41,060
+I actually had those, the one run.
+
+
+165
+00:06:41,060 --> 00:06:43,240
+So I have to hit reset and run it again.
+
+
+166
+00:06:43,240 --> 00:06:46,240
+But you can see this is this quad in red tuned.
+
+
+167
+00:06:46,240 --> 00:06:48,560
+The orange is untuned.
+
+
+168
+00:06:48,560 --> 00:06:49,399
+It's just the default
+
+
+169
+00:06:49,399 --> 00:06:51,221
+and then we have a little overshoot here.
+
+
+170
+00:06:51,221 --> 00:06:52,641
+It's detecting that.
+
+
+171
+00:06:52,641 --> 00:06:56,622
+There is some Y correction stuff that you need to do
+
+
+172
+00:06:56,622 --> 00:06:57,702
+generally in my experience
+
+
+173
+00:06:57,702 --> 00:07:00,303
+to get it to work correctly.
+
+
+174
+00:07:00,303 --> 00:07:02,184
+And then there's some other settings in here
+
+
+175
+00:07:02,184 --> 00:07:05,944
+for, like, how big of a window.
+
+
+176
+00:07:05,944 --> 00:07:10,906
+Essentially, this is a window that goes through the log
+
+
+177
+00:07:10,906 --> 00:07:16,488
+and it's looking at a two-second gap in time as it runs through the log
+
+
+178
+00:07:16,488 --> 00:07:18,028
+and it's looking for stepped inputs.
+
+
+179
+00:07:19,507 --> 00:07:22,009
+When you're looking at these graphs
+
+
+180
+00:07:22,009 --> 00:07:25,990
+another point I wanted to point out with this
+
+
+181
+00:07:25,990 --> 00:07:28,932
+that we're going to see in other software as well
+
+
+182
+00:07:28,932 --> 00:07:31,514
+is that it's not just one.
+
+
+183
+00:07:31,514 --> 00:07:33,194
+You're looking at an average by default.
+
+
+184
+00:07:33,194 --> 00:07:35,396
+So if I click the raw button here
+
+
+185
+00:07:35,396 --> 00:07:38,358
+this is all the data that it's looking at.
+
+
+186
+00:07:38,358 --> 00:07:42,101
+Then it averages to that one line that you see.
+
+
+187
+00:07:42,101 --> 00:07:48,497
+So you can see we get a way variety of step response stuff here.
+
+
+188
+00:07:48,497 --> 00:07:50,937
+And again, it's just averaging that out.
+
+
+189
+00:07:50,937 --> 00:07:52,939
+It's almost like if I zoom out far enough
+
+
+190
+00:07:52,939 --> 00:07:55,718
+it would average down to that one line.
+
+
+191
+00:07:55,718 --> 00:07:58,100
+So with step responses
+
+
+192
+00:07:58,100 --> 00:07:59,560
+you gotta keep that in mind.
+
+
+193
+00:07:59,560 --> 00:08:01,879
+And I'll talk more about that if you're interested in really
+
+
+194
+00:08:01,879 --> 00:08:06,440
+my true opinion of step response tools and what to look at.
+
+
+195
+00:08:06,440 --> 00:08:08,062
+You're gonna have to wait to the end of the video
+
+
+196
+00:08:08,062 --> 00:08:09,922
+and I'll talk about those ins and outs.
+
+
+197
+00:08:09,922 --> 00:08:11,002
+So keep that in mind
+
+
+198
+00:08:11,002 --> 00:08:14,202
+and that's how you can see it in PID Toolbox with this raw.
+
+
+199
+00:08:14,202 --> 00:08:16,182
+You can see all the different ones here.
+
+
+200
+00:08:16,182 --> 00:08:22,226
+Some softwares, I like the way they do it better than PID Toolbox for this
+
+
+201
+00:08:22,226 --> 00:08:24,208
+and I'll show you that in a little bit.
+
+
+202
+00:08:24,208 --> 00:08:25,629
+That's the long and the short.
+
+
+203
+00:08:25,629 --> 00:08:26,649
+You can change this window.
+
+
+204
+00:08:26,649 --> 00:08:28,029
+There's guides.
+
+
+205
+00:08:28,029 --> 00:08:30,791
+I really like this where you can actually click the button here
+
+
+206
+00:08:30,791 --> 00:08:33,474
+and it actually shows you the Betaflight slider setup
+
+
+207
+00:08:33,474 --> 00:08:35,754
+for each of these, which is awesome.
+
+
+208
+00:08:35,754 --> 00:08:38,537
+I wish other softwares... would have this
+
+
+209
+00:08:38,537 --> 00:08:39,557
+and they don't.
+
+
+210
+00:08:39,557 --> 00:08:40,998
+So that's really cool.
+
+
+211
+00:08:40,998 --> 00:08:42,899
+That's a really cool feature.
+
+
+212
+00:08:42,899 --> 00:08:46,662
+And again, I'm not going to go through all the pieces with this
+
+
+213
+00:08:46,662 --> 00:08:50,864
+but there is a spectrum analysis tool here as well to look at
+
+
+214
+00:08:50,864 --> 00:08:56,187
+PID noise, or not PID noise, your filter setup and quadcopter.
+
+
+215
+00:08:57,448 --> 00:08:59,769
+vibrations and tweaking your filters out
+
+
+216
+00:08:59,769 --> 00:09:00,791
+and all that kind of stuff.
+
+
+217
+00:09:00,791 --> 00:09:05,552
+And a common plot for that is the vibrations versus throttle
+
+
+218
+00:09:05,552 --> 00:09:06,533
+and this is the raw
+
+
+219
+00:09:06,533 --> 00:09:08,914
+this is the filter gyro, D-term raw
+
+
+220
+00:09:08,914 --> 00:09:10,836
+you see how much more vibration comes out because
+
+
+221
+00:09:10,836 --> 00:09:14,018
+the D-term amplifies it, and then after the D-term filters.
+
+
+222
+00:09:14,018 --> 00:09:15,798
+So you can see how the notch
+
+
+223
+00:09:15,798 --> 00:09:20,832
+and RPM filters are taking out the motor band and this resonance.
+
+
+224
+00:09:20,832 --> 00:09:22,774
+Spike here, things of that nature.
+
+
+225
+00:09:22,774 --> 00:09:24,517
+So that's how you kind of use these tools.
+
+
+226
+00:09:24,517 --> 00:09:27,298
+And again, a lot of these softwares
+
+
+227
+00:09:27,298 --> 00:09:31,402
+almost all of them have these very exact same same stuff.
+
+
+228
+00:09:31,402 --> 00:09:33,543
+There's little tweaks around the edges.
+
+
+229
+00:09:33,543 --> 00:09:36,106
+Generally, this is the complement of tools they get.
+
+
+230
+00:09:36,106 --> 00:09:46,053
+There's a I'm going to say that I'm actually the inspiration for this.
+
+
+231
+00:09:46,053 --> 00:09:47,434
+I think Brian wrote this on his own
+
+
+232
+00:09:47,434 --> 00:09:50,956
+but I had Excel files like back in 2017
+
+
+233
+00:09:50,956 --> 00:09:53,458
+that mapped all the filter, maybe even earlier.
+
+
+234
+00:09:53,458 --> 00:09:56,140
+I guess it was 2017 that mapped all the filters out
+
+
+235
+00:09:56,140 --> 00:09:57,902
+and the phase delay between them on.
+
+
+236
+00:09:57,902 --> 00:10:00,344
+And, and, uh, so this is really cool.
+
+
+237
+00:10:00,344 --> 00:10:02,312
+Uh, this is a really cool thing.
+
+
+238
+00:10:02,312 --> 00:10:03,913
+So without rambling on too much
+
+
+239
+00:10:03,913 --> 00:10:05,594
+let's move on to the next one.
+
+
+240
+00:10:05,594 --> 00:10:08,014
+So the next firmware is PIDscope.
+
+
+241
+00:10:08,014 --> 00:10:12,277
+So PIDscope is admittedly a derivative of PIDtoolbox.
+
+
+242
+00:10:12,277 --> 00:10:15,739
+When PIDtoolbox went into Brian's Patreon
+
+
+243
+00:10:15,739 --> 00:10:18,340
+people would say behind a paywall
+
+
+244
+00:10:18,340 --> 00:10:22,162
+a gentleman grabbed the source code from PIDtoolbox
+
+
+245
+00:10:22,162 --> 00:10:24,722
+and moved it into Octave.
+
+
+246
+00:10:24,722 --> 00:10:26,144
+PIDtoolbox uses MATLAB.
+
+
+247
+00:10:27,183 --> 00:10:29,434
+PIDscope uses Octave.
+
+
+248
+00:10:29,434 --> 00:10:35,841
+It essentially looks exactly the same, works pretty much the exact same.
+
+
+249
+00:10:35,841 --> 00:10:38,083
+It has the slider tool.
+
+
+250
+00:10:39,306 --> 00:10:43,928
+It does have the filter simulation and some of the stuff.
+
+
+251
+00:10:43,928 --> 00:10:49,235
+I would say the user interface is even a little nicer.
+
+
+252
+00:10:49,235 --> 00:10:51,197
+So if I look at this
+
+
+253
+00:10:51,197 --> 00:10:54,562
+it's just this panel is a little bit nicer
+
+
+254
+00:10:54,562 --> 00:10:58,947
+displayed in this PID scope than it is in PID Toolbox.
+
+
+255
+00:10:58,947 --> 00:11:04,014
+So Octave and... MATLAB are not generally
+
+
+256
+00:11:04,014 --> 00:11:08,918
+software that is made for distribution.
+
+
+257
+00:11:08,918 --> 00:11:13,562
+It's more for university analysis and things of that nature.
+
+
+258
+00:11:13,562 --> 00:11:16,705
+So when it gets into the graphic-y part
+
+
+259
+00:11:16,705 --> 00:11:17,745
+they're a little clunky
+
+
+260
+00:11:17,745 --> 00:11:18,385
+and that's why
+
+
+261
+00:11:18,385 --> 00:11:20,227
+because they're made for scientists
+
+
+262
+00:11:20,227 --> 00:11:22,931
+and stuff and engineers that are not
+
+
+263
+00:11:22,931 --> 00:11:24,272
+really hung up about that kind of stuff.
+
+
+264
+00:11:24,272 --> 00:11:26,113
+They're trying to dig into data.
+
+
+265
+00:11:26,113 --> 00:11:27,634
+and really figure things out.
+
+
+266
+00:11:27,634 --> 00:11:28,855
+So that's why you see that.
+
+
+267
+00:11:28,855 --> 00:11:32,779
+Admittedly, one thing with the PID scope
+
+
+268
+00:11:32,779 --> 00:11:35,402
+is it is a little slower and more clunky.
+
+
+269
+00:11:36,482 --> 00:11:39,306
+So it runs a little bit slower.
+
+
+270
+00:11:39,306 --> 00:11:41,928
+It's not too slow, which is
+
+
+271
+00:11:41,928 --> 00:11:44,509
+do you notice it, than PID Toolbox?
+
+
+272
+00:11:44,509 --> 00:11:46,711
+But it has a lot of the same features.
+
+
+273
+00:11:46,711 --> 00:11:51,056
+So you can see here what you get for a step response.
+
+
+274
+00:11:51,056 --> 00:11:54,577
+It's... This is where it's a little different.
+
+
+275
+00:11:54,577 --> 00:11:57,720
+Like, you can see I'm running that same log
+
+
+276
+00:11:57,720 --> 00:12:02,402
+sharp stick inputs only, tuned, and that graphic looks
+
+
+277
+00:12:02,402 --> 00:12:05,703
+way different than what you get in PID Toolbox.
+
+
+278
+00:12:05,703 --> 00:12:08,065
+So just putting them side by side
+
+
+279
+00:12:08,065 --> 00:12:10,115
+you can see the huge difference between the two.
+
+
+280
+00:12:10,115 --> 00:12:12,897
+Now, there is stuff that I could probably change
+
+
+281
+00:12:12,897 --> 00:12:17,580
+down here to make it look closer-ish
+
+
+282
+00:12:17,580 --> 00:12:20,120
+like the Y correction wasn't turned on.
+
+
+283
+00:12:20,120 --> 00:12:23,722
+But I shouldn't have to do that at the end of the day.
+
+
+284
+00:12:23,722 --> 00:12:27,904
+And I'm not going to go through all the different little things
+
+
+285
+00:12:27,904 --> 00:12:30,326
+here to see if I get the same result.
+
+
+286
+00:12:30,326 --> 00:12:32,047
+So that's a factor.
+
+
+287
+00:12:32,047 --> 00:12:33,727
+I don't know why there's a differential.
+
+
+288
+00:12:34,753 --> 00:12:36,013
+If I had to trust one over the other
+
+
+289
+00:12:36,013 --> 00:12:37,254
+I'm going to trust PID Toolbox.
+
+
+290
+00:12:37,254 --> 00:12:39,094
+I'm not saying, you know
+
+
+291
+00:12:39,094 --> 00:12:42,976
+maybe the developer of PIDscope can chime in
+
+
+292
+00:12:42,976 --> 00:12:44,855
+but it's the same log.
+
+
+293
+00:12:44,855 --> 00:12:47,277
+I'm getting two different results, so why?
+
+
+294
+00:12:47,277 --> 00:12:51,678
+And this is something more closely aligned to what I would expect to see.
+
+
+295
+00:12:51,678 --> 00:12:53,259
+This is a well-tuned quad
+
+
+296
+00:12:53,259 --> 00:12:56,519
+and when I look at that versus the untuned...
+
+
+297
+00:12:56,519 --> 00:12:58,299
+Or I should be able to just click on this and hit run.
+
+
+298
+00:12:59,961 --> 00:13:00,923
+I see that little blip
+
+
+299
+00:13:00,923 --> 00:13:02,703
+and that's what this has at default.
+
+
+300
+00:13:02,703 --> 00:13:05,745
+It has a little bit of an overshoot on the roll axis.
+
+
+301
+00:13:05,745 --> 00:13:10,330
+If I do the same thing in the PID scope
+
+
+302
+00:13:10,330 --> 00:13:11,770
+you kind of see that
+
+
+303
+00:13:11,770 --> 00:13:14,613
+but it's not as straightforward to me
+
+
+304
+00:13:14,613 --> 00:13:17,227
+because it looks like you have overshoot on both axes.
+
+
+305
+00:13:17,227 --> 00:13:19,889
+Same data, just analyzing it differently.
+
+
+306
+00:13:19,889 --> 00:13:21,750
+So maybe there's some settings here I'd
+
+
+307
+00:13:21,750 --> 00:13:24,811
+have to adjust to make that look correctly
+
+
+308
+00:13:24,811 --> 00:13:26,110
+but I shouldn't have to do that.
+
+
+309
+00:13:26,110 --> 00:13:28,072
+It looks like that's right there.
+
+
+310
+00:13:28,072 --> 00:13:36,695
+The sharp maneuvers looks like it is the one that you'd have to click on.
+
+
+311
+00:13:36,695 --> 00:13:41,576
+So it's only looking at sharp stick inputs and not all the inputs.
+
+
+312
+00:13:41,576 --> 00:13:43,856
+And maybe that's the differential there.
+
+
+313
+00:13:43,856 --> 00:13:45,958
+So you can see up here
+
+
+314
+00:13:45,958 --> 00:13:46,860
+if you can see that
+
+
+315
+00:13:46,860 --> 00:13:48,000
+I can see it closely.
+
+
+316
+00:13:48,000 --> 00:13:50,863
+This is like looking at 108 inputs
+
+
+317
+00:13:50,863 --> 00:13:56,868
+and 88 where Pit Toolbox is looking at, in its default, 483.
+
+
+318
+00:13:56,868 --> 00:14:00,850
+So it's looking at a lot more inputs there.
+
+
+319
+00:14:00,850 --> 00:14:04,041
+Now, if I uncheck this sharp maneuvers.
+
+
+320
+00:14:04,041 --> 00:14:06,001
+and let that rerun.
+
+
+321
+00:14:06,001 --> 00:14:08,524
+Now, well, it's even looking at less.
+
+
+322
+00:14:08,524 --> 00:14:09,104
+52.
+
+
+323
+00:14:09,104 --> 00:14:11,085
+I can't even see the other number in here.
+
+
+324
+00:14:11,085 --> 00:14:11,666
+So, yeah.
+
+
+325
+00:14:13,125 --> 00:14:17,448
+Other things in here that might play a factor is degrees per second
+
+
+326
+00:14:17,448 --> 00:14:19,629
+it's looking at versus the other.
+
+
+327
+00:14:19,629 --> 00:14:22,692
+Like, this is the range of degrees per second it's looking at.
+
+
+328
+00:14:22,692 --> 00:14:25,113
+So, now we're getting up a higher amount.
+
+
+329
+00:14:25,113 --> 00:14:30,176
+So, anyways, again, I'm not trying to vet these softwares for accuracy.
+
+
+330
+00:14:30,176 --> 00:14:32,337
+And, well, to some extent I am.
+
+
+331
+00:14:32,337 --> 00:14:35,460
+And... you know figure out everything
+
+
+332
+00:14:35,460 --> 00:14:37,542
+but those are some of my general observations
+
+
+333
+00:14:37,542 --> 00:14:42,424
+that if you're looking at this don't just accept the defaults
+
+
+334
+00:14:42,424 --> 00:14:45,467
+there's you might need a noodle with it a little bit more
+
+
+335
+00:14:45,467 --> 00:14:48,090
+and look at your count over here to to see
+
+
+336
+00:14:48,090 --> 00:14:53,033
+that it's giving you a decent step response graphs there another thing like
+
+
+337
+00:14:53,033 --> 00:14:57,096
+when you run the plots here in the frequency
+
+
+338
+00:14:57,096 --> 00:15:00,839
+versus throttle The stuff's not aligned.
+
+
+339
+00:15:00,839 --> 00:15:02,980
+Like this is under
+
+
+340
+00:15:02,980 --> 00:15:04,360
+this is the D term.
+
+
+341
+00:15:04,360 --> 00:15:07,142
+This is the D term pre-filter gyro.
+
+
+342
+00:15:07,142 --> 00:15:11,443
+So again, this is the graphical stuff that is a little, like I said
+
+
+343
+00:15:11,443 --> 00:15:14,565
+even PID toolbox is not great graphics wise.
+
+
+344
+00:15:14,565 --> 00:15:18,067
+PID scope is much similar, is very similar.
+
+
+345
+00:15:18,067 --> 00:15:20,988
+MATLAB and Octave are two kind of analytical
+
+
+346
+00:15:20,988 --> 00:15:24,769
+softwares that these are kind of based upon.
+
+
+347
+00:15:24,769 --> 00:15:29,160
+And it's not strong for graphical user interface nicety.
+
+
+348
+00:15:29,160 --> 00:15:31,724
+PIDscope is one that is free.
+
+
+349
+00:15:31,724 --> 00:15:33,125
+You do have to download it
+
+
+350
+00:15:33,125 --> 00:15:35,629
+and you just run a batch file and then it runs.
+
+
+351
+00:15:35,629 --> 00:15:38,032
+You have to have an installer for Octave
+
+
+352
+00:15:38,032 --> 00:15:40,495
+that it needs to put into your computer as well
+
+
+353
+00:15:40,495 --> 00:15:42,236
+which is fairly sizable.
+
+
+354
+00:15:42,236 --> 00:15:43,717
+So both of those packages,
+
+
+355
+00:15:43,717 --> 00:15:47,841
+PIDtoolbox and PIDscope, our download-based software.
+
+
+356
+00:15:47,841 --> 00:15:50,642
+The rest of these are going to be web-based.
+
+
+357
+00:15:50,642 --> 00:15:52,303
+Okay, so this next one is
+
+
+358
+00:15:52,303 --> 00:15:55,004
+PidTuna. PidTuna, again, is web-based.
+
+
+359
+00:15:55,004 --> 00:15:56,004
+You can see it up here
+
+
+360
+00:15:56,004 --> 00:15:58,605
+and I will drop, of course, these links down below.
+
+
+361
+00:15:58,605 --> 00:16:00,585
+I really like PidTuna.
+
+
+362
+00:16:00,585 --> 00:16:01,605
+There's some cool things in it
+
+
+363
+00:16:01,605 --> 00:16:04,145
+so let me show you what it's got here.
+
+
+364
+00:16:04,145 --> 00:16:06,028
+So first of all, it's web-based.
+
+
+365
+00:16:06,028 --> 00:16:06,748
+I like that.
+
+
+366
+00:16:06,748 --> 00:16:08,889
+I can just go to the site
+
+
+367
+00:16:08,889 --> 00:16:10,510
+and go from there and click the logs.
+
+
+368
+00:16:10,510 --> 00:16:12,793
+You can load as many logs as, well, not as many
+
+
+369
+00:16:12,793 --> 00:16:15,315
+but you can load multiple log files here as well
+
+
+370
+00:16:15,315 --> 00:16:17,015
+and compare them against each other.
+
+
+371
+00:16:17,015 --> 00:16:19,597
+If you just have one log selected
+
+
+372
+00:16:19,597 --> 00:16:21,778
+I like the step response
+
+
+373
+00:16:21,778 --> 00:16:24,019
+which is going to be over here under step response.
+
+
+374
+00:16:24,019 --> 00:16:27,980
+It shows you the different lines kind of faded back
+
+
+375
+00:16:27,980 --> 00:16:29,461
+and it shows you that average.
+
+
+376
+00:16:29,461 --> 00:16:33,923
+So you're mindful and conceive like there's big deviations here.
+
+
+377
+00:16:33,923 --> 00:16:35,624
+What is based on that average?
+
+
+378
+00:16:35,624 --> 00:16:39,229
+Like look at the y'all access compared to these other ones.
+
+
+379
+00:16:39,229 --> 00:16:41,009
+There's a couple things in here as well.
+
+
+380
+00:16:41,009 --> 00:16:42,850
+Just like in PID Toolbox
+
+
+381
+00:16:42,850 --> 00:16:44,510
+I didn't look in PID Scope
+
+
+382
+00:16:44,510 --> 00:16:47,211
+but you can adjust that window size.
+
+
+383
+00:16:47,211 --> 00:16:54,073
+So you can go from anywhere from 0.25 seconds up to 3 seconds.
+
+
+384
+00:16:54,073 --> 00:16:57,615
+That's what those milliseconds to seconds conversion is.
+
+
+385
+00:16:57,615 --> 00:17:00,456
+And I think its default was 2,000
+
+
+386
+00:17:00,456 --> 00:17:03,736
+which would be 2 seconds, the same as PID Toolbox.
+
+
+387
+00:17:03,736 --> 00:17:06,679
+You can also look at the min
+
+
+388
+00:17:06,679 --> 00:17:10,301
+and max window for step response input.
+
+
+389
+00:17:10,301 --> 00:17:12,962
+So you can see if I move this down
+
+
+390
+00:17:12,962 --> 00:17:18,635
+like this is the minimum that it's... excluding so
+
+
+391
+00:17:18,635 --> 00:17:23,259
+I'm taking this down to any stepped inputs at 45 degrees per second
+
+
+392
+00:17:23,259 --> 00:17:26,241
+or an up it's going to look into that
+
+
+393
+00:17:26,241 --> 00:17:29,564
+and you can see how small step inputs makes this kind of worse
+
+
+394
+00:17:29,564 --> 00:17:30,644
+and it does have a default here
+
+
+395
+00:17:30,644 --> 00:17:32,567
+which you can easily click like that's nice
+
+
+396
+00:17:32,567 --> 00:17:34,728
+that you can click back to the default the auto
+
+
+397
+00:17:34,728 --> 00:17:37,490
+when you click on two logs here it shows both
+
+
+398
+00:17:37,490 --> 00:17:41,512
+and I get what I would expect to see between these two the the tuned
+
+
+399
+00:17:41,512 --> 00:17:46,537
+and untuned it's actually a little bit more accurate
+
+
+400
+00:17:46,537 --> 00:17:49,499
+it looks to me, for the untune
+
+
+401
+00:17:49,499 --> 00:17:55,541
+where I have this little bit of this oscillation here on the roll axis.
+
+
+402
+00:17:55,541 --> 00:17:59,464
+That's essentially what this 5-inch gets with just Betaflight defaults.
+
+
+403
+00:17:59,464 --> 00:18:00,645
+It's a pretty good tune
+
+
+404
+00:18:00,645 --> 00:18:02,586
+but it's not perfect.
+
+
+405
+00:18:02,586 --> 00:18:06,409
+There's P-term overshoot and flips and rolls and things of that nature.
+
+
+406
+00:18:06,409 --> 00:18:08,710
+So that's picking that up and showing that.
+
+
+407
+00:18:08,710 --> 00:18:10,791
+It's snappy, as you can see
+
+
+408
+00:18:10,791 --> 00:18:12,792
+and then you can also adjust your window size
+
+
+409
+00:18:12,792 --> 00:18:15,193
+here if you have to clip some stuff out.
+
+
+410
+00:18:15,193 --> 00:18:16,474
+You can click full log here
+
+
+411
+00:18:16,474 --> 00:18:19,016
+and look at the full log if you don't want to clip things out.
+
+
+412
+00:18:19,016 --> 00:18:21,116
+There's a scorecard tool in here
+
+
+413
+00:18:21,116 --> 00:18:24,419
+so you can kind of see what it's seeing as good versus bad.
+
+
+414
+00:18:24,419 --> 00:18:26,179
+So this is the tune log
+
+
+415
+00:18:26,179 --> 00:18:26,940
+and it's saying, hey
+
+
+416
+00:18:26,940 --> 00:18:30,300
+everything looks pretty good here, which is accurate
+
+
+417
+00:18:30,300 --> 00:18:31,422
+except for motor balance
+
+
+418
+00:18:31,422 --> 00:18:32,762
+which is also accurate.
+
+
+419
+00:18:32,762 --> 00:18:34,282
+The motor balance isn't great
+
+
+420
+00:18:34,282 --> 00:18:36,364
+and I'll talk about that in a second.
+
+
+421
+00:18:36,364 --> 00:18:39,727
+It also has available here
+
+
+422
+00:18:39,727 --> 00:18:43,569
+that you can see that the default is okay.
+
+
+423
+00:18:43,569 --> 00:18:44,611
+It's yellow.
+
+
+424
+00:18:44,611 --> 00:18:47,874
+It's basically saying your step response
+
+
+425
+00:18:47,874 --> 00:18:49,815
+and your tracking, your rise time, your overshoot
+
+
+426
+00:18:49,815 --> 00:18:51,476
+your latency aren't great.
+
+
+427
+00:18:51,476 --> 00:18:53,198
+They're mid.
+
+
+428
+00:18:53,198 --> 00:18:56,079
+They're yellow, which is accurate.
+
+
+429
+00:18:56,079 --> 00:18:57,280
+You can click on these things
+
+
+430
+00:18:57,280 --> 00:19:00,544
+and it takes you right to the window that it's kind of talking about.
+
+
+431
+00:19:00,544 --> 00:19:03,506
+So it's kind of neat for a heads-up analysis
+
+
+432
+00:19:03,506 --> 00:19:07,053
+of what... uh what you may want to look at
+
+
+433
+00:19:07,053 --> 00:19:10,635
+and you can consider uh there's tracking plots just like input toolbox
+
+
+434
+00:19:10,635 --> 00:19:14,438
+and the other things i talked about you can look at the raw uh you can
+
+
+435
+00:19:14,438 --> 00:19:16,098
+look at just the pid terms themselves there 's
+
+
+436
+00:19:16,098 --> 00:19:18,080
+like a thousand different ways to to look
+
+
+437
+00:19:18,080 --> 00:19:20,902
+at different little aspects of it there 's an
+
+
+438
+00:19:20,902 --> 00:19:23,003
+i - term saturation tool where you can see
+
+
+439
+00:19:23,003 --> 00:19:27,105
+if your i - term it 's not such a thing for beta flight anymore
+
+
+440
+00:19:27,105 --> 00:19:31,454
+but it could be for like kiss or uh even INAV
+
+
+441
+00:19:31,454 --> 00:19:33,976
+probably definitely RG Pilot, I would think
+
+
+442
+00:19:33,976 --> 00:19:37,537
+to see if you're getting I-term saturation.
+
+
+443
+00:19:37,537 --> 00:19:40,458
+Basically, you're leaning too heavily on I-term
+
+
+444
+00:19:40,458 --> 00:19:41,917
+to keep the thing in balance.
+
+
+445
+00:19:41,917 --> 00:19:44,318
+There's a motor analysis tool here as well
+
+
+446
+00:19:44,318 --> 00:19:47,559
+that will look at your different motors
+
+
+447
+00:19:47,559 --> 00:19:53,882
+and seeing if you're getting to motor saturation with your input.
+
+
+448
+00:19:53,882 --> 00:19:55,863
+So if you see a lot of it
+
+
+449
+00:19:55,863 --> 00:19:59,547
+you're going to have A bad step response graph
+
+
+450
+00:19:59,547 --> 00:20:02,612
+or bad tune just because your quad is underpowered.
+
+
+451
+00:20:02,612 --> 00:20:07,178
+Your motors are too small for the weight and rotation.
+
+
+452
+00:20:07,178 --> 00:20:08,199
+Again, for 5-inch quads
+
+
+453
+00:20:08,199 --> 00:20:09,280
+it hardly ever happens.
+
+
+454
+00:20:09,280 --> 00:20:10,122
+It's not that big
+
+
+455
+00:20:10,122 --> 00:20:11,624
+although it is a thing
+
+
+456
+00:20:11,624 --> 00:20:12,384
+and I'll show you that.
+
+
+457
+00:20:13,386 --> 00:20:15,328
+For big quads, that's a big deal.
+
+
+458
+00:20:15,328 --> 00:20:16,530
+because we're skipping over
+
+
+459
+00:20:16,530 --> 00:20:18,833
+that a lot like hey are your motors saturated
+
+
+460
+00:20:18,833 --> 00:20:20,315
+because that overshoot you might see
+
+
+461
+00:20:20,315 --> 00:20:22,077
+in that step response that could be just
+
+
+462
+00:20:22,077 --> 00:20:24,099
+because your your motors can't keep up
+
+
+463
+00:20:24,099 --> 00:20:26,363
+you're not tuning that out you need bigger motors
+
+
+464
+00:20:26,363 --> 00:20:28,986
+or reduce the moment of inertia on this craft somehow
+
+
+465
+00:20:28,986 --> 00:20:33,351
+or reduce your rates pick one motor balance tool now
+
+
+466
+00:20:33,351 --> 00:20:37,489
+this is off on this specific log you
+
+
+467
+00:20:37,489 --> 00:20:43,275
+can see here it 's on this top log here it 's i do n't know why it did
+
+
+468
+00:20:43,075 --> 00:20:45,317
+n't pick this up correctly it 's not that
+
+
+469
+00:20:45,317 --> 00:20:49,260
+out of balance this is more closely accurate uh it
+
+
+470
+00:20:49,260 --> 00:20:51,482
+does do a better job i do n't think
+
+
+471
+00:20:51,482 --> 00:20:54,746
+it was this tool was probably another tool at showing
+
+
+472
+00:20:54,746 --> 00:20:57,108
+that hey the the back motors are working
+
+
+473
+00:20:57,108 --> 00:20:59,289
+harder than the front motors on this quad
+
+
+474
+00:20:59,289 --> 00:21:00,070
+and then they do
+
+
+475
+00:21:00,070 --> 00:21:01,451
+and that's semi-normal.
+
+
+476
+00:21:01,451 --> 00:21:02,432
+But it's not ideal.
+
+
+477
+00:21:02,432 --> 00:21:04,211
+There's nothing I can really fix on it.
+
+
+478
+00:21:04,211 --> 00:21:04,992
+It is what it is.
+
+
+479
+00:21:04,992 --> 00:21:07,353
+I already have a GoPro in the front
+
+
+480
+00:21:07,353 --> 00:21:08,653
+so the back motors are
+
+
+481
+00:21:08,653 --> 00:21:10,795
+just because the thing's going like this
+
+
+482
+00:21:10,795 --> 00:21:13,455
+and it's pushing forward that way
+
+
+483
+00:21:13,455 --> 00:21:15,316
+the back motors just work a little bit harder.
+
+
+484
+00:21:15,316 --> 00:21:17,376
+But it's not wrong about it
+
+
+485
+00:21:17,376 --> 00:21:18,557
+which is good input.
+
+
+486
+00:21:20,009 --> 00:21:23,991
+There's a nice little GPS function here that you can actually
+
+
+487
+00:21:23,991 --> 00:21:25,913
+if you have your GPS on, like I do
+
+
+488
+00:21:25,913 --> 00:21:28,013
+and it logs that now in the latest Betaflight
+
+
+489
+00:21:28,013 --> 00:21:29,535
+you can actually play through
+
+
+490
+00:21:29,535 --> 00:21:31,717
+and see the quad and
+
+
+491
+00:21:31,717 --> 00:21:33,397
+where it went and all that kind of stuff
+
+
+492
+00:21:33,397 --> 00:21:36,839
+which you could use for different things if you want.
+
+
+493
+00:21:36,839 --> 00:21:39,781
+We already talked about the step response tool.
+
+
+494
+00:21:39,781 --> 00:21:43,423
+There's the latency in here that can show you latency information.
+
+
+495
+00:21:43,423 --> 00:21:45,125
+I didn't really dig into this too much.
+
+
+496
+00:21:45,125 --> 00:21:47,967
+There's some full spectrum things.
+
+
+497
+00:21:47,967 --> 00:21:51,748
+information here the the sim filter stuff is here
+
+
+498
+00:21:51,748 --> 00:21:55,068
+as well i don't think this works exactly right uh
+
+
+499
+00:21:55,068 --> 00:21:57,529
+because i'm seeing things like that i don't know that
+
+
+500
+00:21:57,529 --> 00:22:02,171
+the filter sim stuff's that widely used anyways but um that outside
+
+
+501
+00:22:02,171 --> 00:22:05,071
+so i don't know that this is this is great and working
+
+
+502
+00:22:05,071 --> 00:22:08,555
+well There's spectrogram tools in here as well.
+
+
+503
+00:22:08,555 --> 00:22:12,238
+Probably, I would say, not as nice as PID Toolbox or the other one.
+
+
+504
+00:22:12,238 --> 00:22:15,101
+This is kind of the full flight log.
+
+
+505
+00:22:15,101 --> 00:22:17,843
+You can change this to raw
+
+
+506
+00:22:17,843 --> 00:22:20,704
+and this is kind of the motor trace.
+
+
+507
+00:22:20,704 --> 00:22:22,527
+So you can see the vibrations.
+
+
+508
+00:22:22,527 --> 00:22:24,689
+Like, this is throughout the entire flight
+
+
+509
+00:22:24,689 --> 00:22:25,809
+and you can see the motor.
+
+
+510
+00:22:25,809 --> 00:22:27,131
+Like, this is a ramp up to full
+
+
+511
+00:22:27,131 --> 00:22:29,933
+throttle dropped, ramped up to full throttle dropped
+
+
+512
+00:22:29,933 --> 00:22:32,336
+and then this is all the different vibrations.
+
+
+513
+00:22:32,336 --> 00:22:34,597
+This is basically the motor noise up here.
+
+
+514
+00:22:34,597 --> 00:22:38,421
+You can see where there's resonance spikes
+
+
+515
+00:22:38,421 --> 00:22:40,982
+kind of throughout the flight as well.
+
+
+516
+00:22:40,982 --> 00:22:43,365
+I don't know that this is too helpful
+
+
+517
+00:22:43,365 --> 00:22:44,266
+but that's what it is.
+
+
+518
+00:22:44,266 --> 00:22:46,607
+You can change some things on here to make it
+
+
+519
+00:22:46,607 --> 00:22:50,111
+a little bit more fine fidelity in what you're seeing down there.
+
+
+520
+00:22:50,111 --> 00:22:55,555
+Again, another spec for motor trace stuff and vibrations,
+
+
+521
+00:22:55,555 --> 00:22:57,636
+and then some tuning settings down here.
+
+
+522
+00:22:58,883 --> 00:23:00,424
+If you have one log selected
+
+
+523
+00:23:00,424 --> 00:23:02,227
+it just looks at that information.
+
+
+524
+00:23:02,227 --> 00:23:06,071
+If you have two or more logs selected, probably just two
+
+
+525
+00:23:06,071 --> 00:23:09,296
+it kind of shows you some differentials between the two logs
+
+
+526
+00:23:09,296 --> 00:23:11,396
+that you have turned on there.
+
+
+527
+00:23:11,396 --> 00:23:13,597
+And then you can also hit differential here
+
+
+528
+00:23:13,597 --> 00:23:17,579
+and kind of see the differentials between those two logs as well.
+
+
+529
+00:23:17,579 --> 00:23:19,721
+So like if I turn off one of the logs
+
+
+530
+00:23:19,721 --> 00:23:20,461
+I don't get a diff.
+
+
+531
+00:23:20,461 --> 00:23:21,922
+But if I turn on that
+
+
+532
+00:23:21,922 --> 00:23:22,662
+you can see like, oh
+
+
+533
+00:23:22,662 --> 00:23:28,164
+this log has higher, you know, red is decreased, green is increased.
+
+
+534
+00:23:28,164 --> 00:23:31,145
+So green in this case is kind of bad.
+
+
+535
+00:23:31,145 --> 00:23:33,346
+You have more latency in the default
+
+
+536
+00:23:33,346 --> 00:23:36,407
+than you do in the tuned one, things like that.
+
+
+537
+00:23:36,407 --> 00:23:39,430
+So like I talked about, a lot of information.
+
+
+538
+00:23:39,430 --> 00:23:40,590
+It's quick.
+
+
+539
+00:23:40,590 --> 00:23:41,311
+It's web-based.
+
+
+540
+00:23:41,311 --> 00:23:42,031
+You can bring it up.
+
+
+541
+00:23:42,031 --> 00:23:45,876
+I like the step response piece probably the most.
+
+
+542
+00:23:45,876 --> 00:23:48,299
+I think it's a quick way to look at step response.
+
+
+543
+00:23:48,299 --> 00:23:49,202
+You can load up the stuff.
+
+
+544
+00:23:49,202 --> 00:23:53,146
+It's snappy and motor balance looks fairly good there
+
+
+545
+00:23:53,146 --> 00:23:54,127
+except for that one example
+
+
+546
+00:23:54,127 --> 00:23:56,295
+where it was off for some reason.
+
+
+547
+00:23:56,295 --> 00:23:57,415
+on that one log.
+
+
+548
+00:23:57,415 --> 00:23:59,678
+But yeah, I think PIDtuna is a pretty good
+
+
+549
+00:23:59,678 --> 00:24:02,220
+free web-based solution to check out.
+
+
+550
+00:24:02,220 --> 00:24:05,303
+Okay, the next one is going to be PIDpulse.
+
+
+551
+00:24:05,303 --> 00:24:08,325
+So PIDpulse is also a web-based solution.
+
+
+552
+00:24:08,325 --> 00:24:10,467
+It's one log at a time.
+
+
+553
+00:24:10,467 --> 00:24:12,127
+You can click on it
+
+
+554
+00:24:12,127 --> 00:24:14,829
+and then hit and open that log
+
+
+555
+00:24:14,829 --> 00:24:16,571
+and it will show you the step response.
+
+
+556
+00:24:17,727 --> 00:24:20,288
+Again, here, let's just look here.
+
+
+557
+00:24:20,288 --> 00:24:26,490
+I don't love what I'm seeing for the step response here
+
+
+558
+00:24:26,490 --> 00:24:28,692
+as you can hopefully have a mind's eye
+
+
+559
+00:24:28,692 --> 00:24:30,232
+of what the default looked like before.
+
+
+560
+00:24:30,232 --> 00:24:31,853
+This is awfully wavy.
+
+
+561
+00:24:31,853 --> 00:24:35,615
+Now, it should have this overshoot because this is the default
+
+
+562
+00:24:35,615 --> 00:24:36,894
+and there's not a lot.
+
+
+563
+00:24:36,894 --> 00:24:43,402
+I don't see any things that I can really adjust here to adjust any of that.
+
+
+564
+00:24:43,402 --> 00:24:44,021
+It's kind of
+
+
+565
+00:24:44,021 --> 00:24:45,262
+that's what you got.
+
+
+566
+00:24:47,262 --> 00:24:52,723
+So not as adjustable as the PIDtuna, PIDtoolbox or the PIDscope.
+
+
+567
+00:24:52,723 --> 00:24:56,965
+You can click into here to see the individual step responses.
+
+
+568
+00:24:56,965 --> 00:24:58,046
+So that's good.
+
+
+569
+00:24:58,046 --> 00:25:01,547
+You can just click that button on each one of them.
+
+
+570
+00:25:01,547 --> 00:25:04,207
+And there is some, you know
+
+
+571
+00:25:04,207 --> 00:25:06,948
+you can kind of change the window size here
+
+
+572
+00:25:06,948 --> 00:25:10,068
+to see, you know, kind of zoom in upfront.
+
+
+573
+00:25:10,068 --> 00:25:12,055
+You can look at one axis versus another.
+
+
+574
+00:25:12,055 --> 00:25:16,307
+You can share your analysis stuff with somebody.
+
+
+575
+00:25:16,307 --> 00:25:17,269
+So that's pretty cool.
+
+
+576
+00:25:18,538 --> 00:25:22,839
+There is a drop-down here to look at throttle versus noise
+
+
+577
+00:25:22,839 --> 00:25:24,701
+and it will do the spectrograms
+
+
+578
+00:25:24,701 --> 00:25:26,902
+and spectrographs and stuff like that for that.
+
+
+579
+00:25:26,902 --> 00:25:29,982
+So that's kind of what that looks like.
+
+
+580
+00:25:29,982 --> 00:25:32,904
+And there's a number of other things, time versus noise,
+
+
+581
+00:25:32,904 --> 00:25:36,566
+D-term, RPM noise, a bunch of stuff with noise.
+
+
+582
+00:25:36,566 --> 00:25:39,327
+It does look at motor balance.
+
+
+583
+00:25:39,327 --> 00:25:40,528
+Here I'm looking at the default.
+
+
+584
+00:25:40,528 --> 00:25:43,128
+It's basically saying here this was the one.
+
+
+585
+00:25:43,128 --> 00:25:48,663
+That shows that the pitch access is... you know, off balance here.
+
+
+586
+00:25:48,663 --> 00:25:52,586
+And it talks about the rear motors are working noticeably harder.
+
+
+587
+00:25:52,586 --> 00:25:55,189
+The FC is holding the nose up.
+
+
+588
+00:25:55,189 --> 00:25:59,192
+The GC sits somewhere aft.
+
+
+589
+00:25:59,192 --> 00:26:00,532
+And so that's cool.
+
+
+590
+00:26:00,532 --> 00:26:03,836
+Like it gives you some input here on that.
+
+
+591
+00:26:03,836 --> 00:26:06,923
+It has a high confidence level, supposedly.
+
+
+592
+00:26:06,923 --> 00:26:11,790
+So that's a neat analysis that it has there.
+
+
+593
+00:26:11,790 --> 00:26:16,499
+But going back to the step response on this
+
+
+594
+00:26:16,499 --> 00:26:18,422
+I think one of the coolest things that this has
+
+
+595
+00:26:18,422 --> 00:26:21,445
+is you can actually hit calculate PIDs.
+
+
+596
+00:26:21,445 --> 00:26:24,666
+and it will, and this can take some time.
+
+
+597
+00:26:24,666 --> 00:26:26,686
+I've already clicked it on this
+
+
+598
+00:26:26,686 --> 00:26:32,928
+but this can take some time, like multiple minutes, maybe five.
+
+
+599
+00:26:32,928 --> 00:26:33,847
+It can take some time
+
+
+600
+00:26:34,969 --> 00:26:36,249
+I've noticed sometimes.
+
+
+601
+00:26:36,249 --> 00:26:39,489
+But this will allow you to say, hey
+
+
+602
+00:26:39,489 --> 00:26:40,869
+this is the current
+
+
+603
+00:26:40,869 --> 00:26:44,450
+and then you can make adjustments to this to say
+
+
+604
+00:26:44,450 --> 00:26:48,632
+what if I make these PID setting changes
+
+
+605
+00:26:48,632 --> 00:26:51,513
+will it what what would it change to
+
+
+606
+00:26:51,513 --> 00:26:54,596
+basically saying it's essentially saying my i term
+
+
+607
+00:26:54,596 --> 00:26:58,558
+is too high here so that's very cool
+
+
+608
+00:26:58,558 --> 00:26:59,640
+i love that
+
+
+609
+00:26:59,640 --> 00:27:05,182
+and then you can hit this uh find recommended pids so you may say well
+
+
+610
+00:27:05,182 --> 00:27:09,625
+this is not a just a pit analysis this is a pid tuning software it's like
+
+
+611
+00:27:09,625 --> 00:27:09,967
+yeah
+
+
+612
+00:27:09,967 --> 00:27:13,828
+well this isn't that accurate so it's very cool
+
+
+613
+00:27:13,828 --> 00:27:19,829
+but If I switch my PIDs to the Tune PIDs
+
+
+614
+00:27:19,829 --> 00:27:21,570
+so this is the default.
+
+
+615
+00:27:21,570 --> 00:27:24,573
+Let me go and put in what my Tune PIDs are
+
+
+616
+00:27:24,573 --> 00:27:25,773
+and you know what that looked like.
+
+
+617
+00:27:25,773 --> 00:27:30,936
+It looked like it was perfect step response in PID Toolbox,
+
+
+618
+00:27:30,936 --> 00:27:34,338
+well, not so much in PIDscope, but in PIDtuna and the other ones.
+
+
+619
+00:27:35,380 --> 00:27:39,212
+And we'll see... What if I put those PIDs in here?
+
+
+620
+00:27:39,212 --> 00:27:42,954
+That should show me that same really good step response.
+
+
+621
+00:27:42,954 --> 00:27:44,175
+Let's see what it actually gives me.
+
+
+622
+00:27:44,175 --> 00:27:47,936
+So now I've input the tuned PIDs
+
+
+623
+00:27:47,936 --> 00:27:49,978
+and you saw what those step response looks like
+
+
+624
+00:27:49,978 --> 00:27:51,058
+and this is what it's telling me.
+
+
+625
+00:27:51,058 --> 00:27:55,881
+So this doesn't really lead me to the tuned quad.
+
+
+626
+00:27:55,881 --> 00:27:57,402
+I think the biggest thing that this
+
+
+627
+00:27:57,402 --> 00:28:00,903
+is probably missing is that Betaflight has iTerm Relax.
+
+
+628
+00:28:00,903 --> 00:28:04,244
+So iTerm Relax basically negates the iTerm
+
+
+629
+00:28:04,244 --> 00:28:08,146
+overshoot when... You do sharp stick input.
+
+
+630
+00:28:08,146 --> 00:28:10,888
+So this may be more accurate if you would have that turned off
+
+
+631
+00:28:10,888 --> 00:28:12,950
+but nobody has that turned off.
+
+
+632
+00:28:12,950 --> 00:28:14,070
+It's not turned off by default.
+
+
+633
+00:28:14,070 --> 00:28:15,251
+Why would you ever turn it off?
+
+
+634
+00:28:15,251 --> 00:28:19,493
+So that's my guess of why this is off.
+
+
+635
+00:28:19,493 --> 00:28:22,576
+You can also hit recommended PIDs here as well.
+
+
+636
+00:28:22,576 --> 00:28:24,738
+Again, this can take a little bit of time
+
+
+637
+00:28:24,738 --> 00:28:26,098
+but I'm telling you, too
+
+
+638
+00:28:26,098 --> 00:28:27,339
+it's not going to come to.
+
+
+639
+00:28:28,580 --> 00:28:31,423
+these numbers and it doesn't, yeah
+
+
+640
+00:28:31,423 --> 00:28:35,286
+it's not coming up with a great tune to be input to begin with.
+
+
+641
+00:28:35,286 --> 00:28:39,130
+So here after waiting probably a minute or so
+
+
+642
+00:28:39,130 --> 00:28:42,053
+this is the PID tune it's recommending.
+
+
+643
+00:28:42,053 --> 00:28:44,414
+which is odd because it's still showing like an overshoot here
+
+
+644
+00:28:44,414 --> 00:28:47,196
+but that's not right.
+
+
+645
+00:28:47,196 --> 00:28:51,300
+First of all, the D term on the pitch
+
+
+646
+00:28:51,300 --> 00:28:54,904
+needs to go up for overshooting issues.
+
+
+647
+00:28:56,484 --> 00:28:57,945
+Yeah, this would just be chasing.
+
+
+648
+00:28:57,945 --> 00:29:01,249
+I mean, you can just be chasing your tail.
+
+
+649
+00:29:01,249 --> 00:29:02,769
+Now, to the defense
+
+
+650
+00:29:02,769 --> 00:29:07,114
+this uses for guidance only, safety check, all that kind of good stuff.
+
+
+651
+00:29:07,114 --> 00:29:08,815
+So, very cool concept.
+
+
+652
+00:29:08,815 --> 00:29:09,816
+I like this.
+
+
+653
+00:29:09,816 --> 00:29:11,896
+this thing where it can do that
+
+
+654
+00:29:11,896 --> 00:29:12,837
+and you can move stuff around.
+
+
+655
+00:29:12,837 --> 00:29:14,699
+I just wish it worked a little bit better.
+
+
+656
+00:29:14,699 --> 00:29:17,500
+But yeah, go check it out.
+
+
+657
+00:29:17,500 --> 00:29:21,323
+I think it's worth your time to at least explore it and take a look.
+
+
+658
+00:29:21,323 --> 00:29:22,182
+Again, it's web-based.
+
+
+659
+00:29:22,182 --> 00:29:24,924
+It's pretty easy to click on it, load a log
+
+
+660
+00:29:24,924 --> 00:29:27,726
+and nuts around with it yourself and see what you think.
+
+
+661
+00:29:27,726 --> 00:29:30,166
+Now, the final one here is PidLab.
+
+
+662
+00:29:30,166 --> 00:29:33,209
+So PidLab is another tool, web-based.
+
+
+663
+00:29:33,209 --> 00:29:34,470
+You can see the link up top here.
+
+
+664
+00:29:35,484 --> 00:29:37,047
+You can also, it's a web app
+
+
+665
+00:29:37,047 --> 00:29:37,948
+so you can click it here
+
+
+666
+00:29:37,948 --> 00:29:40,589
+and it would put a little cached version
+
+
+667
+00:29:40,589 --> 00:29:44,173
+on your computer so you could use it without the internet.
+
+
+668
+00:29:44,173 --> 00:29:46,895
+It has a little dashboard so you can load your log.
+
+
+669
+00:29:46,895 --> 00:29:49,939
+Some things with this is I've noticed
+
+
+670
+00:29:49,939 --> 00:29:52,500
+that it can take a while to load a log.
+
+
+671
+00:29:52,500 --> 00:29:54,824
+Like some logs just load right up.
+
+
+672
+00:29:54,824 --> 00:29:57,046
+But Flight of Flight 4.0, well, Flight of Flight 2026.06.
+
+
+673
+00:29:59,506 --> 00:30:02,729
+They take a while to load, like a couple minutes.
+
+
+674
+00:30:02,729 --> 00:30:03,490
+I don't know why.
+
+
+675
+00:30:03,490 --> 00:30:07,394
+I don't know if my sample frequency was semi-high on them.
+
+
+676
+00:30:07,394 --> 00:30:08,134
+Maybe it's that.
+
+
+677
+00:30:08,134 --> 00:30:09,056
+I don't know.
+
+
+678
+00:30:09,056 --> 00:30:10,938
+The other ones don't take that long to load them.
+
+
+679
+00:30:11,945 --> 00:30:17,186
+And you can see once you load a larger log or I don't know
+
+
+680
+00:30:17,186 --> 00:30:21,508
+just a log with I don't know why it's taking longer on these.
+
+
+681
+00:30:21,508 --> 00:30:24,108
+I wouldn't say a larger log necessarily.
+
+
+682
+00:30:24,108 --> 00:30:26,888
+It's kind of really sluggish to move around here.
+
+
+683
+00:30:26,888 --> 00:30:28,009
+So let me pause for a second.
+
+
+684
+00:30:28,009 --> 00:30:30,849
+Well, long story short with PID Labs
+
+
+685
+00:30:30,849 --> 00:30:32,230
+it it does at the top say
+
+
+686
+00:30:32,230 --> 00:30:34,431
+the software is under development and may contain bugs.
+
+
+687
+00:30:34,431 --> 00:30:35,431
+So I'll give it that.
+
+
+688
+00:30:35,431 --> 00:30:37,612
+And it was something just sent to me as a trial.
+
+
+689
+00:30:37,612 --> 00:30:39,077
+Check it out.
+
+
+690
+00:30:39,077 --> 00:30:39,798
+It's free.
+
+
+691
+00:30:39,798 --> 00:30:40,459
+It's online.
+
+
+692
+00:30:40,459 --> 00:30:42,259
+You can see the web address up there.
+
+
+693
+00:30:42,259 --> 00:30:44,520
+I have trouble just getting logs to load.
+
+
+694
+00:30:44,520 --> 00:30:45,701
+Some of them, once they load
+
+
+695
+00:30:45,701 --> 00:30:48,301
+it's really sluggish to move through the program.
+
+
+696
+00:30:48,301 --> 00:30:51,103
+It does give recommendations based on what it sees
+
+
+697
+00:30:51,103 --> 00:30:54,265
+but the recommendations are, I think, AI slop.
+
+
+698
+00:30:54,265 --> 00:30:55,464
+Like the one it was like
+
+
+699
+00:30:55,464 --> 00:30:58,067
+there's high prop wash detected.
+
+
+700
+00:30:58,067 --> 00:30:59,846
+Turn your D gains down.
+
+
+701
+00:31:00,928 --> 00:31:04,229
+Set your... Oh, here we go, finally.
+
+
+702
+00:31:04,229 --> 00:31:05,470
+Turn your D gains down.
+
+
+703
+00:31:05,470 --> 00:31:07,651
+Set your some other stuff down.
+
+
+704
+00:31:08,848 --> 00:31:14,130
+And like here, um, set, so prop, severe prop wash
+
+
+705
+00:31:14,130 --> 00:31:18,351
+on the y'all access for like not normal, a normal thing
+
+
+706
+00:31:18,351 --> 00:31:21,872
+but then let's go set your D gain to zero
+
+
+707
+00:31:21,872 --> 00:31:27,574
+and y'all set your dynamic idle to 30
+
+
+708
+00:31:27,574 --> 00:31:31,375
+and then turn up your feed forward smoothing factor.
+
+
+709
+00:31:31,375 --> 00:31:33,856
+What the heck does that have to do?
+
+
+710
+00:31:33,856 --> 00:31:37,960
+With prop wash, that's most likely not on the yaw axis.
+
+
+711
+00:31:37,960 --> 00:31:41,241
+It's not prop wash based on the yaw axis.
+
+
+712
+00:31:41,241 --> 00:31:46,685
+Prop wash is like oscillating down through the, you know
+
+
+713
+00:31:46,685 --> 00:31:51,349
+it's basically the airfoil of the prop messing up.
+
+
+714
+00:31:51,349 --> 00:31:53,431
+And your yaw axis doesn't use that.
+
+
+715
+00:31:53,431 --> 00:31:56,673
+It's using moment of inertia and drag, wind drag.
+
+
+716
+00:31:56,673 --> 00:31:59,017
+So it's just, yeah.
+
+
+717
+00:31:59,017 --> 00:32:00,637
+These aren't good
+
+
+718
+00:32:00,637 --> 00:32:02,938
+so I think these are kind of AI slop.
+
+
+719
+00:32:02,938 --> 00:32:06,659
+It has all the other normal spectrograph stuff.
+
+
+720
+00:32:06,659 --> 00:32:08,619
+It's not that great.
+
+
+721
+00:32:08,619 --> 00:32:11,820
+You can see here the spectrograph is not...
+
+
+722
+00:32:11,820 --> 00:32:14,121
+This is the SEP response from this log.
+
+
+723
+00:32:14,121 --> 00:32:15,082
+This is not my log.
+
+
+724
+00:32:15,082 --> 00:32:18,301
+This is some older log that I got from helping somebody tune
+
+
+725
+00:32:18,301 --> 00:32:21,002
+so I don't... This is not really good.
+
+
+726
+00:32:21,002 --> 00:32:23,403
+I did load my own logs before
+
+
+727
+00:32:23,403 --> 00:32:26,444
+and they were all shaky like this.
+
+
+728
+00:32:26,444 --> 00:32:29,326
+Again, you can probably... change stuff in here
+
+
+729
+00:32:29,326 --> 00:32:34,829
+and tweak stuff to get it better.
+
+
+730
+00:32:34,829 --> 00:32:37,530
+But I shouldn't have to do that.
+
+
+731
+00:32:37,530 --> 00:32:41,134
+I shouldn't have to know like custom settings.
+
+
+732
+00:32:41,134 --> 00:32:42,795
+Nobody's gonna know that stuff.
+
+
+733
+00:32:42,795 --> 00:32:44,895
+The default should be pretty good.
+
+
+734
+00:32:44,895 --> 00:32:46,557
+And then if you're tweaking stuff up here
+
+
+735
+00:32:46,557 --> 00:32:50,660
+it should be like more advanced things that you wanna look at.
+
+
+736
+00:32:50,660 --> 00:32:52,340
+So not a really good one here.
+
+
+737
+00:32:52,340 --> 00:32:54,942
+So as promised, I told you I'd tell you what my favorite is.
+
+
+738
+00:32:56,242 --> 00:32:59,630
+My favorite for tuning is I use Black Box Explorer.
+
+
+739
+00:32:59,630 --> 00:33:01,714
+And the reason it's free
+
+
+740
+00:33:01,714 --> 00:33:04,402
+it's in Betaflight Configurator now.
+
+
+741
+00:33:04,402 --> 00:33:07,103
+It has some features the other ones don't have.
+
+
+742
+00:33:07,103 --> 00:33:09,064
+Like, for example, not many features
+
+
+743
+00:33:09,064 --> 00:33:12,786
+but one that I like a lot is that in the spectrographs
+
+
+744
+00:33:12,786 --> 00:33:17,688
+you can run frequency versus RPM versus frequency versus throttle.
+
+
+745
+00:33:17,688 --> 00:33:20,829
+And you can see that it makes a difference.
+
+
+746
+00:33:20,829 --> 00:33:23,490
+Like, you can see that straight line linear response
+
+
+747
+00:33:23,490 --> 00:33:25,872
+that you get versus RPM versus throttle.
+
+
+748
+00:33:25,872 --> 00:33:27,272
+It's like this curved response.
+
+
+749
+00:33:28,794 --> 00:33:29,795
+This curve response.
+
+
+750
+00:33:29,795 --> 00:33:32,277
+So you can see that we do get a pretty linear
+
+
+751
+00:33:32,277 --> 00:33:37,082
+response with our RPM increases for our quadcopter.
+
+
+752
+00:33:37,082 --> 00:33:40,263
+It's really just the throttle to the frequency
+
+
+753
+00:33:40,263 --> 00:33:43,968
+that you get a kind of a curved nonlinear response.
+
+
+754
+00:33:43,968 --> 00:33:45,429
+So like that's a little feature.
+
+
+755
+00:33:46,647 --> 00:33:49,230
+I think the biggest thing is that
+
+
+756
+00:33:49,230 --> 00:33:52,113
+when you're looking at your stepped inputs
+
+
+757
+00:33:52,113 --> 00:33:55,615
+what you can kind of see look like the same step response thing.
+
+
+758
+00:33:55,615 --> 00:33:58,358
+Like if you're looking at step response, well
+
+
+759
+00:33:58,358 --> 00:34:01,622
+this is the step response, right?
+
+
+760
+00:34:01,622 --> 00:34:05,684
+Going up and to one and across.
+
+
+761
+00:34:05,684 --> 00:34:07,646
+This is that step response right here.
+
+
+762
+00:34:08,648 --> 00:34:12,811
+you can see a lot of stuff with this like it's going up
+
+
+763
+00:34:12,811 --> 00:34:17,414
+we have barely a little this is untuned barely a little overshoot
+
+
+764
+00:34:17,414 --> 00:34:19,014
+but then there's like a little bit of wobble
+
+
+765
+00:34:19,014 --> 00:34:22,498
+now it's rotating at full rate rotation
+
+
+766
+00:34:22,498 --> 00:34:26,400
+and you can see we have some overshoot Most importantly
+
+
+767
+00:34:26,400 --> 00:34:30,541
+that when you look at stick tracking all by itself
+
+
+768
+00:34:30,541 --> 00:34:32,360
+you can look down here
+
+
+769
+00:34:32,360 --> 00:34:34,802
+and look at this part of it.
+
+
+770
+00:34:34,802 --> 00:34:39,603
+So if I zoom in and I do my exaggeration
+
+
+771
+00:34:39,603 --> 00:34:42,043
+you can see here and confirm things like, hey
+
+
+772
+00:34:42,043 --> 00:34:44,304
+this overshoot that we have down here
+
+
+773
+00:34:44,304 --> 00:34:46,626
+is that because the motors can't keep up?
+
+
+774
+00:34:46,626 --> 00:34:47,766
+The answer is no
+
+
+775
+00:34:47,766 --> 00:34:49,726
+because you can see we're not over, you know
+
+
+776
+00:34:49,726 --> 00:34:51,646
+the motor commands aren't at 100%.
+
+
+777
+00:34:51,646 --> 00:34:56,632
+So it's not oversaturation of the motors that is making this overshoot.
+
+
+778
+00:34:56,632 --> 00:34:58,695
+It is just tuning is the problem.
+
+
+779
+00:35:00,117 --> 00:35:04,041
+Vice versa, can you see here the same thing?
+
+
+780
+00:35:04,041 --> 00:35:05,762
+Like, why is there this big delay?
+
+
+781
+00:35:06,784 --> 00:35:09,067
+I can tune that delay out with feed forward.
+
+
+782
+00:35:09,067 --> 00:35:10,561
+No, you cannot.
+
+
+783
+00:35:10,561 --> 00:35:12,161
+You can make it a little bit better
+
+
+784
+00:35:12,161 --> 00:35:13,583
+but you're not going to tune it all the way out.
+
+
+785
+00:35:13,583 --> 00:35:14,023
+Why?
+
+
+786
+00:35:14,023 --> 00:35:16,344
+Your motors are fully saturated right here.
+
+
+787
+00:35:16,344 --> 00:35:18,666
+This is you might be a little bit better
+
+
+788
+00:35:18,666 --> 00:35:19,726
+but you're not.
+
+
+789
+00:35:19,726 --> 00:35:22,068
+You know, once you crank up feed forward and whatnot
+
+
+790
+00:35:23,469 --> 00:35:25,409
+you're kind of to some extent
+
+
+791
+00:35:25,409 --> 00:35:26,971
+that's as good as you're going to get it.
+
+
+792
+00:35:26,971 --> 00:35:30,253
+Feed forward does help because it makes it enter the move faster.
+
+
+793
+00:35:30,253 --> 00:35:32,193
+But if you have your feed forward up, you know
+
+
+794
+00:35:32,193 --> 00:35:33,735
+I don't have feed forward on here.
+
+
+795
+00:35:33,735 --> 00:35:34,856
+if i had feed forward up
+
+
+796
+00:35:34,856 --> 00:35:36,297
+and i was tweaking that i could see like
+
+
+797
+00:35:36,297 --> 00:35:40,199
+am i chasing the rabbit am i hitting motor saturation all over the place
+
+
+798
+00:35:40,199 --> 00:35:44,902
+if i am that's as good as you're gonna get unless i put bigger motors on
+
+
+799
+00:35:44,902 --> 00:35:47,623
+or reduce the uh the moment of inertia
+
+
+800
+00:35:47,623 --> 00:35:50,945
+so that's that's a huge thing to me um black box wise
+
+
+801
+00:35:50,945 --> 00:35:55,148
+that you can just see all that here it's like all heads up information
+
+
+802
+00:35:55,148 --> 00:36:00,833
+uh right away um you're not looking at like having to interpret graphs
+
+
+803
+00:36:00,833 --> 00:36:02,813
+you're just looking at it right here
+
+
+804
+00:36:04,554 --> 00:36:06,755
+Basically looking at the, I would say, raw data.
+
+
+805
+00:36:06,755 --> 00:36:09,596
+Outside of that, like I said before, Brian Weitz
+
+
+806
+00:36:09,596 --> 00:36:12,617
+with PID Toolbox, of course, and off the service.
+
+
+807
+00:36:12,617 --> 00:36:14,978
+If you're looking for a higher level of service
+
+
+808
+00:36:14,978 --> 00:36:17,059
+that comes along with his Patreon.
+
+
+809
+00:36:17,059 --> 00:36:18,719
+And the PIDtuna.
+
+
+810
+00:36:18,719 --> 00:36:21,141
+I think the PIDtuna is really cool just for a quick.
+
+
+811
+00:36:21,141 --> 00:36:21,981
+I like the interface.
+
+
+812
+00:36:21,981 --> 00:36:22,702
+It's snappy.
+
+
+813
+00:36:22,702 --> 00:36:24,762
+I like some of the features of the interface I talked about.
+
+
+814
+00:36:24,762 --> 00:36:29,284
+So that is my roundup for PID analysis software.
+
+
+815
+00:36:29,284 --> 00:36:30,184
+In the next video
+
+
+816
+00:36:30,184 --> 00:36:32,385
+we're going to talk about PID.
+
+
+817
+00:36:34,150 --> 00:36:35,634
+So that will be a hot take.
+
+
+818
+00:36:35,634 --> 00:36:36,717
+Are the recommendations good?
+
+
+819
+00:36:41,346 --> 00:36:44,007
+I am skeptical that they will be good.
+
+
+820
+00:36:44,007 --> 00:36:49,030
+Just, you know, AI speaks with confidence, confidently wrong
+
+
+821
+00:36:49,030 --> 00:36:50,630
+and you chase your tail.
+
+
+822
+00:36:50,630 --> 00:36:53,012
+But a lot of people do swear by it as well
+
+
+823
+00:36:53,012 --> 00:36:53,831
+you'll see out there.
+
+
+824
+00:36:53,831 --> 00:36:55,132
+So we'll be checking them out.
+
+
+825
+00:36:55,132 --> 00:36:57,173
+If you want to make sure you don't miss that
+
+
+826
+00:36:57,173 --> 00:36:59,735
+go ahead and make sure you're subscribed down below.
+
+
+827
+00:36:59,735 --> 00:37:02,215
+Links to all these are available down below,
+
+
+828
+00:37:02,215 --> 00:37:07,038
+and also the playlist as well for this whole series.
+
+
+829
+00:37:07,038 --> 00:37:07,579
+Thanks, everybody.
+
+
+830
+00:37:07,579 --> 00:37:08,398
+See you in the next one.
