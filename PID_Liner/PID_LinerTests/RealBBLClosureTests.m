@@ -379,86 +379,135 @@ static void SolveLinearSystemN(double *A, double *b, int n) {
 
 /// 001.bbl → 归一化(稳态=1) Roll 阶跃曲线 (复刻 2.5b ViewController 提纯流程)
 /// avgCurve 时间跨度固定 0.5s (weightedModeAverage 内 responseDuration=0.5), 反解 duration 须=0.5 对齐
-- (nullable NSArray<NSNumber *> *)normalizedRollStepCurveFromBBL:(NSString *)bblPath
-                                                    outSampleRate:(double *)outSR {
+/// 解 BBL 指定 session → PIDCSVData (copy到temp + clean + decode + parse, 自给自足)
+/// ponytail: 抽出供 "选最长session" 与 "指定sessionIndex" 两条路径复用; 每次独立 copy 避免 CSV 残留污染
+- (nullable PIDCSVData *)decodeBBLSessionToCSVData:(NSString *)bblPath sessionIndex:(int)sessionIdx {
     @try {
-        // 唯一临时文件名 (基于输入 basename), 避免 001/003 等多 BBL 共享 001_rev.bbl 冲突
         NSString *baseName = [[bblPath lastPathComponent] stringByDeletingPathExtension];
         NSString *tempBBL = [NSTemporaryDirectory()
-            stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_rev.bbl", baseName]];
+            stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_sess.bbl", baseName]];
         NSFileManager *fm = [NSFileManager defaultManager];
         [fm removeItemAtPath:tempBBL error:nil];
         // 清理同 basename 残留 CSV (blackbox-tools 输出 .NN.csv, 避免上次产物干扰本次解析)
         for (int s = 0; s < 10; s++) {
-            NSString *oldCsv = [[tempBBL stringByDeletingPathExtension]
-                stringByAppendingFormat:@".%02d.csv", s];
-            [fm removeItemAtPath:oldCsv error:nil];
+            [fm removeItemAtPath:[[tempBBL stringByDeletingPathExtension] stringByAppendingFormat:@".%02d.csv", s] error:nil];
         }
         if (![fm copyItemAtPath:bblPath toPath:tempBBL error:nil]) return nil;
-
-        // 多 session BBL: 选数据最多的 session
-        // (003 logIdx0=1411点太短是解锁片段, logIdx1=55454点是主飞行)
-        // ponytail: 试 logIdx 0..3, 够 16000 点(2个8000窗口)就停, 避免全 session 解码
-        PIDCSVData *data = nil;
-        NSInteger bestPts = 0;
+        BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
+        if ([decoder decodeFlightLog:tempBBL logIndex:sessionIdx] != 0) return nil;  // 无此 session
         NSString *dir = [tempBBL stringByDeletingLastPathComponent];
         NSString *prefix = [[tempBBL lastPathComponent] stringByDeletingPathExtension];
+        for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+            if ([f hasPrefix:prefix] && [f hasSuffix:@".csv"]) {
+                return [[PIDCSVParser parser] parseCSV:[dir stringByAppendingPathComponent:f]];
+            }
+        }
+        return nil;
+    } @catch (NSException *e) { return nil; }
+}
+
+/// PIDCSVData → 归一化(稳态=1) Roll 阶跃曲线 (复刻 2.5b ViewController 提纯流程)
+/// avgCurve 时间跨度固定 0.5s (weightedModeAverage 内 responseDuration=0.5), 反解 duration 须=0.5 对齐
+- (nullable NSArray<NSNumber *> *)normalizedCurveFromCSVData:(PIDCSVData *)data
+                                                outSampleRate:(double *)outSR {
+    if (!data || data.timeUs.count < 100) return nil;
+    double sampleRate = data.sampleRate > 0 ? data.sampleRate : 8000.0;
+    if (outSR) *outSR = sampleRate;
+
+    NSInteger windowSize = 8000;  // 7.8秒@1024Hz: 完整捕捉阶跃响应(含稳态); 1秒窗口RMSE 0.067→0.34反解崩溃
+    PIDStackData *stackData = [PIDStackData stackFromData:data axisIndex:0
+                                                windowSize:windowSize overlap:0.9375 pGain:45.0];
+    PIDTraceAnalyzer *analyzer = [[PIDTraceAnalyzer alloc] init];
+    PIDResponseResult *response = [analyzer stackResponse:stackData
+                                  window:[PIDTraceAnalyzer hanningWindowWithLength:windowSize]];
+    if (response.stepResponse.count == 0) return nil;
+
+    // 提纯: lowHighMask×2 → weightedModeAverage 初值 → qualityMask → 再平均
+    NSArray<NSNumber *> *lowMask = [[PIDTraceAnalyzer lowHighMask:response.maxInput threshold:500.0] objectForKey:@"low"];
+    NSArray<NSNumber *> *toolowMask = [[PIDTraceAnalyzer lowHighMask:response.maxInput threshold:20.0] objectForKey:@"high"];
+    NSMutableArray<NSNumber *> *respLowMask = [NSMutableArray arrayWithCapacity:lowMask.count];
+    for (NSInteger i = 0; i < (NSInteger)MIN(lowMask.count, toolowMask.count); i++) {
+        [respLowMask addObject:@([lowMask[i] doubleValue] * [toolowMask[i] doubleValue])];
+    }
+    NSArray<NSNumber *> *vr = @[@(-1.5), @(3.5)];
+    NSArray<NSNumber *> *init0 = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:response.stepResponse
+        avgTime:response.avgTime dataMask:respLowMask vertRange:vr vertBins:1000 sampleRate:sampleRate];
+    NSArray<NSNumber *> *qMask = [PIDTraceAnalyzer calculateResponseQualityMask:response.stepResponse referenceResponse:init0];
+    NSArray<NSNumber *> *combined = [PIDTraceAnalyzer combineMasks:respLowMask withMask:qMask];
+    NSArray<NSNumber *> *avgCurve = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:response.stepResponse
+        avgTime:response.avgTime dataMask:combined vertRange:vr vertBins:1000 sampleRate:sampleRate];
+    if (avgCurve.count < 100) return nil;
+
+    // 归一化稳态=1 (让 RMSE 在归一化尺度)
+    double ss = 0; NSInteger tail = avgCurve.count * 9 / 10;
+    for (NSInteger i = tail; i < avgCurve.count; i++) ss += avgCurve[i].doubleValue;
+    ss /= (double)(avgCurve.count - tail); if (fabs(ss) < 1e-9) ss = 1.0;
+    NSMutableArray<NSNumber *> *norm = [NSMutableArray arrayWithCapacity:avgCurve.count];
+    for (NSNumber *v in avgCurve) [norm addObject:@(v.doubleValue / ss)];
+    return [norm copy];
+}
+
+/// BBL → 归一化(稳态=1) Roll 阶跃曲线, 自动选数据最多的 session
+/// (003 logIdx0=1411点太短是解锁片段, logIdx1=55454点是主飞行)
+/// ponytail: 试 logIdx 0..3 取最长, 够 16000 点(2个8000窗口)就停, 避免全 session 解码
+- (nullable NSArray<NSNumber *> *)normalizedRollStepCurveFromBBL:(NSString *)bblPath
+                                                    outSampleRate:(double *)outSR {
+    @try {
+        PIDCSVData *data = nil;
+        NSInteger bestPts = 0;
         for (int tryLog = 0; tryLog < 4; tryLog++) {
-            for (int s = 0; s < 10; s++) {
-                NSString *c = [[tempBBL stringByDeletingPathExtension] stringByAppendingFormat:@".%02d.csv", s];
-                [fm removeItemAtPath:c error:nil];
-            }
-            BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
-            if ([decoder decodeFlightLog:tempBBL logIndex:tryLog] != 0) break;  // 无更多 session
-            NSString *csvFound = nil;
-            for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) {
-                if ([f hasPrefix:prefix] && [f hasSuffix:@".csv"]) { csvFound = [dir stringByAppendingPathComponent:f]; break; }
-            }
-            PIDCSVData *d = csvFound ? [[PIDCSVParser parser] parseCSV:csvFound] : nil;
+            PIDCSVData *d = [self decodeBBLSessionToCSVData:bblPath sessionIndex:tryLog];
             NSInteger pts = d ? d.timeUs.count : 0;
             if (pts > bestPts) { bestPts = pts; data = d; }
             if (pts > 16000) break;  // 够 2 个 8000 窗口, 不用试更多
         }
-        if (!data || data.timeUs.count < 100) return nil;
-
-        double sampleRate = data.sampleRate > 0 ? data.sampleRate : 8000.0;
-        if (outSR) *outSR = sampleRate;
-
-        NSInteger windowSize = 8000;  // 7.8秒@1024Hz: 完整捕捉阶跃响应(含稳态); 1秒窗口RMSE 0.067→0.34反解崩溃
-        PIDStackData *stackData = [PIDStackData stackFromData:data axisIndex:0
-                                                    windowSize:windowSize overlap:0.9375 pGain:45.0];
-        PIDTraceAnalyzer *analyzer = [[PIDTraceAnalyzer alloc] init];
-        PIDResponseResult *response = [analyzer stackResponse:stackData
-                                      window:[PIDTraceAnalyzer hanningWindowWithLength:windowSize]];
-        if (response.stepResponse.count == 0) return nil;
-
-        // 提纯: lowHighMask×2 → weightedModeAverage 初值 → qualityMask → 再平均
-        NSArray<NSNumber *> *lowMask = [[PIDTraceAnalyzer lowHighMask:response.maxInput threshold:500.0] objectForKey:@"low"];
-        NSArray<NSNumber *> *toolowMask = [[PIDTraceAnalyzer lowHighMask:response.maxInput threshold:20.0] objectForKey:@"high"];
-        NSMutableArray<NSNumber *> *respLowMask = [NSMutableArray arrayWithCapacity:lowMask.count];
-        for (NSInteger i = 0; i < (NSInteger)MIN(lowMask.count, toolowMask.count); i++) {
-            [respLowMask addObject:@([lowMask[i] doubleValue] * [toolowMask[i] doubleValue])];
-        }
-        NSArray<NSNumber *> *vr = @[@(-1.5), @(3.5)];
-        NSArray<NSNumber *> *init0 = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:response.stepResponse
-            avgTime:response.avgTime dataMask:respLowMask vertRange:vr vertBins:1000 sampleRate:sampleRate];
-        NSArray<NSNumber *> *qMask = [PIDTraceAnalyzer calculateResponseQualityMask:response.stepResponse referenceResponse:init0];
-        NSArray<NSNumber *> *combined = [PIDTraceAnalyzer combineMasks:respLowMask withMask:qMask];
-        NSArray<NSNumber *> *avgCurve = [PIDTraceAnalyzer weightedModeAverageWithStepResponse:response.stepResponse
-            avgTime:response.avgTime dataMask:combined vertRange:vr vertBins:1000 sampleRate:sampleRate];
-        if (avgCurve.count < 100) return nil;
-
-        // 归一化稳态=1 (让 RMSE 在归一化尺度)
-        double ss = 0; NSInteger tail = avgCurve.count * 9 / 10;
-        for (NSInteger i = tail; i < avgCurve.count; i++) ss += avgCurve[i].doubleValue;
-        ss /= (double)(avgCurve.count - tail); if (fabs(ss) < 1e-9) ss = 1.0;
-        NSMutableArray<NSNumber *> *norm = [NSMutableArray arrayWithCapacity:avgCurve.count];
-        for (NSNumber *v in avgCurve) [norm addObject:@(v.doubleValue / ss)];
-        return [norm copy];
+        if (!data) return nil;
+        return [self normalizedCurveFromCSVData:data outSampleRate:outSR];
     } @catch (NSException *e) {
         NSLog(@"⚠️ normalizedRollStepCurve 异常: %@", e);
         return nil;
     }
+}
+
+/// BBL 指定 session → 归一化 Roll 阶跃曲线 (重复性验证: 同bbl各session对比)
+- (nullable NSArray<NSNumber *> *)normalizedRollStepCurveFromBBL:(NSString *)bblPath
+                                                    sessionIndex:(NSInteger)sessionIdx
+                                                    outSampleRate:(double *)outSR {
+    @try {
+        if (sessionIdx < 0) return nil;
+        PIDCSVData *data = [self decodeBBLSessionToCSVData:bblPath sessionIndex:(int)sessionIdx];
+        return [self normalizedCurveFromCSVData:data outSampleRate:outSR];
+    } @catch (NSException *e) {
+        NSLog(@"⚠️ normalizedRollStepCurve(session) 异常: %@", e);
+        return nil;
+    }
+}
+
+/// BBL header → BFFilterConfig(gyro+dterm真实截止) + roll d_min/d_max_gain (roll=第0)
+/// ponytail: 抽出避免跨bbl测试内联; lpf1 用 static>0?static:dyn中点; dterm_notch 暂忽略(2级PT1近似)
+- (BFFilterConfig *)filterFromBBLHeader:(NSDictionary *)header
+                              outDMin:(double *)outDMin outDGain:(double *)outDGain {
+    double gStatic = [[header objectForKey:@"gyro_lpf1_static_hz"] doubleValue];
+    NSArray<NSString *> *gp = [[header objectForKey:@"gyro_lpf1_dyn_hz"] componentsSeparatedByString:@","];
+    double gLo = gp.count > 0 ? [gp[0] doubleValue] : 0;
+    double gHi = gp.count > 1 ? [gp[1] doubleValue] : 500;
+    double dStatic = [[header objectForKey:@"dterm_lpf1_static_hz"] doubleValue];
+    NSArray<NSString *> *dp = [[header objectForKey:@"dterm_lpf1_dyn_hz"] componentsSeparatedByString:@","];
+    double dLo = dp.count > 0 ? [dp[0] doubleValue] : 0;
+    double dHi = dp.count > 1 ? [dp[1] doubleValue] : 150;
+    BFFilterConfig *f = [[BFFilterConfig alloc] init];
+    f.gyroPT1Hz = (gStatic > 0) ? gStatic : (gLo + gHi) / 2.0;   // gyro lpf1 等效
+    f.gyroPT1_2Hz = [[header objectForKey:@"gyro_lpf2_static_hz"] doubleValue];
+    f.gyroPT1DynHz = 0;                                           // BF4.5 只2级, 第三级跳过
+    f.dtermPT1Hz = (dStatic > 0) ? dStatic : (dLo + dHi) / 2.0;   // dterm lpf1 等效
+    f.dtermPT1_2Hz = [[header objectForKey:@"dterm_lpf2_static_hz"] doubleValue];
+    f.dtermPT1DynHz = (dLo + dHi) / 2.0;                          // dterm lpf1_dyn 中点
+    if (outDMin) {
+        NSArray<NSString *> *dm = [[header objectForKey:@"d_min"] componentsSeparatedByString:@","];
+        *outDMin = dm.count > 0 ? [dm[0] doubleValue] : 0.0;
+    }
+    if (outDGain) *outDGain = [[header objectForKey:@"d_max_gain"] doubleValue];
+    return f;
 }
 
 /// BBL header → 真实 Roll PID (P/I/D/FF), 缺字段 fallback 到 001.bbl 实测值
@@ -3020,6 +3069,503 @@ static void FillCurFullReduced(const double *src, double *dstFull,
     NSLog(@"🎯 %@", report);
 
     XCTAssertGreaterThan((double)results.count, 0.0, @"扫描应至少完成1个τM点");
+}
+
+/// 🎯 阶段3.3b-2l: 起点通讯 2 bbl 重复性 + 尺寸对比 (5寸3session + 1.8寸whoop 2session)
+///
+/// 两 bbl (BF4.5.3, 2025-11-23, 各 session PID 相同 + FF=0):
+///   btfl_all16 (5寸 F722 poles=14): 3 session, rollPID 51/92/37, dterm 75/150
+///   btfl_all8  (1.8寸 whoop F405 poles=12): 2 session, rollPID 47/84/33, dterm 60/120 + notch67
+/// 各 session PID 相同 + FF=0 → 联合标定/FF反解不可做, 只测:
+///   ① 重复性: 同bbl内多session反解P一致性 (产品可信度, 吴bbl没有的维度)
+///   ② 尺寸: 5寸 vs 1.8寸 最优K_plant, 验证K先验随尺寸变 (cinewhoop战略首数据点)
+///
+/// 关键: dterm/gyro滤波从各自header读真实值 (16=75/150, 8=60/120+notch),
+///       不复用001标定150/150/120 (whoop滤波差异大, 复用会污染K).
+/// 假设: 16(5寸)最优K贴吴bbl的50; 8(1.8寸小惯量)K偏离50.
+- (void)testQidianBBL_RepeatAndSizeComparison {
+    // bbl 在仓库根 起点通讯bbl/ (非test bundle), 环境变量可覆盖; 不在本机则静默skip
+    NSString *dir = [NSProcessInfo.processInfo.environment objectForKey:@"QIDIAN_BBL_DIR"]
+                    ?: @"/Users/liangjuan/PID_Liner/起点通讯bbl";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:dir isDirectory:&isDir] || !isDir) {
+        NSLog(@"⏭️ 起点通讯bbl 目录不存在 (%@), skip", dir);
+        return;  // ponytail: 数据不在本机时静默skip, 不阻塞CI
+    }
+
+    NSArray<NSDictionary<NSString *, NSString *> *> *specs = @[
+        @{@"file":@"btfl_all16", @"size":@"5inch(3S)",      @"nSess":@"3"},
+        @{@"file":@"btfl_all8",  @"size":@"1.8inch(whoop)", @"nSess":@"2"},
+    ];
+    double kPlants[] = {30, 40, 50, 70, 90, 110, 130};
+    int nK = (int)(sizeof(kPlants) / sizeof(kPlants[0]));
+
+    NSMutableString *report = [NSMutableString stringWithString:
+        @"[3.3b-2l 起点通讯2bbl] 重复性 + 尺寸对比 (时域forward + header真实滤波)\n"
+        @"参考: 吴bbl(5寸) K_plant=50 (2g标定, P误差8.9%)\n"];
+    NSInteger bblValid = 0;
+
+    // 每个 bbl 独立: 提曲线/PID/filter → K扫(各session平均) → 反解每session → 重复性 + 尺寸K
+    for (NSDictionary<NSString *, NSString *> *spec in specs) {
+        NSString *file = spec[@"file"];
+        NSString *size = spec[@"size"];
+        NSInteger nSess = [spec[@"nSess"] integerValue];
+        NSString *bbl = [dir stringByAppendingPathComponent:[file stringByAppendingPathExtension:@"bbl"]];
+        if (![fm fileExistsAtPath:bbl]) {
+            [report appendFormat:@"\n=== %@ (%@) ❌ 文件不存在 ===\n", file, size];
+            continue;
+        }
+
+        // 1. 每 session 提曲线 (各session同PID+同飞机, PID/filter只读一次)
+        double P = 0, I = 0, D = 0, FF = 0;
+        [self readRealRollPIDFromBBL:bbl outP:&P outI:&I outD:&D outFF:&FF];
+        NSDictionary *header = [BBLHeaderParser parseHeaderFromFile:bbl];
+        double dMin = 0, dGain = 0;
+        BFFilterConfig *filterTpl = [self filterFromBBLHeader:header outDMin:&dMin outDGain:&dGain];
+
+        NSMutableArray<NSArray<NSNumber *> *> *targets = [NSMutableArray array];
+        NSMutableArray<NSNumber *> *Nv = [NSMutableArray array];
+        NSMutableArray<BFFilterConfig *> *filters = [NSMutableArray array];
+        NSMutableString *extract = [NSMutableString string];
+        for (NSInteger s = 0; s < nSess; s++) {
+            double sr = 0;
+            NSArray<NSNumber *> *t = [self normalizedRollStepCurveFromBBL:bbl sessionIndex:s outSampleRate:&sr];
+            if (!t || t.count < 100) {
+                [extract appendFormat:@"  %@ s%ld: ❌ 曲线失败\n", file, (long)s];
+                continue;
+            }
+            [targets addObject:t];
+            [Nv addObject:@((NSInteger)t.count)];
+            [filters addObject:filterTpl];  // 各 session 同飞机, 滤波相同
+            [extract appendFormat:@"  %@ s%ld: N=%ld sr=%.0f\n", file, (long)s, (long)t.count, sr];
+        }
+        if (targets.count == 0) {
+            [report appendFormat:@"\n=== %@ (%@) ❌ 无有效曲线 ===\n%@", file, size, extract];
+            continue;
+        }
+        bblValid++;
+
+        // 2. K扫 (各session平均RMSE, 真值时域forward)
+        double bestK = 50, bestAvgRMSE = 1e9;
+        NSMutableString *sweep = [NSMutableString string];
+        for (int ik = 0; ik < nK; ik++) {
+            double sumRMSE = 0;
+            for (NSInteger j = 0; j < (NSInteger)targets.count; j++) {
+                BFMechConstants *m = [BFMechConstants withKPlant:kPlants[ik] tauM:0.010
+                                                           dScale:0.0007 dMin:dMin dMinGain:dGain];
+                PIDValues *pid = [PIDValues new];
+                pid.p = P; pid.i = I; pid.d = D; pid.ff = FF;
+                NSArray<NSNumber *> *curve = [PIDReverseSolver forwardCurveTimeDomainWithPID:pid
+                    mechConstants:m filterConfig:filters[j] length:Nv[j].integerValue duration:0.5];
+                sumRMSE += [self rmseBetween:targets[j] and:curve];
+            }
+            double avg = sumRMSE / (double)targets.count;
+            [sweep appendFormat:@"  K=%-5.1f → %ld条平均RMSE=%.4f\n", kPlants[ik], (long)targets.count, avg];
+            if (avg < bestAvgRMSE) { bestAvgRMSE = avg; bestK = kPlants[ik]; }
+        }
+
+        // 3. 反解每 session (fit P/D, 用本架最优K)
+        NSMutableString *solve = [NSMutableString string];
+        NSMutableArray<NSNumber *> *solvedP = [NSMutableArray array];
+        for (NSInteger j = 0; j < (NSInteger)targets.count; j++) {
+            BFMechConstants *m = [BFMechConstants withKPlant:bestK tauM:0.010
+                                                       dScale:0.0007 dMin:dMin dMinGain:dGain];
+            PIDValues *guess = [PIDValues new];
+            guess.p = P * 1.3; guess.i = I; guess.d = D * 0.7; guess.ff = FF;
+            PIDReverseSolver *solver = [PIDReverseSolver new];
+            PIDReverseSolveResult *r = [solver solveFromTargetCurve:targets[j] initialGuess:guess
+                                                        mechConstants:m filterConfig:filters[j]
+                                                             fitMask:PIDReverseFitP | PIDReverseFitD
+                                                         useTimeDomain:YES
+                                                              length:Nv[j].integerValue duration:0.5];
+            if (!r) { [solve appendFormat:@"  s%ld: ❌ 反解nil\n", (long)j]; continue; }
+            double pErr = [self pctErr:r.solvedPID.p vs:P];
+            double dErr = [self pctErr:r.solvedPID.d vs:D];
+            [solvedP addObject:@(r.solvedPID.p)];
+            [solve appendFormat:@"  s%ld P真=%.0f 解=%.2f(%.1f%%) D真=%.0f 解=%.2f(%.1f%%) RMSE=%.4f iter=%ld\n",
+                (long)j, P, r.solvedPID.p, pErr, D, r.solvedPID.d, dErr, r.finalRMSE, (long)r.iterations];
+        }
+
+        // 4. 重复性: 同bbl内 P 解极差/均值 + P解均值对真值偏差
+        double pMin = 1e9, pMax = 0, pSum = 0;
+        for (NSNumber *p in solvedP) {
+            pMin = MIN(pMin, p.doubleValue); pMax = MAX(pMax, p.doubleValue); pSum += p.doubleValue;
+        }
+        double spread = (solvedP.count >= 2 && pSum > 0)
+            ? (pMax - pMin) / (pSum / (double)solvedP.count) * 100.0 : -1.0;
+        double meanP = pSum > 0 ? pSum / (double)solvedP.count : 0.0;
+        double meanPErr = pSum > 0 ? [self pctErr:meanP vs:P] : -1.0;
+
+        [report appendFormat:
+            @"\n=== %@ (%@, %ld/%ld session 有效) ===\n"
+            @"PID真值: P=%.0f I=%.0f D=%.0f FF=%.0f | d_min=%.0f dGain=%.0f | gyro(%.0f,%.0f) dterm(%.0f,%.0f,dyn=%.0f)\n"
+            @"%@K扫描:\n%@\n最优K=%.1f (avgRMSE=%.4f)\n反解:\n%@\n"
+            @"🔑 重复性: P解极差/均值=%.1f%% (n=%lu) | P解均值=%.1f(真值%.0f, 偏差%.1f%%)\n",
+            file, size, (long)targets.count, (long)nSess,
+            P, I, D, FF, dMin, dGain,
+            filterTpl.gyroPT1Hz, filterTpl.gyroPT1_2Hz,
+            filterTpl.dtermPT1Hz, filterTpl.dtermPT1_2Hz, filterTpl.dtermPT1DynHz,
+            extract, sweep, bestK, bestAvgRMSE, solve,
+            spread, (unsigned long)solvedP.count, meanP, P, meanPErr];
+    }
+
+    // 尺寸对比总结
+    [report appendFormat:
+        @"\n=== 尺寸对比结论 ===\n"
+        @"5寸(btfl_all16) vs 1.8寸whoop(btfl_all8) 最优K_plant 见上各段;\n"
+        @"吴bbl(5寸) K=50 为基线. 若 1.8寸 K≠50 → 尺寸→K_plant 先验必要 (cinewhoop战略数据点)\n"
+        @"注: whoop dterm 60/120+notch67 比吴bbl(150/150) 滤波更重, 小桨高频噪声特征\n"];
+    [report writeToFile:@"/tmp/qidian_bbl.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+
+    XCTAssertGreaterThanOrEqual(bblValid, 1, @"至少1个bbl解出曲线");
+}
+
+/// 🎯 阶段3.3b-2m: 新飞机(怪象3.5寸1505 SPEEDYBEEF7MINI BF4.3.1) 4-session 解码+反解探索
+///
+/// 数据: 同一架新飞机, 4个session各换不同PID依次飞 (真实迭代链样本, iteration-closure 任务#25):
+///   S1: P45 I80 D40 dmin30 FF120  (完整PID+FF)
+///   S2: P45 I80 D30 dmin30 FF0    (FF关, 降D)
+///   S3: P49 I88 D30 dmin30 FF0    (升P变硬)
+///   S4: P45 I80 D35 dmin35 FF0    (P退回, 调D) ← 8MB录满, 后部可能被砍
+///
+/// 三步探索 (用户提示: iOS BlackboxDecoder能解码成CSV, 先解析看数据):
+///   1. 数据质量门: 4个session各自解码 → 原始点数 + 曲线提取成功率 (定位S4是否被砍)
+///   2. 方向正确性: P-only反解(D/FF/I固定真值), 看反解P能否区分S3(P=49) vs 其他(P=45)
+///      → 方向对 = 迭代闭环数学成立(绕开机械常数标定死局 2i/2k已证伪)
+///   3. FF=0对照: S2/S3/S4(FF=0) vs S1(FF=120), 验证无前馈通道时反解方向
+///
+/// ⚠️ assumption: K_plant=50 借用吴bbl5寸bestK(2l基线), τM/dScale同.
+///    新飞机1505/3.5寸未标定, 联合标定死局(2i/2k), 这里只看相对方向, 不看绝对精度.
+- (void)testReverse_Guai35_4Sessions_DecodeAndDirection {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"spbe1505_35" ofType:@"bbl"];
+    XCTAssertNotNil(bbl, @"spbe1505_35.bbl 不在 test bundle");
+
+    NSDictionary *header = [BBLHeaderParser parseHeaderFromFile:bbl];
+    XCTAssertNotNil(header, @"header 解析失败");
+    double dMin = 0, dGain = 0;
+    BFFilterConfig *filter = [self filterFromBBLHeader:header outDMin:&dMin outDGain:&dGain];
+    if (dGain <= 0) dGain = 37.0;  // BF默认 d_max_gain fallback
+
+    // ⚠️ 借用吴bbl5寸 bestK=50 (2l基线), 新飞机1505/3.5寸未标定, 只看方向
+    BFMechConstants *mech = [BFMechConstants withKPlant:50.0 tauM:0.010
+                                                 dScale:0.0007 dMin:dMin dMinGain:dGain];
+
+    // truth: 4组roll PID (BBL header strings提取, 测试fixture非编造)
+    double tP[4]  = {45, 45, 49, 45};
+    double tI[4]  = {80, 80, 88, 80};
+    double tD[4]  = {40, 30, 30, 35};
+    double tFF[4] = {120, 0, 0, 0};
+    NSString *tag[4] = {@"完整+FF120", @"FF0降D", @"FF0升P49", @"FF0调D35"};
+
+    NSMutableString *rep = [NSMutableString stringWithFormat:
+        @"[3.3b-2m 怪象3.5寸1505 SPEEDYBEEF7MINI BF4.3.1] 4-session解码+反解\n"
+        @"mech=借用吴bbl5寸(K50/τM0.01/dS0.0007) dMin=%.0f dGain=%.0f  P-only(D/FF/I固定真值)\n"
+        @"S | truth P/I/D/FF | 标签 | 原始点 | 曲线点 | 反解P | P误差%% | RMSE\n",
+        dMin, dGain];
+
+    double solvedP[4] = {0,0,0,0};
+    NSInteger rawPts[4] = {0,0,0,0}, curvePts[4] = {0,0,0,0};
+    int validCnt = 0; double pErrSum = 0;
+
+    for (int s = 0; s < 4; s++) {
+        // 1. 解码 → PIDCSVData (iOS BlackboxDecoder, CSV产tmp/spbe1505_35_sess.0X.csv)
+        PIDCSVData *data = [self decodeBBLSessionToCSVData:bbl sessionIndex:s];
+        NSInteger Nraw = data ? (NSInteger)data.timeUs.count : 0;
+        rawPts[s] = Nraw;
+        if (!data || Nraw < 200) {
+            [rep appendFormat:@"S%d | %d/%d/%d/%d | %@ | %ld点 | ❌解码不足(无此session/后部被砍)\n",
+                s+1,(int)tP[s],(int)tI[s],(int)tD[s],(int)tFF[s],tag[s],(long)Nraw];
+            continue;
+        }
+        // 2. 曲线提取 (质量门: stackResponse成功率, 非阶跃数据会失败)
+        double sr = 0;
+        NSArray<NSNumber *> *target = [self normalizedCurveFromCSVData:data outSampleRate:&sr];
+        NSInteger N = target ? (NSInteger)target.count : 0;
+        curvePts[s] = N;
+        if (!target || N < 200) {
+            [rep appendFormat:@"S%d | %d/%d/%d/%d | %@ | %ld点 | %ld点 | ⚠️曲线提取失败(非阶跃/噪声大)\n",
+                s+1,(int)tP[s],(int)tI[s],(int)tD[s],(int)tFF[s],tag[s],(long)Nraw,(long)N];
+            continue;
+        }
+        // 3. P-only反解 (D/FF/I固定真值, P给×1.3扰动初值, 时域forward+全滤波, 2h-a最准配置)
+        PIDValues *guess = [PIDValues new];
+        guess.p = tP[s] * 1.3;
+        guess.i = tI[s]; guess.d = tD[s]; guess.ff = tFF[s];
+        PIDReverseSolver *solver = [PIDReverseSolver new];
+        PIDReverseSolveResult *r = [solver solveFromTargetCurve:target initialGuess:guess
+                                                    mechConstants:mech filterConfig:filter
+                                                         fitMask:PIDReverseFitP
+                                                     useTimeDomain:YES
+                                                          length:N duration:0.5];
+        if (!r) {
+            [rep appendFormat:@"S%d | %d/%d/%d/%d | %@ | %ld点 | %ld点 | ❌反解nil\n",
+                s+1,(int)tP[s],(int)tI[s],(int)tD[s],(int)tFF[s],tag[s],(long)Nraw,(long)N];
+            continue;
+        }
+        double pErr = [self pctErr:r.solvedPID.p vs:tP[s]];
+        solvedP[s] = r.solvedPID.p; pErrSum += pErr; validCnt++;
+        [rep appendFormat:@"S%d | %d/%d/%d/%d | %@ | %ld点 | %ld点 | 解P=%.2f(%.1f%%) | RMSE=%.4f\n",
+            s+1,(int)tP[s],(int)tI[s],(int)tD[s],(int)tFF[s],tag[s],(long)Nraw,(long)N,
+            r.solvedPID.p, pErr, r.finalRMSE];
+    }
+
+    // 方向判定: S3(真P=49)反解P 应 > S1/S2(真P=45) — 即使借用mechConstants, 相对排序对=方向对
+    NSString *dirVerdict;
+    if (solvedP[2] > 0 && solvedP[0] > 0 && solvedP[1] > 0
+        && solvedP[2] > solvedP[0] && solvedP[2] > solvedP[1]) {
+        dirVerdict = @"✅ 方向正确: S3(真P=49)反解P最高 > S1/S2(真P=45). "
+                      @"即使借用mechConstants(K50), 迭代闭环方向数学成立 → 不依赖单次绝对标定";
+    } else if (solvedP[2] > 0) {
+        dirVerdict = [NSString stringWithFormat:
+            @"⚠️ 方向存疑: S3解P=%.1f vs S1=%.1f S2=%.1f. 借用K50可能让1505/3.5寸偏太多, "
+            @"建议下一步K扫描标定新飞机专属K_plant", solvedP[2], solvedP[0], solvedP[1]];
+    } else {
+        dirVerdict = @"❌ S3数据不足/反解失败, 方向无法判定 (看上面❌行)";
+    }
+
+    double avgPErr = validCnt > 0 ? pErrSum / (double)validCnt : -1;
+    [rep appendFormat:
+        @"\n=== 质量门 ===\n原始点数: S1=%ld S2=%ld S3=%ld S4=%ld (8MB录满, S4后部可能被砍)\n"
+        @"曲线点数: S1=%ld S2=%ld S3=%ld S4=%ld\n"
+        @"CSV: /tmp/spbe1505_35_sess.0X.csv (最后一次解码的留下)\n",
+        (long)rawPts[0],(long)rawPts[1],(long)rawPts[2],(long)rawPts[3],
+        (long)curvePts[0],(long)curvePts[1],(long)curvePts[2],(long)curvePts[3]];
+    [rep appendFormat:
+        @"\n=== 方向验证 ===\n平均P误差=%.1f%% (借用K50, 绝对值仅参考; 2g吴bbl同机标定=8.9%%)\n%@",
+        avgPErr, dirVerdict];
+
+    [rep writeToFile:@"/tmp/realsolve_guai35_4sess.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", rep);
+    XCTAssertGreaterThan(validCnt, 0, @"至少1个session应反解成功");
+}
+
+/// 🔬 阶段3.3b-2m-b: 新飞机(怪象3.5寸1505) K_plant 扫描标定 + bestK重跑验证方向
+///
+/// 2m-a 发现: 借用吴bbl5寸 K=50 → 反解P全偏低(9-14 vs 真45-49, 平均误差77%).
+/// 根因: K=50 对 1505/3.5寸偏大 → ωn=√(K·P/τM) 算高 → LM压低P补偿.
+/// 本测试:
+///   1. 用 S2(FF=0, 最干净无前馈污染)扫K, 找反解P最接近真值45的 bestK
+///   2. 用 bestK 重跑4 session, 验证方向(S3真P=49应排最高)
+///   3. dump S2归一化曲线到 /tmp/spbe_s2_curve.txt (回应用户"先解析看数据")
+///
+/// 单参K扫描(固定τM)≠联合标定(2i/2k死局), 2g已验证此法有效(吴bbl bestK=50).
+- (void)testReverse_Guai35_KScan_AndRedirection {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"spbe1505_35" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+
+    NSDictionary *header = [BBLHeaderParser parseHeaderFromFile:bbl];
+    double dMin = 0, dGain = 0;
+    BFFilterConfig *filter = [self filterFromBBLHeader:header outDMin:&dMin outDGain:&dGain];
+    if (dGain <= 0) dGain = 37.0;
+
+    // S2 曲线 (FF=0 最干净, P=45 D=30) — 用它标K避开FF建模偏差
+    PIDCSVData *s2data = [self decodeBBLSessionToCSVData:bbl sessionIndex:1];
+    XCTAssertNotNil(s2data, @"S2解码失败");
+    double sr2 = 0;
+    NSArray<NSNumber *> *s2target = [self normalizedCurveFromCSVData:s2data outSampleRate:&sr2];
+    NSInteger N2 = (NSInteger)s2target.count;
+    XCTAssertGreaterThan(N2, 200, @"S2曲线提取失败");
+
+    // dump S2 曲线前200点到宿主/tmp (用户要看真实数据)
+    NSMutableString *curveDump = [NSMutableString stringWithFormat:
+        @"# S2归一化Roll阶跃曲线(稳态=1), sampleRate=%.0f, 共%ld点(显示前200)\n", sr2, (long)N2];
+    for (NSInteger i = 0; i < MIN(N2, 200); i++) {
+        [curveDump appendFormat:@"%.4f\n", s2target[i].doubleValue];
+    }
+    [curveDump writeToFile:@"/tmp/spbe_s2_curve.txt" atomically:YES
+                   encoding:NSUTF8StringEncoding error:nil];
+
+    double tP2 = 45.0, tI2 = 80.0, tD2 = 30.0, tFF2 = 0.0;
+
+    // K 扫描 (固定 τM=0.01, 只扫 K_plant)
+    double kList[] = {5, 10, 15, 20, 25, 30, 35, 40, 50, 60, 80};
+    int kCnt = (int)(sizeof(kList) / sizeof(kList[0]));
+    NSMutableString *scan = [NSMutableString stringWithFormat:
+        @"[K扫描] S2(真P=45 FF=0), 固定τM=0.01, 扫K_plant\nK → 反解P(误差%%) RMSE\n"];
+    double bestK = 50, bestErr = 1e9, bestSolvedP = 0;
+    for (int k = 0; k < kCnt; k++) {
+        BFMechConstants *m = [BFMechConstants withKPlant:kList[k] tauM:0.010
+                                                  dScale:0.0007 dMin:dMin dMinGain:dGain];
+        PIDValues *guess = [PIDValues new];
+        guess.p = tP2 * 1.3; guess.i = tI2; guess.d = tD2; guess.ff = tFF2;
+        PIDReverseSolver *solver = [PIDReverseSolver new];
+        PIDReverseSolveResult *r = [solver solveFromTargetCurve:s2target initialGuess:guess
+                                                    mechConstants:m filterConfig:filter
+                                                         fitMask:PIDReverseFitP
+                                                     useTimeDomain:YES
+                                                          length:N2 duration:0.5];
+        if (!r) { [scan appendFormat:@"  K=%.0f → ❌nil\n", kList[k]]; continue; }
+        double pErr = [self pctErr:r.solvedPID.p vs:tP2];
+        [scan appendFormat:@"  K=%-4.0f → 解P=%-6.2f(%.1f%%) RMSE=%.4f\n",
+            kList[k], r.solvedPID.p, pErr, r.finalRMSE];
+        if (pErr < bestErr) { bestErr = pErr; bestK = kList[k]; bestSolvedP = r.solvedPID.p; }
+    }
+    [scan appendFormat:@"\n最优K=%.0f (S2反解P=%.2f, 误差%.1f%%)\n", bestK, bestSolvedP, bestErr];
+
+    // 用 bestK 重跑 4 session, 验证方向
+    BFMechConstants *bestMech = [BFMechConstants withKPlant:bestK tauM:0.010
+                                                     dScale:0.0007 dMin:dMin dMinGain:dGain];
+    double tP[4]  = {45, 45, 49, 45};
+    double tI[4]  = {80, 80, 88, 80};
+    double tD[4]  = {40, 30, 30, 35};
+    double tFF[4] = {120, 0, 0, 0};
+    NSString *tag[4] = {@"完整+FF120", @"FF0降D", @"FF0升P49", @"FF0调D35"};
+    NSMutableString *solve = [NSMutableString stringWithFormat:
+        @"\n[bestK=%.0f 重跑4session] P-only反解\nS | truth P/I/D/FF | 标签 | 反解P(误差%%) | RMSE\n", bestK];
+    double solvedP[4] = {0,0,0,0};
+    int validCnt = 0; double pErrSum = 0;
+    for (int s = 0; s < 4; s++) {
+        PIDCSVData *d = [self decodeBBLSessionToCSVData:bbl sessionIndex:s];
+        if (!d) { [solve appendFormat:@"S%d | %d/%d/%d/%d | %@ | ❌解码nil\n",
+            s+1,(int)tP[s],(int)tI[s],(int)tD[s],(int)tFF[s],tag[s]]; continue; }
+        double sr = 0;
+        NSArray *tgt = [self normalizedCurveFromCSVData:d outSampleRate:&sr];
+        if (!tgt || tgt.count < 200) { [solve appendFormat:@"S%d | %d/%d/%d/%d | %@ | ⚠️曲线不足\n",
+            s+1,(int)tP[s],(int)tI[s],(int)tD[s],(int)tFF[s],tag[s]]; continue; }
+        PIDValues *g = [PIDValues new];
+        g.p = tP[s] * 1.3; g.i = tI[s]; g.d = tD[s]; g.ff = tFF[s];
+        PIDReverseSolver *sv = [PIDReverseSolver new];
+        PIDReverseSolveResult *r = [sv solveFromTargetCurve:tgt initialGuess:g
+                                                mechConstants:bestMech filterConfig:filter
+                                                     fitMask:PIDReverseFitP
+                                                 useTimeDomain:YES
+                                                      length:(NSInteger)tgt.count duration:0.5];
+        if (!r) { [solve appendFormat:@"S%d | %d/%d/%d/%d | %@ | ❌反解nil\n",
+            s+1,(int)tP[s],(int)tI[s],(int)tD[s],(int)tFF[s],tag[s]]; continue; }
+        double pe = [self pctErr:r.solvedPID.p vs:tP[s]];
+        solvedP[s] = r.solvedPID.p; pErrSum += pe; validCnt++;
+        [solve appendFormat:@"S%d | %d/%d/%d/%d | %@ | 解P=%.2f(%.1f%%) | RMSE=%.4f\n",
+            s+1,(int)tP[s],(int)tI[s],(int)tD[s],(int)tFF[s],tag[s], r.solvedPID.p, pe, r.finalRMSE];
+    }
+
+    // 方向判定
+    NSString *dirVerdict;
+    if (solvedP[2] > 0 && solvedP[0] > 0 && solvedP[1] > 0
+        && solvedP[2] > solvedP[0] && solvedP[2] > solvedP[1]) {
+        dirVerdict = @"✅ 方向正确: S3(真P=49)反解P最高 > S1/S2(真P=45). "
+                      @"bestK标定后迭代闭环方向数学成立 → 不依赖单次绝对标定";
+    } else if (solvedP[2] > 0) {
+        dirVerdict = [NSString stringWithFormat:
+            @"⚠️ 方向仍存疑: S3=%.1f vs S1=%.1f S2=%.1f. τM/dScale也可能需调, 或曲线质量限制",
+            solvedP[2], solvedP[0], solvedP[1]];
+    } else { dirVerdict = @"❌ S3失败, 无法判方向"; }
+
+    double avgPErr = validCnt > 0 ? pErrSum / (double)validCnt : -1;
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2m-b 怪象3.5寸1505 K扫描+bestK重跑]\n%@%@平均P误差=%.1f%% (2g吴bbl=8.9%%)\n%@",
+        scan, solve, avgPErr, dirVerdict];
+    [report writeToFile:@"/tmp/realsolve_guai35_kscan.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(bestK, 0);
+}
+
+/// 🔬 阶段3.3b-2m-c: S3 过冲诊断 (FF=0三段里唯一偏差大的)
+///
+/// 2m-b: FF=0三段中, S2(P45)反解0.8%、S4(P45)4.3% 都准, 唯S3(P49)反解59.7过冲21.8%.
+/// S2 vs S3 完美P对照: 同FF=0/D=30/dmin30, 仅P(45vs49)+I(80vs88)不同.
+/// 诊断三问:
+///   1. S3曲线质量 vs S2 (dump对比形状)
+///   2. S3扫K: S3 bestK是否=S2的80? 同→forward高P区偏差; 不同→K-P耦合(实为P→ωn映射偏差)
+///   3. S3 bestK反解S2交叉验证 (S2是否仍准→K是否真漂移)
+- (void)testReverse_Guai35_S3_OverdrawDiagnosis {
+    NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+    NSString *bbl = [bundle pathForResource:@"spbe1505_35" ofType:@"bbl"];
+    XCTAssertNotNil(bbl);
+    NSDictionary *header = [BBLHeaderParser parseHeaderFromFile:bbl];
+    double dMin = 0, dGain = 0;
+    BFFilterConfig *filter = [self filterFromBBLHeader:header outDMin:&dMin outDGain:&dGain];
+    if (dGain <= 0) dGain = 37.0;
+
+    // S2(P45) vs S3(P49): 同D=30/FF=0, 完美P对照
+    PIDCSVData *s2d = [self decodeBBLSessionToCSVData:bbl sessionIndex:1];
+    PIDCSVData *s3d = [self decodeBBLSessionToCSVData:bbl sessionIndex:2];
+    XCTAssertNotNil(s2d, @"S2解码失败");
+    XCTAssertNotNil(s3d, @"S3解码失败");
+    double sr2 = 0, sr3 = 0;
+    NSArray<NSNumber *> *s2t = [self normalizedCurveFromCSVData:s2d outSampleRate:&sr2];
+    NSArray<NSNumber *> *s3t = [self normalizedCurveFromCSVData:s3d outSampleRate:&sr3];
+    NSInteger N2 = (NSInteger)s2t.count, N3 = (NSInteger)s3t.count;
+    XCTAssertGreaterThan(N2, 200);
+    XCTAssertGreaterThan(N3, 200);
+
+    // 1. dump S2 vs S3 曲线对比 (前100点采样)
+    NSMutableString *cmp = [NSMutableString stringWithFormat:
+        @"# S2(P45) vs S3(P49) 归一化Roll曲线 (稳态=1, 前100点)\n"
+        @"# S2 sampleRate=%.0f %ld点 / S3 sampleRate=%.0f %ld点\n"
+        @"# idx   S2(P45)  S3(P49)\n", sr2, (long)N2, sr3, (long)N3];
+    for (NSInteger i = 0; i < MIN(MIN(N2, N3), 100); i++) {
+        [cmp appendFormat:@"%-5ld %.4f   %.4f\n", (long)i, s2t[i].doubleValue, s3t[i].doubleValue];
+    }
+    [cmp writeToFile:@"/tmp/spbe_s2_s3_curves.txt" atomically:YES
+             encoding:NSUTF8StringEncoding error:nil];
+
+    // 2. S3 扫K (S3过冲→反解P偏高→要让P降回49, K需更大让ωn升, 所以扫80以上为主)
+    double tP3 = 49.0, tI3 = 88.0, tD3 = 30.0, tFF3 = 0.0;
+    double kList[] = {60, 80, 100, 120, 150, 200};
+    int kCnt = (int)(sizeof(kList) / sizeof(kList[0]));
+    NSMutableString *scan = [NSMutableString stringWithFormat:
+        @"[S3扫K] S3(真P=49 D=30 FF=0), 对比S2 bestK=80(K=80时S3反解P=59.7过冲)\nK → 反解P(误差%%) RMSE\n"];
+    double s3bestK = 80, s3bestErr = 1e9, s3bestSolvedP = 0;
+    for (int k = 0; k < kCnt; k++) {
+        BFMechConstants *m = [BFMechConstants withKPlant:kList[k] tauM:0.010
+                                                  dScale:0.0007 dMin:dMin dMinGain:dGain];
+        PIDValues *g = [PIDValues new];
+        g.p = tP3 * 1.3; g.i = tI3; g.d = tD3; g.ff = tFF3;
+        PIDReverseSolver *sv = [PIDReverseSolver new];
+        PIDReverseSolveResult *r = [sv solveFromTargetCurve:s3t initialGuess:g
+                                                mechConstants:m filterConfig:filter
+                                                     fitMask:PIDReverseFitP
+                                                 useTimeDomain:YES
+                                                      length:N3 duration:0.5];
+        if (!r) { [scan appendFormat:@"  K=%-4.0f → ❌nil\n", kList[k]]; continue; }
+        double pe = [self pctErr:r.solvedPID.p vs:tP3];
+        [scan appendFormat:@"  K=%-4.0f → 解P=%-6.2f(%.1f%%) RMSE=%.4f\n",
+            kList[k], r.solvedPID.p, pe, r.finalRMSE];
+        if (pe < s3bestErr) { s3bestErr = pe; s3bestK = kList[k]; s3bestSolvedP = r.solvedPID.p; }
+    }
+    [scan appendFormat:@"\nS3最优K=%.0f (反解P=%.2f 误差%.1f%%) | S2 bestK=80\n",
+        s3bestK, s3bestSolvedP, s3bestErr];
+
+    // 3. S3 bestK 反解 S2 交叉验证
+    BFMechConstants *s3m = [BFMechConstants withKPlant:s3bestK tauM:0.010
+                                                 dScale:0.0007 dMin:dMin dMinGain:dGain];
+    PIDValues *g2 = [PIDValues new];
+    g2.p = 45 * 1.3; g2.i = 80; g2.d = 30; g2.ff = 0;
+    PIDReverseSolver *sv2 = [PIDReverseSolver new];
+    PIDReverseSolveResult *r2 = [sv2 solveFromTargetCurve:s2t initialGuess:g2
+                                            mechConstants:s3m filterConfig:filter
+                                                 fitMask:PIDReverseFitP
+                                             useTimeDomain:YES
+                                                  length:N2 duration:0.5];
+    NSString *cross = @"(S2交叉验证失败)";
+    if (r2) {
+        double e2 = [self pctErr:r2.solvedPID.p vs:45.0];
+        cross = [NSString stringWithFormat:@"交叉验证: S3 bestK(%.0f)反解S2 → P=%.2f(误差%.1f%%) [S2真P=45]",
+            s3bestK, r2.solvedPID.p, e2];
+    }
+
+    // 判定
+    NSString *verdict;
+    if (fabs(s3bestK - 80.0) < 1.0) {
+        verdict = @"🔑 S3 bestK≈80(=S2) → K-P无耦合, S3过冲根因=forward高P区(P=49)建模偏差, 非K问题";
+    } else {
+        verdict = [NSString stringWithFormat:
+            @"🔑 S3 bestK=%.0f ≠ S2的80 → K-P耦合: 不同P解出不同K(违反K_plant机械常数定义), "
+            @"实为forward的P→ωn映射在高P区偏差, 表现为K随P漂移", s3bestK];
+    }
+
+    NSString *report = [NSString stringWithFormat:
+        @"[3.3b-2m-c S3过冲诊断]\nS2(P45) vs S3(P49): 同FF=0/D=30 完美P对照\n%@\n%@\n%@",
+        scan, cross, verdict];
+    [report writeToFile:@"/tmp/realsolve_guai35_s3diag.txt" atomically:YES
+                encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"🎯 %@", report);
+    XCTAssertGreaterThan(s3bestK, 0);
 }
 
 @end

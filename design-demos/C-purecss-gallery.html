@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PID_Liner v1.1 · 版C · Gallery Dark 深色画廊裱框 (纯CSS零依赖)</title>
+<style>
+  /* ===== 配色: 深色画廊 — 纯黑底 + 唯一暖琥珀 accent ===== */
+  :root {
+    --bg: #0A0A0A;
+    --panel: #111111;
+    --card: #161616;
+    --card-hi: #1C1C1C;
+    --divider: #1F1F1F;
+    --stroke: #2A2A2A;
+    --text: #E8E8E8;
+    --text-dim: #6E6E6E;
+    --text-mute: #3A3A3A;
+    --accent: #d4a574;          /* 唯一彩色: 暖琥珀 — 贯穿曲线/评分/序号/新值 */
+    --accent-soft: rgba(212,165,116,0.15);
+    --hairline: #1F1F1F;        /* 1px 发丝线 */
+
+    /* 系统字体栈 —— 零 CDN,中文用 PingFang,等宽用 SF Mono,衬线用 New York */
+    --font-display: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    --font-body: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    --font-mono: "SF Mono", "Menlo", "Consolas", monospace;
+    --font-serif: "New York", "Times New Roman", Georgia, serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    padding: 48px 48px 64px;
+    min-width: 1800px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== 页头 (展签式) ===== */
+  .page-head { margin-bottom: 44px; }
+  .page-head .kicker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .page-head h1 {
+    font-size: 30px;
+    font-weight: 300;                          /* 细字重 — 画廊展签 */
+    letter-spacing: 0.06em;
+    margin-bottom: 12px;
+    color: var(--text);
+  }
+  .page-head .sub {
+    font-size: 13px;
+    font-weight: 300;
+    color: var(--text-dim);
+    max-width: 920px;
+    line-height: 1.7;
+    letter-spacing: 0.02em;
+  }
+  .page-head .meta-row {
+    margin-top: 18px;
+    display: flex;
+    gap: 24px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-mute);
+    letter-spacing: 0.08em;
+    padding-top: 16px;
+    border-top: 1px solid var(--hairline);
+  }
+  .page-head .meta-row span b {
+    color: var(--text-dim);
+    font-weight: 500;
+    margin-right: 6px;
+    text-transform: uppercase;
+  }
+
+  /* ===== 4 台 iPhone 平铺 ===== */
+  .stage {
+    display: flex;
+    gap: 40px;
+    align-items: flex-start;
+  }
+  .device-col { display: flex; flex-direction: column; align-items: center; }
+  .device-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .device-label b {
+    color: var(--accent);
+    font-weight: 500;
+    margin-right: 8px;
+    letter-spacing: 0.08em;
+  }
+
+  /* ===== iPhone 外壳 (纯 CSS) ===== */
+  .phone {
+    width: 390px;
+    height: 844px;
+    background: #000;
+    border-radius: 54px;
+    padding: 11px;
+    box-shadow:
+      0 0 0 2px #1a1a1a,
+      0 30px 60px -20px rgba(0,0,0,0.9),
+      0 0 0 11px #050505;
+    position: relative;
+  }
+  .screen {
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    border-radius: 44px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  /* Dynamic Island */
+  .island {
+    position: absolute;
+    top: 11px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 124px;
+    height: 36px;
+    background: #000;
+    border-radius: 20px;
+    z-index: 10;
+  }
+  /* Status bar */
+  .statusbar {
+    height: 54px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 32px;
+    padding-top: 18px;
+    font-size: 15px;
+    font-weight: 500;                          /* 细字重 */
+    color: var(--text);
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+  }
+  .statusbar .right {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    gap: 5px;
+    align-items: center;
+  }
+  .statusbar .battery {
+    width: 24px; height: 12px;
+    border: 1.5px solid var(--text-dim);
+    border-radius: 3px;
+    position: relative;
+    padding: 1.5px;
+  }
+  .statusbar .battery::after {
+    content: ""; position: absolute; right: -3px; top: 3px;
+    width: 2px; height: 4px; background: var(--text-dim); border-radius: 0 1px 1px 0;
+  }
+  .statusbar .battery i { display:block; width: 80%; height: 100%; background: var(--text); border-radius: 1px; opacity: 0.7; }
+
+  /* Home indicator */
+  .home-indicator {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 134px;
+    height: 5px;
+    background: var(--text);
+    border-radius: 3px;
+    opacity: 0.35;
+    z-index: 10;
+  }
+
+  /* ===== 屏内通用 ===== */
+  .content {
+    flex: 1;
+    overflow: hidden;
+    padding: 8px 24px 32px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* 章节序号 — 画廊作品编号 №01..№04 */
+  .section-no {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+    margin-bottom: 10px;
+    padding-top: 4px;
+  }
+
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--hairline);
+    margin-bottom: 20px;
+  }
+  .topbar .title {
+    font-size: 19px;
+    font-weight: 300;                          /* 细字重 */
+    letter-spacing: 0.06em;
+    color: var(--text);
+  }
+  .topbar .title .axis { color: var(--accent); font-weight: 400; }
+  .topbar .sub {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .seg-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 22px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .seg-tabs span {
+    flex: 1; text-align: center; padding: 9px 0;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-mute);
+    letter-spacing: 0.1em;
+    border-bottom: 1px solid transparent;
+    margin-bottom: -1px;
+    text-transform: uppercase;
+  }
+  .seg-tabs span.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .mono { font-family: var(--font-mono); }
+  .dim { color: var(--text-dim); }
+  .mute { color: var(--text-mute); }
+
+  /* ===== 屏 ① 导入 — EXIF 注脚格式 ===== */
+  .file-card {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 24px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .file-card .fname {
+    font-family: var(--font-serif);
+    font-size: 22px;
+    font-weight: 300;                          /* 衬线细字 — 铭牌感 */
+    color: var(--text);
+    letter-spacing: 0.02em;
+  }
+  .file-card .fmeta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-mute);
+    letter-spacing: 0.08em;
+    margin-left: auto;
+  }
+  .file-card .fmeta b { color: var(--accent); font-weight: 500; }
+
+  /* EXIF 注脚横排 */
+  .exif-block {
+    margin-bottom: 24px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .exif-block .exif-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .exif-block .exif-line {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.9;
+    letter-spacing: 0.04em;
+  }
+  .exif-block .exif-line b {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .exif-block .exif-line .sep { color: var(--text-mute); margin: 0 8px; }
+
+  .pid-block {
+    margin-bottom: auto;                       /* 推到中间 */
+  }
+  .pid-block .lbl {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .pid-row { display: flex; gap: 28px; align-items: baseline; }
+  .pid-cell { display: flex; flex-direction: column; align-items: flex-start; }
+  .pid-cell .term {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.12em;
+    margin-bottom: 4px;
+  }
+  .pid-cell .num {
+    font-family: var(--font-serif);
+    font-size: 30px;
+    font-weight: 300;                          /* 衬线细字 — 博物馆铭牌 */
+    color: var(--text);
+    line-height: 1;
+  }
+
+  .decode-bar { margin-top: 28px; }
+  .decode-bar .top {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+  .decode-bar .top b { color: var(--accent); font-weight: 500; }
+  .decode-bar .track {
+    height: 1px;
+    background: var(--hairline);
+    position: relative;
+  }
+  .decode-bar .fill {
+    height: 1px;
+    width: 100%;
+    background: var(--accent);
+    position: absolute;
+    left: 0;
+  }
+
+  /* ===== 屏 ② 曲线 — 裱框独占视口 ===== */
+  .curve-frame {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;                   /* 上下大片留白 — mat board 衬纸 */
+    padding: 8px 0;
+  }
+  .curve-title {
+    font-family: var(--font-serif);
+    font-size: 14px;
+    font-weight: 300;
+    color: var(--text);
+    letter-spacing: 0.04em;
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .curve-subtitle {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.16em;
+    text-align: center;
+    text-transform: uppercase;
+    margin-bottom: 28px;
+  }
+
+  .curve-svg-wrap {
+    width: 100%;
+    flex: 1;
+    min-height: 280px;
+    display: flex;
+    align-items: center;
+  }
+  .curve-svg { width: 100%; height: 100%; }
+
+  /* EXIF 式注脚 (legend + 坐标) */
+  .curve-exif {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--hairline);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .curve-exif .legend { display: flex; gap: 18px; }
+  .curve-exif .legend i {
+    display: inline-block;
+    width: 14px;
+    height: 1px;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  .curve-exif .peak { color: var(--accent); letter-spacing: 0.08em; }
+  .curve-exif .peak b { font-weight: 500; }
+
+  /* ===== 屏 ③ 诊断 ===== */
+  .score-block {
+    text-align: center;
+    padding: 16px 0 28px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .score-ring {
+    position: relative;
+    width: 110px;
+    height: 110px;
+    margin: 0 auto 14px;
+  }
+  .score-num {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .score-num b {
+    font-family: var(--font-serif);
+    font-size: 44px;
+    font-weight: 300;                          /* 衬线细字大数字 */
+    color: var(--accent);
+    line-height: 1;
+    letter-spacing: 0.02em;
+  }
+  .score-num span {
+    font-family: var(--font-mono);
+    font-size: 8px;
+    color: var(--text-mute);
+    margin-top: 6px;
+    letter-spacing: 0.16em;
+  }
+  .score-block .verdict {
+    font-family: var(--font-serif);
+    font-size: 15px;
+    font-weight: 300;
+    color: var(--text);
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+  }
+  .score-block .verdict-sub {
+    font-size: 11px;
+    font-weight: 300;
+    color: var(--text-dim);
+    line-height: 1.6;
+    max-width: 260px;
+    margin: 0 auto;
+  }
+
+  .issue-list-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .issue-list { display: flex; flex-direction: column; gap: 0; }
+  .issue {
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .issue:last-child { border-bottom: none; }
+  .issue .seq {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.1em;
+    width: 22px;
+    flex-shrink: 0;
+    padding-top: 2px;
+  }
+  .issue.primary .seq { color: var(--accent); }
+  .issue .body { flex: 1; }
+  .issue .body .h {
+    font-size: 12px;
+    font-weight: 400;
+    margin-bottom: 4px;
+    color: var(--text);
+    letter-spacing: 0.02em;
+  }
+  .issue.primary .body .h { color: var(--accent); }
+  .issue .body .t {
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.55;
+    font-weight: 300;
+  }
+  .issue .body .t .mono { color: var(--text); font-family: var(--font-mono); font-size: 10px; }
+  .issue .badge {
+    font-family: var(--font-mono);
+    font-size: 8px;
+    color: var(--accent);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    align-self: center;
+    flex-shrink: 0;
+  }
+
+  /* ===== 屏 ④ 调参 + CLI ===== */
+  .tune-list { margin-bottom: 28px; }
+  .tune-row {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .tune-row:last-child { border-bottom: none; }
+  .tune-row .term {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    width: 56px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .tune-row .term small {
+    display: block;
+    font-size: 8px;
+    color: var(--text-mute);
+    font-weight: 400;
+    margin-top: 2px;
+    letter-spacing: 0.08em;
+    text-transform: none;
+  }
+  .tune-row .change {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .tune-row .old {
+    font-family: var(--font-serif);
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--text-mute);
+  }
+  .tune-row .arr {
+    color: var(--text-mute);
+    font-size: 11px;
+  }
+  .tune-row .new {
+    font-family: var(--font-serif);
+    font-size: 26px;
+    font-weight: 300;                          /* 衬线细字 — 新值铭牌 */
+    color: var(--accent);
+    line-height: 1;
+  }
+  .tune-row .diff {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    align-self: center;
+    flex-shrink: 0;
+  }
+
+  /* CLI — 作品标签卡 */
+  .cli-block {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 18px 0 0;
+    border-top: 1px solid var(--hairline);
+  }
+  .cli-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+  }
+  .cli-head .lbl {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  .cli-head .copy {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--accent);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--accent);
+    padding-bottom: 2px;
+  }
+  .cli-code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 2.1;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+  }
+  .cli-code .cmd { color: var(--text-mute); }
+  .cli-code .kw { color: var(--text); }
+  .cli-code .val { color: var(--accent); }
+
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <div class="kicker">PID_Liner · v1.1 pre-release · 视觉方向 C</div>
+  <h1>Gallery Dark · 深色画廊裱框</h1>
+  <div class="sub">
+    现实参照 = 摄影画廊 / 博物馆展签心智。纯黑底色 + 唯一暖琥珀 accent,PID 响应曲线当摄影作品裱框独占视口,
+    UI 退到 EXIF 式注脚。极致克制,留白即设计。纯 HTML/CSS 零依赖,双击即开,永不黑屏。
+  </div>
+  <div class="meta-row">
+    <span><b>飞机</b>MAMBAF722_2022B</span>
+    <span><b>固件</b>BetaFlight 4.4.2</span>
+    <span><b>采样</b>1KHz · looptime 1000</span>
+    <span><b>当前 roll PID</b>38 / 85 / 44 / FF72</span>
+    <span><b>数据</b>真实 BBL 解码</span>
+  </div>
+</div>
+
+<div class="stage">
+
+  <!-- ============ 屏 ① 导入 ============ -->
+  <div class="device-col">
+    <div class="device-label"><b>№01</b> 导入 · 元数据</div>
+    <div class="phone">
+      <div class="island"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="right">●●●● <span class="battery"><i></i></span></span>
+        </div>
+        <div class="content">
+          <div class="section-no">№01 · IMPORT</div>
+          <div class="topbar">
+            <div class="title">黑盒导入</div>
+            <div class="sub">3 SESSIONS</div>
+          </div>
+
+          <div class="file-card">
+            <div class="fname">001.BBL</div>
+            <div class="fmeta">2.4 MB · 1/3 · <b>✓ DECODED</b></div>
+          </div>
+
+          <div class="exif-block">
+            <div class="exif-label">— EXIF · METADATA —</div>
+            <div class="exif-line">
+              <b>CRAFT</b> MAMBAF722<span class="sep">·</span>
+              <b>FIRMWARE</b> BF 4.4.2<span class="sep">·</span>
+              <b>RATE</b> 1 KHz
+            </div>
+            <div class="exif-line">
+              <b>LOOPTIME</b> 1000 µs<span class="sep">·</span>
+              <b>FLIGHT</b> 3:42<span class="sep">·</span>
+              <b>FIELDS</b> 32 cols
+            </div>
+          </div>
+
+          <div class="pid-block">
+            <div class="lbl">— CURRENT PID · ROLL —</div>
+            <div class="pid-row">
+              <div class="pid-cell"><div class="term">P</div><div class="num">38</div></div>
+              <div class="pid-cell"><div class="term">I</div><div class="num">85</div></div>
+              <div class="pid-cell"><div class="term">D</div><div class="num">44</div></div>
+              <div class="pid-cell"><div class="term">FF</div><div class="num">72</div></div>
+            </div>
+          </div>
+
+          <div class="decode-bar">
+            <div class="top"><span>DECODED 8,432 / 8,432 ROWS</span><span><b>100%</b></span></div>
+            <div class="track"><div class="fill"></div></div>
+          </div>
+        </div>
+        <div class="home-indicator"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 屏 ② 响应曲线 — 裱框独占 ============ -->
+  <div class="device-col">
+    <div class="device-label"><b>№02</b> 阶跃响应 · 时域</div>
+    <div class="phone">
+      <div class="island"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="right">●●●● <span class="battery"><i></i></span></span>
+        </div>
+        <div class="content">
+          <div class="section-no">№02 · STEP RESPONSE</div>
+          <div class="topbar">
+            <div class="title">ROLL <span class="axis">· ROLL</span></div>
+            <div class="sub">0.4s WINDOW</div>
+          </div>
+
+          <div class="seg-tabs">
+            <span class="active">时域</span>
+            <span>频域</span>
+            <span>叠加</span>
+          </div>
+
+          <div class="curve-frame">
+            <div class="curve-title">Roll Axis · Step Response</div>
+            <div class="curve-subtitle">— gyroscope trace, 1 KHz —</div>
+
+            <div class="curve-svg-wrap">
+              <svg class="curve-svg" viewBox="0 0 340 320" preserveAspectRatio="none">
+                <!-- 网格 (极淡发丝) -->
+                <g stroke="#1F1F1F" stroke-width="0.5" fill="none">
+                  <line x1="0" y1="64" x2="340" y2="64"/>
+                  <line x1="0" y1="128" x2="340" y2="128"/>
+                  <line x1="0" y1="256" x2="340" y2="256"/>
+                  <line x1="68" y1="0" x2="68" y2="320"/>
+                  <line x1="170" y1="0" x2="170" y2="320"/>
+                  <line x1="272" y1="0" x2="272" y2="320"/>
+                </g>
+                <!-- 中线 (setpoint 零位) -->
+                <line x1="0" y1="192" x2="340" y2="192" stroke="#2A2A2A" stroke-width="0.6" stroke-dasharray="2,4"/>
+
+                <!-- setpoint 方波阶跃 (琥珀虚线) -->
+                <path d="M 0 257 L 50 257 L 50 64 L 165 64 L 165 257 L 250 257 L 250 64 L 340 64"
+                      stroke="#d4a574" stroke-width="1.4" fill="none" stroke-dasharray="4,4" opacity="0.55"/>
+
+                <!-- gyro 实际响应阴影区域 (琥珀 0.15 opacity fill) -->
+                <path d="M 0 257 L 45 257
+                         C 52 257, 56 83, 66 46
+                         C 76 83, 84 58, 94 68
+                         C 104 76, 112 62, 122 66
+                         C 130 68, 138 64, 150 64
+                         L 162 64
+                         C 170 64, 174 242, 184 274
+                         C 194 300, 202 264, 212 254
+                         C 222 248, 230 257, 245 257
+                         L 248 257
+                         C 256 257, 260 78, 270 46
+                         C 280 83, 288 58, 298 68
+                         C 308 76, 316 62, 326 64
+                         L 340 64
+                         L 340 257 L 0 257 Z"
+                      fill="#d4a574" opacity="0.10"/>
+
+                <!-- gyro 实际响应 (白实线, 平滑贝塞尔 + 过冲振荡衰减) -->
+                <path d="M 0 257 L 45 257
+                         C 52 257, 56 83, 66 46
+                         C 76 83, 84 58, 94 68
+                         C 104 76, 112 62, 122 66
+                         C 130 68, 138 64, 150 64
+                         L 162 64
+                         C 170 64, 174 242, 184 274
+                         C 194 300, 202 264, 212 254
+                         C 222 248, 230 257, 245 257
+                         L 248 257
+                         C 256 257, 260 78, 270 46
+                         C 280 83, 288 58, 298 68
+                         C 308 76, 316 62, 326 64
+                         L 340 64"
+                      stroke="#E8E8E8" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+
+                <!-- PID 输出 (淡灰, 略超前) -->
+                <path d="M 0 257 C 40 257, 45 78, 60 64 C 75 50, 85 64, 100 64 L 160 64 C 168 64, 172 247, 185 257 C 200 267, 210 257, 245 257 C 248 257, 250 68, 265 64 L 340 64"
+                      stroke="#6E6E6E" stroke-width="0.9" fill="none" opacity="0.5"/>
+
+                <!-- 过冲标注 十字线 + 极小点 -->
+                <line x1="66" y1="46" x2="66" y2="192" stroke="#d4a574" stroke-width="0.5" stroke-dasharray="2,3" opacity="0.7"/>
+                <circle cx="66" cy="46" r="2.2" fill="#d4a574"/>
+                <!-- 数值标签 (画廊式: 仅文字, 无胶囊) -->
+                <text x="74" y="42" font-family="SF Mono,Menlo,Consolas,monospace" font-size="9" fill="#d4a574" letter-spacing="0.5">OVERSHOOT +18%</text>
+              </svg>
+            </div>
+
+            <div class="curve-exif">
+              <div class="legend">
+                <span><i style="background:#d4a574"></i>SETPOINT</span>
+                <span><i style="background:#E8E8E8"></i>GYRO</span>
+                <span><i style="background:#6E6E6E"></i>PID</span>
+              </div>
+              <span class="peak">PEAK <b>708°/s</b> @ 0.16s</span>
+            </div>
+          </div>
+        </div>
+        <div class="home-indicator"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 屏 ③ 诊断 ============ -->
+  <div class="device-col">
+    <div class="device-label"><b>№03</b> 诊断 · 评分</div>
+    <div class="phone">
+      <div class="island"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="right">●●●● <span class="battery"><i></i></span></span>
+        </div>
+        <div class="content">
+          <div class="section-no">№03 · DIAGNOSIS</div>
+          <div class="topbar">
+            <div class="title">曲线诊断<span class="axis"> · ROLL</span></div>
+            <div class="sub">4 FINDINGS</div>
+          </div>
+
+          <div class="score-block">
+            <div class="score-ring">
+              <svg width="110" height="110" viewBox="0 0 110 110">
+                <circle cx="55" cy="55" r="48" fill="none" stroke="#1F1F1F" stroke-width="2"/>
+                <!-- dasharray = 2π·48 ≈ 301.6, offset = 301.6·(1-0.72) ≈ 84.4 -->
+                <circle cx="55" cy="55" r="48" fill="none" stroke="#d4a574" stroke-width="2"
+                        stroke-dasharray="301.6" stroke-dashoffset="84.4" stroke-linecap="butt"
+                        transform="rotate(-90 55 55)"/>
+              </svg>
+              <div class="score-num"><b>72</b><span>/ 100</span></div>
+            </div>
+            <div class="verdict">响应偏硬,有过冲</div>
+            <div class="verdict-sub">P 偏高导致高频振荡,建议降 P 升 D 以压阻尼。整体方向可用,微调即可。</div>
+          </div>
+
+          <div class="issue-list-label">— FINDINGS —</div>
+          <div class="issue-list">
+            <div class="issue primary">
+              <div class="seq">01</div>
+              <div class="body">
+                <div class="h">P 偏高 · 过冲振荡</div>
+                <div class="t">阶跃过冲 <span class="mono">+18%</span>,衰减振荡 <span class="mono">2 次</span>。典型高 P 症状。</div>
+              </div>
+              <div class="badge">主因</div>
+            </div>
+            <div class="issue">
+              <div class="seq">02</div>
+              <div class="body">
+                <div class="h">D 不足 · 回稳偏慢</div>
+                <div class="t">二阶阻尼比 <span class="mono">ζ ≈ 0.42</span>,低于目标 <span class="mono">0.7</span>。</div>
+              </div>
+            </div>
+            <div class="issue">
+              <div class="seq">03</div>
+              <div class="body">
+                <div class="h">I 适当 · 无稳态静差</div>
+                <div class="t">稳态偏差 <span class="mono">&lt; 2%</span>,τ_I 合理,无需动 I。</div>
+              </div>
+            </div>
+            <div class="issue">
+              <div class="seq">04</div>
+              <div class="body">
+                <div class="h">FF 设置合理</div>
+                <div class="t">前馈瞬态补偿到位,急促指令无明显滞后。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="home-indicator"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 屏 ④ 调参 + CLI ============ -->
+  <div class="device-col">
+    <div class="device-label"><b>№04</b> 推荐 · CLI</div>
+    <div class="phone">
+      <div class="island"></div>
+      <div class="screen">
+        <div class="statusbar">
+          <span>9:41</span>
+          <span class="right">●●●● <span class="battery"><i></i></span></span>
+        </div>
+        <div class="content">
+          <div class="section-no">№04 · RECOMMENDATION</div>
+          <div class="topbar">
+            <div class="title">推荐调参<span class="axis"> · ROLL</span></div>
+            <div class="sub">BF 4.3–4.5</div>
+          </div>
+
+          <div class="issue-list-label">— TUNING DELTA —</div>
+          <div class="tune-list">
+            <div class="tune-row">
+              <div class="term">P<small>比例</small></div>
+              <div class="change">
+                <span class="old">38</span><span class="arr">→</span>
+                <span class="new">42</span>
+              </div>
+              <span class="diff">+10.5%</span>
+            </div>
+            <div class="tune-row">
+              <div class="term">I<small>积分</small></div>
+              <div class="change">
+                <span class="old">85</span><span class="arr">→</span>
+                <span class="new">90</span>
+              </div>
+              <span class="diff">+5.9%</span>
+            </div>
+            <div class="tune-row">
+              <div class="term">D<small>d_min</small></div>
+              <div class="change">
+                <span class="old">44</span><span class="arr">→</span>
+                <span class="new">38</span>
+              </div>
+              <span class="diff">−13.6%</span>
+            </div>
+            <div class="tune-row">
+              <div class="term">FF<small>前馈</small></div>
+              <div class="change">
+                <span class="old">72</span><span class="arr">→</span>
+                <span class="new">70</span>
+              </div>
+              <span class="diff">−2.8%</span>
+            </div>
+          </div>
+
+          <div class="cli-block">
+            <div class="cli-head">
+              <div class="lbl">— BETAFLIGHT CLI · ROLL —</div>
+              <div class="copy">复制</div>
+            </div>
+            <div class="cli-code">
+              <span class="cmd">set</span> <span class="kw">p_roll</span> = <span class="val">42</span><br/>
+              <span class="cmd">set</span> <span class="kw">i_roll</span> = <span class="val">90</span><br/>
+              <span class="cmd">set</span> <span class="kw">d_min_roll</span> = <span class="val">38</span><br/>
+              <span class="cmd">set</span> <span class="kw">f_roll</span> = <span class="val">70</span><br/>
+              <span class="cmd">save</span>
+            </div>
+          </div>
+        </div>
+        <div class="home-indicator"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
