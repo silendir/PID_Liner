@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PID_Liner 拟合闭环 • 4屏原型</title>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #eceef1;
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+    color: #1f2937;
+    padding: 48px 32px;
+    min-height: 100vh;
+  }
+  .page-title { font-family: "New York", Georgia, serif; font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }
+  .page-sub { font-size: 15px; color: #6b7280; margin-bottom: 40px; max-width: 900px; line-height: 1.6; }
+  .page-sub b { color: #0d9488; }
+  .phones-row { display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-start; }
+  .phone-col { display: flex; flex-direction: column; align-items: center; }
+  .phone-label { font-size: 13px; color: #6b7280; margin-bottom: 12px; font-style: italic; letter-spacing: 0.3px; }
+  .phone-label b { color: #1f2937; font-style: normal; }
+  .scr { width: 393px; height: 764px; overflow: hidden; position: relative; background: #f5f5f7; }
+  .scr-pad { padding: 8px 18px 18px; height: 100%; overflow-y: auto; }
+  .nav-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px 14px; }
+  .nav-back { font-size: 22px; color: #0d9488; cursor: pointer; width: 28px; }
+  .nav-title { font-size: 16px; font-weight: 600; }
+  .nav-badge { font-size: 10px; padding: 3px 8px; border-radius: 999px; background: #fef3c7; color: #92400e; font-weight: 600; }
+  .nav-badge.iter { background: #ccfbf1; color: #0f766e; }
+  .h-display { font-family: "New York", Georgia, serif; }
+  .muted { color: #6b7280; }
+  .accent { color: #0d9488; }
+  .warn { color: #ea580c; }
+  .card { background: #fff; border-radius: 16px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .btn { display: block; width: 100%; padding: 14px; border: none; border-radius: 14px; font-size: 15px; font-weight: 600; cursor: pointer; text-align: center; font-family: inherit; transition: transform .08s; }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary { background: #0d9488; color: #fff; }
+  .btn-secondary { background: #f3f4f6; color: #1f2937; }
+  .btn-ghost { background: transparent; color: #0d9488; padding: 10px; }
+  .chip { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 6px; background: #f3f4f6; color: #6b7280; }
+  .chip.done { background: #dcfce7; color: #166534; }
+  .chip.prog { background: #fef3c7; color: #92400e; }
+  .tap-hint { font-size: 11px; color: #9ca3af; text-align: center; margin-top: 8px; font-style: italic; }
+  .cli-block { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.7; background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 10px; white-space: pre; overflow-x: auto; }
+  .toast { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(17,24,39,0.92); color: #fff; font-size: 13px; padding: 10px 18px; border-radius: 999px; z-index: 50; pointer-events: none; }
+  .sheet-mask { position: absolute; inset: 0; background: rgba(0,0,0,0.4); z-index: 40; display: flex; align-items: flex-end; }
+  .sheet { background: #f5f5f7; width: 100%; border-radius: 22px 22px 0 0; padding: 8px 18px 22px; max-height: 88%; overflow-y: auto; }
+  .sheet-handle { width: 40px; height: 5px; background: #d1d5db; border-radius: 999px; margin: 6px auto 14px; }
+  .sess-row { display: flex; align-items: center; gap: 12px; padding: 12px; background: #fff; border-radius: 12px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; }
+  .sess-row.sel { border-color: #0d9488; }
+  .sess-mini { flex-shrink: 0; }
+  .sess-info { flex: 1; }
+  .sess-info .t { font-size: 13px; font-weight: 600; }
+  .sess-info .s { font-size: 11px; color: #6b7280; margin-top: 2px; }
+  .sess-radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #d1d5db; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .sess-radio.on { border-color: #0d9488; }
+  .sess-radio.on::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: #0d9488; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState } = React;
+
+/* ===== IosFrame ===== */
+const iosFrameStyles = {
+  wrapper: { display:'inline-block', padding:12, background:'#000', borderRadius:60, boxShadow:'0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
+  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#fff' },
+  statusBar: { position:'absolute', top:0, left:0, right:0, height:54, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 32px', fontSize:16, fontWeight:600, fontFamily:'-apple-system, sans-serif', zIndex:20, pointerEvents:'none' },
+  dynamicIsland: { position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', width:124, height:36, background:'#000', borderRadius:999, zIndex:30 },
+  statusIcons: { display:'flex', alignItems:'center', gap:6 },
+  signalIcon: { display:'flex', alignItems:'flex-end', gap:2, height:12 },
+  signalBar: { width:3, background:'currentColor', borderRadius:1 },
+  batteryIcon: { width:26, height:12, border:'1.5px solid currentColor', borderRadius:3, padding:1, position:'relative', opacity:0.8 },
+  batteryCap: { position:'absolute', top:3, right:-3, width:2, height:6, background:'currentColor', borderRadius:'0 1px 1px 0' },
+  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'auto' },
+  homeIndicator: { position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', width:140, height:5, background:'rgba(0,0,0,0.3)', borderRadius:999, zIndex:10 },
+};
+function IosFrame({ children, time='9:41', battery=88 }) {
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{ ...iosFrameStyles.screen, width:393, height:852 }}>
+        <div style={{ ...iosFrameStyles.statusBar, color:'#000' }}>
+          <span>{time}</span>
+          <div style={iosFrameStyles.statusIcons}>
+            <div style={iosFrameStyles.signalIcon}>
+              <div style={{ ...iosFrameStyles.signalBar, height:4 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:6 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:9 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:11 }} />
+            </div>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color:'#000' }}>
+              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+            </svg>
+            <div style={iosFrameStyles.batteryIcon}>
+              <div style={{ width:String(battery)+'%', height:'100%', background:'currentColor', borderRadius:1, opacity:0.9 }} />
+              <div style={iosFrameStyles.batteryCap} />
+            </div>
+          </div>
+        </div>
+        <div style={iosFrameStyles.dynamicIsland} />
+        <div style={iosFrameStyles.content}>{children}</div>
+        <div style={iosFrameStyles.homeIndicator} />
+      </div>
+    </div>
+  );
+}
+
+/* ===== 步响应曲线 ===== */
+function stepPath(a, b, c, w, h, samples, yMax) {
+  const pts = [];
+  for (let i = 0; i <= samples; i++) {
+    const t = (i / samples) * 1.6;
+    const y = 1 - Math.exp(-a * t) * (Math.cos(b * t) + c * Math.sin(b * t));
+    const px = (t / 1.6) * w;
+    const py = h - (Math.min(y, yMax) / yMax) * (h - 8) - 4;
+    pts.push((i === 0 ? 'M' : 'L') + px.toFixed(1) + ',' + py.toFixed(1));
+  }
+  return pts.join(' ');
+}
+function StepCurve({ a, b, c, stroke, dash, w, h, label }) {
+  w = w || 300; h = h || 120;
+  return (
+    <svg width={w} height={h} style={{ display:'block' }}>
+      {[0.25,0.5,0.75,1.0].map(function(g,i){
+        return <line key={i} x1={0} y1={h - g*(h-8) - 4} x2={w} y2={h - g*(h-8) - 4} stroke="#e5e7eb" strokeWidth={1} strokeDasharray="2 3" />;
+      })}
+      <line x1={0} y1={h-4} x2={w} y2={h-4} stroke="#d1d5db" strokeWidth={1.2} />
+      <path d={stepPath(a,b,c,w,h,70,1.05)} fill="none" stroke={stroke} strokeWidth={2.4} strokeDasharray={dash || undefined} strokeLinecap="round" />
+      {label ? <text x={w-4} y={14} textAnchor="end" fontSize={10} fill={stroke} fontWeight="600">{label}</text> : null}
+    </svg>
+  );
+}
+const CB = { a: 4.0, b: 9.5, c: 0.35 };   // 基线(灰)
+const CC = { a: 6.0, b: 12.0, c: 0.22 };  // 当前(青)
+const CR = { a: 5.4, b: 9.0, c: 0.42 };   // 推荐(橙虚)
+
+/* ===== Toast hook ===== */
+function useToast() {
+  const [msg, setMsg] = useState(null);
+  const show = function(m){ setMsg(m); setTimeout(function(){ setMsg(null); }, 1600); };
+  const node = msg ? <div className="toast">{msg}</div> : null;
+  return [show, node];
+}
+
+/* ===== 屏1 方案列表 ===== */
+function ScreenPlans() {
+  const [show, toast] = useToast();
+  const [sel, setSel] = useState(null);
+  return (
+    <div className="scr"><div className="scr-pad">
+      <div className="nav-bar">
+        <div className="nav-back" style={{visibility:'hidden'}}>‹</div>
+        <div className="nav-title">调参方案</div>
+        <div style={{width:28}} />
+      </div>
+
+      <div style={{marginBottom:18}}>
+        <div className="h-display" style={{fontSize:27, fontWeight:700, letterSpacing:-0.4}}>PID_Liner</div>
+        <div className="muted" style={{fontSize:13, marginTop:2}}>独立分析 • 方案迭代</div>
+      </div>
+
+      <div className="card" onClick={function(){ setSel('indep'); show('→ 进入独立分析页(屏2)'); }}
+        style={{cursor:'pointer', border: sel==='indep' ? '2px solid #0d9488' : '2px solid transparent'}}>
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:16, fontWeight:700}}>快速分析一次飞行</div>
+            <div className="muted" style={{fontSize:12.5, marginTop:3}}>导入 BBL • 看曲线 • 出建议</div>
+          </div>
+          <div style={{fontSize:11, color:'#92400e', background:'#fef3c7', padding:'4px 10px', borderRadius:8, fontWeight:600}}>不建方案 • 不保存</div>
+        </div>
+        <div className="tap-hint" style={{textAlign:'left', marginTop:10}}>点此进入 →</div>
+      </div>
+
+      <div style={{display:'flex', alignItems:'center', gap:8, margin:'18px 4px 12px'}}>
+        <div style={{fontSize:14, fontWeight:700}}>我的方案</div>
+        <div className="muted" style={{fontSize:12}}>2 个</div>
+        <div style={{flex:1}} />
+        <div className="accent" style={{fontSize:13, fontWeight:600, cursor:'pointer'}} onClick={function(){ show('→ 触发导入 BBL • 用户主动建方案'); }}>+ 新建</div>
+      </div>
+
+      <div className="card" onClick={function(){ setSel('p1'); show('→ 进入方案工作台(屏3)'); }}
+        style={{cursor:'pointer', border: sel==='p1' ? '2px solid #0d9488' : '2px solid transparent'}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
+          <div>
+            <div style={{fontSize:15, fontWeight:700}}>怪象3.5寸</div>
+            <div className="muted" style={{fontSize:12, marginTop:2}}>SPEEDYBEEF7MINI • BF4.3.1</div>
+          </div>
+          <span className="chip prog">第3轮 • 进行中</span>
+        </div>
+        <div style={{marginTop:10}}>
+          <StepCurve a={CB.a} b={CB.b} c={CB.c} stroke="#9ca3af" w={162} h={56} />
+          <div style={{position:'relative', marginTop:-56}}>
+            <StepCurve a={CC.a} b={CC.b} c={CC.c} stroke="#0d9488" w={162} h={56} />
+          </div>
+        </div>
+        <div style={{display:'flex', justifyContent:'space-between', marginTop:8, fontSize:12}}>
+          <span className="muted">基线 P45 <span className="accent">→ 当前 P49 ↑</span></span>
+          <span className="warn">S3 轻微振荡</span>
+        </div>
+      </div>
+
+      <div className="card" onClick={function(){ setSel('p2'); show('→ 进入方案工作台(屏3)'); }}
+        style={{cursor:'pointer', border: sel==='p2' ? '2px solid #0d9488' : '2px solid transparent'}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
+          <div>
+            <div style={{fontSize:15, fontWeight:700}}>吴bbl 5寸</div>
+            <div className="muted" style={{fontSize:12, marginTop:2}}>MAMBAF722 • BF4.5</div>
+          </div>
+          <span className="chip done">第5轮 • 已收敛 ✓</span>
+        </div>
+        <div style={{marginTop:10, position:'relative'}}>
+          <StepCurve a={4.5} b={8.5} c={0.55} stroke="#9ca3af" w={162} h={56} />
+          <div style={{position:'relative', marginTop:-56}}>
+            <StepCurve a={4.5} b={8.5} c={0.55} stroke="#166534" w={162} h={56} />
+          </div>
+        </div>
+        <div style={{display:'flex', justifyContent:'space-between', marginTop:8, fontSize:12}}>
+          <span className="muted">基线 P38 <span style={{color:'#166534'}}>→ 当前 P38 稳定</span></span>
+          <span style={{color:'#166534'}}>收敛 ✓</span>
+        </div>
+      </div>
+
+      <div className="tap-hint">🔑 无自动聚合 • 按 chainId 列方案 • craftName 只作显示</div>
+      {toast}
+    </div></div>
+  );
+}
+
+/* ===== 屏2 独立分析页 ===== */
+function ScreenIndependent() {
+  const [show, toast] = useToast();
+  const [imported, setImported] = useState(true);
+  return (
+    <div className="scr"><div className="scr-pad">
+      <div className="nav-bar">
+        <div className="nav-back">‹</div>
+        <div className="nav-title">独立分析</div>
+        <div className="nav-badge">不保存</div>
+      </div>
+
+      <div className="card">
+        {imported ? (
+          <div>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:14, fontWeight:700}}>wu3.BBL</div>
+                <div className="muted" style={{fontSize:12, marginTop:2}}>Session 2 • 5寸 • BF4.5</div>
+              </div>
+              <div className="accent" style={{fontSize:12, cursor:'pointer'}} onClick={function(){ show('重新选择 Session'); }}>换 Session</div>
+            </div>
+            <div className="tap-hint" style={{textAlign:'left', marginTop:8}}>✓ 质量门通过 • RMSE 0.063 • 规范阶跃</div>
+          </div>
+        ) : (
+          <button className="btn btn-secondary" onClick={function(){ setImported(true); show('已导入 • 质量门通过'); }}>导入 BBL</button>
+        )}
+      </div>
+
+      <div style={{fontSize:12, fontWeight:700, color:'#6b7280', margin:'14px 4px 8px'}}>步响应曲线 • roll</div>
+      <div className="card">
+        <StepCurve a={5.8} b={11} c={0.28} stroke="#0d9488" w={324} h={150} />
+        <div style={{display:'flex', justifyContent:'space-between', fontSize:11, marginTop:8}} className="muted">
+          <span>上升时间 0.18s</span><span>超调 12%</span><span>稳态 ✓</span>
+        </div>
+      </div>
+
+      <div style={{fontSize:12, fontWeight:700, color:'#6b7280', margin:'14px 4px 8px'}}>反解建议(单次)</div>
+      <div className="card">
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10}}>
+          <div style={{fontSize:15, fontWeight:700}}>P = 26.2 <span className="muted" style={{fontSize:12, fontWeight:400}}>±4.2%</span></div>
+          <span className="chip prog">达标</span>
+        </div>
+        <div style={{fontSize:12, color:'#6b7280', marginBottom:10}}>D / FF 沿用 header 真值(2h-a 证伪 P-only)</div>
+        <div className="cli-block">{'set p_roll = 26\nset i_roll = 85\nset d_min_roll = 44\nset f_roll = 0'}</div>
+        <button className="btn btn-ghost" style={{marginTop:8}} onClick={function(){ show('已复制 CLI'); }}>复制 CLI</button>
+      </div>
+
+      <div style={{padding:'14px 6px', fontSize:12, color:'#92400e', background:'#fffbeb', borderRadius:10, marginTop:8, textAlign:'center'}}>
+        本次分析不保存。如需多轮迭代,请 <span className="accent" style={{fontWeight:600}}>加入方案 →</span>
+      </div>
+      <div className="tap-hint">🔑 isIter=NO • 不加载链历史 • 不保存 • 1对1 干净</div>
+      {toast}
+    </div></div>
+  );
+}
+
+/* ===== 屏3 方案工作台 ===== */
+function ScreenWorkbench() {
+  const [show, toast] = useToast();
+  const [showPredict, setShowPredict] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  return (
+    <div className="scr"><div className="scr-pad">
+      <div className="nav-bar">
+        <div className="nav-back">‹</div>
+        <div className="nav-title">怪象3.5寸</div>
+        <div className="nav-badge iter">方案迭代</div>
+      </div>
+
+      <div className="card" style={{padding:'14px 16px'}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+          <span className="chip prog">第3轮 • 进行中</span>
+          <span className="muted" style={{fontSize:11}}>SPEEDYBEEF7MINI • BF4.3.1</span>
+        </div>
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:13}}>
+          <div style={{textAlign:'center'}}><div className="muted" style={{fontSize:10}}>基线</div><div style={{fontWeight:700, fontSize:16}}>P45</div></div>
+          <div className="muted">→</div>
+          <div style={{textAlign:'center'}}><div className="muted" style={{fontSize:10}}>第2轮</div><div style={{fontWeight:700, fontSize:16}}>P45</div></div>
+          <div className="muted">→</div>
+          <div style={{textAlign:'center'}}><div style={{fontSize:10, color:'#0d9488'}}>当前•第3轮</div><div style={{fontWeight:700, fontSize:16, color:'#0d9488'}}>P49</div></div>
+          <div className="muted">→</div>
+          <div style={{textAlign:'center'}}><div style={{fontSize:10, color:'#ea580c'}}>推荐•第4轮</div><div style={{fontWeight:700, fontSize:16, color:'#ea580c'}}>P47</div></div>
+        </div>
+      </div>
+
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', margin:'14px 4px 8px'}}>
+        <div style={{fontSize:12, fontWeight:700, color:'#6b7280'}}>曲线对比 • roll</div>
+        <div className="accent" style={{fontSize:12, cursor:'pointer', fontWeight:600}} onClick={function(){ setShowPredict(!showPredict); }}>
+          {showPredict ? '− 隐藏预测' : '+ 显示预测虚线'}
+        </div>
+      </div>
+      <div className="card">
+        <div style={{position:'relative'}}>
+          <StepCurve a={CB.a} b={CB.b} c={CB.c} stroke="#9ca3af" w={324} h={150} label="基线 S1" />
+          <div style={{position:'relative', marginTop:-150}}>
+            <StepCurve a={CC.a} b={CC.b} c={CC.c} stroke="#0d9488" w={324} h={150} label="当前 S3" />
+          </div>
+          {showPredict ? (
+            <div style={{position:'relative', marginTop:-150}}>
+              <StepCurve a={CR.a} b={CR.b} c={CR.c} stroke="#ea580c" dash="6 4" w={324} h={150} label="预测 S4" />
+            </div>
+          ) : null}
+        </div>
+        <div style={{display:'flex', gap:14, fontSize:11, marginTop:10}}>
+          <span><span style={{display:'inline-block',width:10,height:2,background:'#9ca3af',verticalAlign:'middle'}} /> 基线</span>
+          <span><span style={{display:'inline-block',width:10,height:2,background:'#0d9488',verticalAlign:'middle'}} /> 当前轮</span>
+          {showPredict ? <span className="warn"><span style={{display:'inline-block',width:10,height:2,verticalAlign:'middle',borderTop:'2px dashed #ea580c'}} /> 推荐(预测)</span> : null}
+        </div>
+      </div>
+
+      <div style={{fontSize:12, fontWeight:700, color:'#6b7280', margin:'14px 4px 8px'}}>第4轮推荐 • 滑块 CLI</div>
+      <div className="card">
+        <div style={{fontSize:12, marginBottom:8}}>
+          <span className="warn">S3 振荡</span> • 反解建议 <span className="accent" style={{fontWeight:600}}>pi_gain 109 → 100</span>(回调) + d_gain +5
+        </div>
+        <div className="cli-block">{'set simplified_pids_mode = RPY\nset simplified_master_multiplier = 100\nset simplified_pi_gain = 100\nset simplified_d_gain = 117\nset simplified_feedforward_gain = 0'}</div>
+        <button className="btn btn-ghost" style={{marginTop:8}} onClick={function(){ show('已复制 CLI • 拿去 BF 粘贴'); }}>复制 CLI</button>
+      </div>
+
+      <button className="btn btn-primary" style={{marginTop:6}} onClick={function(){ setSheetOpen(true); }}>导入下一轮返参 →</button>
+      <div className="tap-hint">飞手换参飞后,导新 BBL → 弹 Session 选择</div>
+
+      {sheetOpen ? <SessionSheet onClose={function(){ setSheetOpen(false); show('已合并到本方案 • 第4轮曲线接入'); }} /> : null}
+      {toast}
+    </div></div>
+  );
+}
+
+/* ===== 屏4 Session 选择 sheet ===== */
+function SessionSheet({ onClose }) {
+  const [sel, setSel] = useState(1);
+  const sessions = [
+    { id:0, t:'02:14', pid:'P45/80/30 FF0', q:'✓ 阶跃' },
+    { id:1, t:'03:42', pid:'P49/88/30 FF0', q:'✓ 阶跃 • 振荡' },
+    { id:2, t:'01:08', pid:'P45/80/30 FF0', q:'⚠ 非阶跃' },
+    { id:3, t:'04:25', pid:'P45/80/35 FF0', q:'✓ 阶跃' },
+  ];
+  return (
+    <div className="sheet-mask" onClick={onClose}>
+      <div className="sheet" onClick={function(e){ e.stopPropagation(); }}>
+        <div className="sheet-handle" />
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+          <div style={{fontSize:16, fontWeight:700}}>导入 btfl_new.BBL</div>
+          <div className="muted" style={{fontSize:12}}>4 个 Session</div>
+        </div>
+        <div className="muted" style={{fontSize:12, marginBottom:14}}>选择一个 Session • 用户主动决定去留</div>
+
+        {sessions.map(function(s){
+          return (
+            <div key={s.id} className={'sess-row' + (sel===s.id?' sel':'')} onClick={function(){ setSel(s.id); }}>
+              <div className="sess-mini">
+                <StepCurve a={s.id===2?2:5+s.id*0.3} b={s.id===1?13:9.5} c={s.id===1?0.2:0.4} stroke={sel===s.id?'#0d9488':'#9ca3af'} w={56} h={32} />
+              </div>
+              <div className="sess-info">
+                <div className="t">Session {s.id+1} <span className="muted" style={{fontWeight:400, fontSize:11}}>• {s.t}</span></div>
+                <div className="s">{s.pid}</div>
+                <div className="s" style={{color: s.q.indexOf('⚠')>=0 ? '#ea580c' : '#0f766e'}}>{s.q}</div>
+              </div>
+              <div className={'sess-radio' + (sel===s.id?' on':'')} />
+            </div>
+          );
+        })}
+
+        <div style={{display:'flex', gap:8, marginTop:14}}>
+          <button className="btn btn-secondary" style={{flex:1}} onClick={onClose}>丢弃</button>
+          <button className="btn btn-secondary" style={{flex:1}} onClick={onClose}>另立新方案</button>
+          <button className="btn btn-primary" style={{flex:1.3}} onClick={onClose}>合并到本方案</button>
+        </div>
+        <div className="tap-hint">🔑 三选一 • 不自动合并 • 不自动聚合</div>
+      </div>
+    </div>
+  );
+}
+
+/* ===== 屏4 静态展示态 ===== */
+function ScreenSheet() {
+  const sessions = [
+    { id:0, t:'02:14', pid:'P45/80/30 FF0', q:'✓ 阶跃' },
+    { id:1, t:'03:42', pid:'P49/88/30 FF0', q:'✓ 阶跃 • 振荡' },
+    { id:2, t:'01:08', pid:'P45/80/30 FF0', q:'⚠ 非阶跃' },
+    { id:3, t:'04:25', pid:'P45/80/35 FF0', q:'✓ 阶跃' },
+  ];
+  return (
+    <div className="scr">
+      <div className="scr-pad" style={{opacity:0.5, filter:'blur(1px)'}}>
+        <div className="nav-bar">
+          <div className="nav-back">‹</div>
+          <div className="nav-title">怪象3.5寸</div>
+          <div className="nav-badge iter">方案迭代</div>
+        </div>
+        <div className="card" style={{padding:'14px 16px'}}>
+          <span className="chip prog">第3轮 • 进行中</span>
+        </div>
+      </div>
+      <div className="sheet-mask">
+        <div className="sheet">
+          <div className="sheet-handle" />
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <div style={{fontSize:16, fontWeight:700}}>导入 btfl_new.BBL</div>
+            <div className="muted" style={{fontSize:12}}>4 个 Session</div>
+          </div>
+          <div className="muted" style={{fontSize:12, marginBottom:14}}>选择一个 Session • 用户主动决定去留</div>
+          {sessions.map(function(s,i){
+            return (
+              <div key={s.id} className={'sess-row' + (i===1?' sel':'')}>
+                <div className="sess-mini">
+                  <StepCurve a={i===2?2:5+i*0.3} b={i===1?13:9.5} c={i===1?0.2:0.4} stroke={i===1?'#0d9488':'#9ca3af'} w={56} h={32} />
+                </div>
+                <div className="sess-info">
+                  <div className="t">Session {s.id+1} <span className="muted" style={{fontWeight:400, fontSize:11}}>• {s.t}</span></div>
+                  <div className="s">{s.pid}</div>
+                  <div className="s" style={{color: s.q.indexOf('⚠')>=0 ? '#ea580c' : '#0f766e'}}>{s.q}</div>
+                </div>
+                <div className={'sess-radio' + (i===1?' on':'')} />
+              </div>
+            );
+          })}
+          <div style={{display:'flex', gap:8, marginTop:14}}>
+            <button className="btn btn-secondary" style={{flex:1}}>丢弃</button>
+            <button className="btn btn-secondary" style={{flex:1}}>另立新方案</button>
+            <button className="btn btn-primary" style={{flex:1.3}}>合并到本方案</button>
+          </div>
+          <div className="tap-hint">🔑 三选一 • 不自动合并 • 不自动聚合</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===== App ===== */
+function App() {
+  return (
+    <div>
+      <div className="page-title">拟合闭环 • 4 屏可交互原型</div>
+      <div className="page-sub">
+        验证 <b>用户主动方案制</b> UX 假设:默认独立分析(回退 1.1 前 1对1 干净版)+ 用户主动建方案 + 主动合并 Session。砍掉"自动按 craftName 聚合"的毒。每台独立可点 —— 点屏1 卡片看跳转提示 / 屏3"显示预测虚线" / 屏3"导入下一轮"弹 Session sheet。
+      </div>
+      <div className="phones-row">
+        <div className="phone-col">
+          <div className="phone-label">屏1 • <b>方案列表(首页)</b></div>
+          <IosFrame><ScreenPlans /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">屏2 • <b>独立分析页</b> (isIter=NO)</div>
+          <IosFrame><ScreenIndependent /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">屏3 • <b>方案工作台</b> (isIter=YES)</div>
+          <IosFrame><ScreenWorkbench /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">屏4 • <b>Session 选择 sheet</b></div>
+          <IosFrame><ScreenSheet /></IosFrame>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
