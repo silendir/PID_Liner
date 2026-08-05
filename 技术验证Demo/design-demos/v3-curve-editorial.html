@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PID_Liner · 变体 C · 曲线即产品派</title>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    background: #eceef1;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 36px 16px 64px;
+  }
+  .label-top {
+    font-style: italic;
+    font-size: 13px;
+    color: #52525b;
+    margin-bottom: 22px;
+    letter-spacing: 0.02em;
+    font-family: "New York", "EB Garamond", Georgia, serif;
+  }
+</style>
+</head>
+<body>
+  <div class="label-top">变体 C · 曲线即产品派</div>
+  <div id="root"></div>
+
+<script type="text/babel">
+const { useState } = React;
+
+// ===== iOS Frame (固定规格 · iPhone 15 Pro) =====
+const iosFrameStyles = {
+  wrapper: { display:'inline-block', padding:12, background:'#000', borderRadius:60, boxShadow:'0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
+  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#fff' },
+  statusBar: { position:'absolute', top:0, left:0, right:0, height:54, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 32px', fontSize:16, fontWeight:600, fontFamily:'-apple-system, sans-serif', zIndex:20, pointerEvents:'none' },
+  dynamicIsland: { position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', width:124, height:36, background:'#000', borderRadius:999, zIndex:30 },
+  statusIcons: { display:'flex', alignItems:'center', gap:6 },
+  signalIcon: { display:'flex', alignItems:'flex-end', gap:2, height:12 },
+  signalBar: { width:3, background:'currentColor', borderRadius:1 },
+  batteryIcon: { width:26, height:12, border:'1.5px solid currentColor', borderRadius:3, padding:1, position:'relative', opacity:0.8 },
+  batteryCap: { position:'absolute', top:3, right:-3, width:2, height:6, background:'currentColor', borderRadius:'0 1px 1px 0' },
+  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'auto' },
+  homeIndicator: { position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', width:140, height:5, background:'rgba(0,0,0,0.3)', borderRadius:999, zIndex:10 },
+};
+function IosFrame({ children, time='9:41', battery=88 }) {
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{ ...iosFrameStyles.screen, width:393, height:852 }}>
+        <div style={{ ...iosFrameStyles.statusBar, color:'#3a2e25' }}>
+          <span>{time}</span>
+          <div style={iosFrameStyles.statusIcons}>
+            <div style={iosFrameStyles.signalIcon}>
+              <div style={{ ...iosFrameStyles.signalBar, height:4 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:6 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:9 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:11 }} />
+            </div>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color:'#3a2e25' }}>
+              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+            </svg>
+            <div style={iosFrameStyles.batteryIcon}>
+              <div style={{ width:String(battery)+'%', height:'100%', background:'currentColor', borderRadius:1, opacity:0.9 }} />
+              <div style={iosFrameStyles.batteryCap} />
+            </div>
+          </div>
+        </div>
+        <div style={iosFrameStyles.dynamicIsland} />
+        <div style={iosFrameStyles.content}>{children}</div>
+        <div style={iosFrameStyles.homeIndicator} />
+      </div>
+    </div>
+  );
+}
+
+// ===== 步响应曲线 path 生成器 =====
+// ponytail: 验证过的二阶系统公式,字符串拼接无模板字面量
+function stepPath(a, b, c, w, h, samples, yMax) {
+  const pts = [];
+  for (let i = 0; i <= samples; i++) {
+    const t = (i / samples) * 1.6;
+    const y = 1 - Math.exp(-a * t) * (Math.cos(b * t) + c * Math.sin(b * t));
+    const px = (t / 1.6) * w;
+    const py = h - (Math.min(y, yMax) / yMax) * (h - 8) - 4;
+    pts.push((i === 0 ? 'M' : 'L') + px.toFixed(1) + ',' + py.toFixed(1));
+  }
+  return pts.join(' ');
+}
+
+// 闭合到地面,用于面积填充
+function stepAreaPath(a, b, c, w, h, samples, yMax) {
+  const base = stepPath(a, b, c, w, h, samples, yMax);
+  // ponytail: 末尾追加底部边闭合
+  return base + ' L' + w.toFixed(1) + ',' + h.toFixed(1) + ' L0,' + h.toFixed(1) + ' Z';
+}
+
+// ===== 调色板 =====
+const palette = {
+  paper:    '#faf7f2',   // 暖奶油底
+  ink:      '#2b1d12',   // 暖深棕(主文字)
+  inkSoft:  '#5c4a3d',   // 副文字
+  muted:    '#a8a29e',   // 弱暖灰
+  accent:   '#c2410c',   // rust 橙
+  accent2:  '#9a3412',   // 深rust
+  okGreen:  '#15803d',   // 成功绿
+  warnGold: '#b45309',   // 进行中黄
+  rule:     '#e7e0d4',   // 分隔线
+};
+
+// ===== Editorial Section Label (小号大写 · letterSpacing) =====
+function SectionLabel({ children }) {
+  return (
+    <div style={{
+      fontFamily: '"EB Garamond", "New York", Georgia, serif',
+      fontSize: 11,
+      fontWeight: 600,
+      letterSpacing: '0.32em',
+      textTransform: 'uppercase',
+      color: palette.inkSoft,
+    }}>{children}</div>
+  );
+}
+
+// ===== Hero 区:大字衬线标题 + 斜体引语 =====
+function Hero() {
+  return (
+    <div style={{
+      padding: '8px 28px 4px',
+      background: palette.paper,
+    }}>
+      <div style={{
+        fontFamily: '"New York", "EB Garamond", Georgia, serif',
+        fontSize: 34,
+        fontWeight: 700,
+        color: palette.ink,
+        letterSpacing: '-0.01em',
+        lineHeight: 1.05,
+      }}>PID_Liner</div>
+      <div style={{
+        fontFamily: '"EB Garamond", "New York", Georgia, serif',
+        fontSize: 17,
+        fontStyle: 'italic',
+        color: palette.inkSoft,
+        marginTop: 6,
+        lineHeight: 1.35,
+      }}>每一架飞机,都有自己的曲线。</div>
+      {/* editorial 装饰双线 */}
+      <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ width: 28, height: 1, background: palette.accent }} />
+        <div style={{ width: 4, height: 4, borderRadius: '50%', background: palette.accent }} />
+        <div style={{ flex: 1, height: 1, background: palette.rule }} />
+      </div>
+    </div>
+  );
+}
+
+// ===== Editorial Block 入口(带装饰曲线当"封面") =====
+function EditorialEntry({ index, title, subtitle, note, statusChip, curveColor, curveFill, a, b, c, isAccent }) {
+  return (
+    <div style={{
+      padding: '18px 28px',
+      borderBottom: '1px solid ' + palette.rule,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10,
+      background: palette.paper,
+    }}>
+      {/* 序号 + 标题行 */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+        <div style={{
+          fontFamily: '"EB Garamond", "New York", Georgia, serif',
+          fontSize: 28,
+          fontStyle: 'italic',
+          fontWeight: 500,
+          color: isAccent ? palette.accent : palette.muted,
+          lineHeight: 1,
+          minWidth: 28,
+        }}>{index}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{
+            fontFamily: '"New York", "EB Garamond", Georgia, serif',
+            fontSize: 22,
+            fontWeight: 600,
+            color: palette.ink,
+            letterSpacing: '-0.005em',
+            lineHeight: 1.1,
+          }}>{title}</div>
+          <div style={{
+            fontFamily: '"EB Garamond", "New York", Georgia, serif',
+            fontSize: 14,
+            fontStyle: 'italic',
+            color: palette.inkSoft,
+            marginTop: 2,
+          }}>{subtitle}</div>
+        </div>
+        {statusChip}
+      </div>
+
+      {/* 装饰曲线封面 */}
+      <div style={{
+        marginTop: 6,
+        position: 'relative',
+        height: 64,
+        borderRadius: 6,
+        background: isAccent ? 'rgba(194, 65, 12, 0.04)' : 'rgba(92, 74, 61, 0.03)',
+        overflow: 'hidden',
+      }}>
+        <svg width="100%" height="64" viewBox="0 0 336 64" preserveAspectRatio="none" style={{ display: 'block' }}>
+          {/* 网格基线 (极淡) */}
+          <line x1="0" y1="32" x2="336" y2="32" stroke={palette.rule} strokeWidth="0.5" strokeDasharray="2 4" />
+          {/* 面积填充 */}
+          <path d={stepAreaPath(a, b, c, 336, 64, 120, 1.3)} fill={curveFill} />
+          {/* 主曲线 */}
+          <path d={stepPath(a, b, c, 336, 64, 120, 1.3)} fill="none" stroke={curveColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {/* 角标 */}
+        <div style={{
+          position: 'absolute', top: 6, right: 8,
+          fontFamily: '"EB Garamond", Georgia, serif',
+          fontSize: 10,
+          fontStyle: 'italic',
+          color: palette.muted,
+          letterSpacing: '0.05em',
+        }}>step response</div>
+      </div>
+
+      {/* 说明小字 */}
+      <div style={{
+        fontFamily: '-apple-system, sans-serif',
+        fontSize: 12,
+        color: palette.inkSoft,
+        letterSpacing: '0.01em',
+        marginTop: 2,
+      }}>{note}</div>
+    </div>
+  );
+}
+
+// ===== 曲目式方案卡(曲线为主角) =====
+function TrackCard({ title, fc, firmware, round, chip, baseline, current, trend, alert, curves }) {
+  return (
+    <div style={{
+      padding: '20px 28px 22px',
+      borderBottom: '1px solid ' + palette.rule,
+      background: palette.paper,
+    }}>
+      {/* 标题行:衬线大字 + chip */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{
+            fontFamily: '"New York", "EB Garamond", Georgia, serif',
+            fontSize: 26,
+            fontWeight: 700,
+            color: palette.ink,
+            letterSpacing: '-0.01em',
+            lineHeight: 1.05,
+          }}>{title}</div>
+        </div>
+        {chip}
+      </div>
+
+      {/* 副信息(tabular 小字) */}
+      <div style={{
+        fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+        fontSize: 11,
+        color: palette.inkSoft,
+        letterSpacing: '0.02em',
+        marginTop: 6,
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        {fc} · {firmware} · 第 {round} 轮
+      </div>
+
+      {/* 主曲线(主角,大幅美化) */}
+      <div style={{
+        marginTop: 14,
+        position: 'relative',
+        height: 76,
+        borderRadius: 4,
+        background: 'rgba(194, 65, 12, 0.025)',
+        overflow: 'hidden',
+      }}>
+        <svg width="100%" height="76" viewBox="0 0 336 76" preserveAspectRatio="none" style={{ display: 'block' }}>
+          {/* 网格 */}
+          <line x1="0" y1="38" x2="336" y2="38" stroke={palette.rule} strokeWidth="0.5" strokeDasharray="2 4" />
+          <line x1="0" y1="74" x2="336" y2="74" stroke={palette.rule} strokeWidth="0.5" />
+          {/* 多曲线叠加 */}
+          {curves.map((cv, idx) => (
+            <g key={idx}>
+              {/* 面积渐变填充 */}
+              <path d={stepAreaPath(cv.a, cv.b, cv.c, 336, 76, 180, 1.3)} fill={cv.fill} />
+              {/* 主曲线 */}
+              <path
+                d={stepPath(cv.a, cv.b, cv.c, 336, 76, 180, 1.3)}
+                fill="none"
+                stroke={cv.stroke}
+                strokeWidth={cv.strokeWidth}
+                strokeDasharray={cv.dash}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={cv.opacity}
+              />
+            </g>
+          ))}
+          {/* 标签 */}
+          <text x="8" y="14" style={{
+            fontFamily: '"EB Garamond", Georgia, serif',
+            fontSize: 10,
+            fontStyle: 'italic',
+            fill: palette.muted,
+          }}>amplitude</text>
+        </svg>
+      </div>
+
+      {/* 基线 / 当前 + 趋势 + 警告 */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+        <div style={{
+          fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+          fontSize: 12,
+          color: palette.inkSoft,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          <span style={{ color: palette.muted }}>基线 </span>
+          <span style={{ color: palette.ink, fontWeight: 600 }}>{baseline}</span>
+          <span style={{ color: palette.muted, margin: '0 6px' }}>→</span>
+          <span style={{ color: palette.muted }}>当前 </span>
+          <span style={{ color: palette.ink, fontWeight: 600 }}>{current}</span>
+          <span style={{ marginLeft: 6, color: palette.accent, fontWeight: 600 }}>{trend}</span>
+        </div>
+      </div>
+
+      {alert && (
+        <div style={{
+          marginTop: 8,
+          fontFamily: '"EB Garamond", Georgia, serif',
+          fontSize: 12,
+          fontStyle: 'italic',
+          color: palette.accent,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        }}>
+          <span style={{ display: 'inline-block', width: 4, height: 4, borderRadius: '50%', background: palette.accent }} />
+          {alert}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== Status Chips =====
+const ChipStyles = {
+  inProgress: {
+    fontFamily: '-apple-system, sans-serif',
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.08em',
+    color: palette.warnGold,
+    background: 'rgba(180, 83, 9, 0.10)',
+    padding: '4px 9px',
+    borderRadius: 999,
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  converged: {
+    fontFamily: '-apple-system, sans-serif',
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.08em',
+    color: palette.okGreen,
+    background: 'rgba(21, 128, 61, 0.10)',
+    padding: '4px 9px',
+    borderRadius: 999,
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  count: {
+    fontFamily: '"EB Garamond", Georgia, serif',
+    fontSize: 11,
+    fontStyle: 'italic',
+    color: palette.accent,
+    background: 'rgba(194, 65, 12, 0.08)',
+    padding: '3px 10px',
+    borderRadius: 999,
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+};
+
+// ===== 主页 =====
+function HomeScreen() {
+  return (
+    <div style={{ background: palette.paper, minHeight: '100%' }}>
+      {/* Hero */}
+      <Hero />
+
+      {/* 双 editorial 入口 */}
+      <div style={{ borderTop: '1px solid ' + palette.rule, marginTop: 8 }}>
+        <div style={{ padding: '14px 28px 4px' }}>
+          <SectionLabel>开 始</SectionLabel>
+        </div>
+
+        <EditorialEntry
+          index="i"
+          title="独立分析"
+          subtitle="看一眼就走"
+          note="单次 BBL · 不保存 · 仅当前一次诊断"
+          a={4.0}
+          b={9.5}
+          c={0.35}
+          curveColor={palette.muted}
+          curveFill="rgba(168, 162, 158, 0.12)"
+          isAccent={false}
+        />
+
+        <EditorialEntry
+          index="ii"
+          title="方案迭代"
+          subtitle="调到收敛"
+          note="多轮闭环 · 持续追踪每次返参"
+          statusChip={<span style={ChipStyles.count}>2 个进行中</span>}
+          a={6.0}
+          b={12.0}
+          c={0.22}
+          curveColor={palette.accent}
+          curveFill="rgba(194, 65, 12, 0.12)"
+          isAccent={true}
+        />
+      </div>
+
+      {/* 我的方案 section */}
+      <div style={{ padding: '22px 28px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <SectionLabel>我 的 方 案</SectionLabel>
+          <div style={{ flex: 1, height: 1, background: palette.rule }} />
+          <span style={{
+            fontFamily: '"EB Garamond", Georgia, serif',
+            fontSize: 11,
+            fontStyle: 'italic',
+            color: palette.muted,
+          }}>by chainId</span>
+        </div>
+      </div>
+
+      {/* 曲目式方案卡 1:怪象3.5寸 */}
+      <TrackCard
+        title="怪象3.5寸"
+        fc="SPEEDYBEEF7MINI"
+        firmware="BF 4.3.1"
+        round={3}
+        chip={<span style={ChipStyles.inProgress}>进行中</span>}
+        baseline="P45"
+        current="P49"
+        trend="↑"
+        alert="S3 轻微振荡"
+        curves={[
+          // 基线(暖灰)
+          { a: 4.0, b: 9.5, c: 0.35, stroke: palette.muted, strokeWidth: 1.6, dash: '4 3', fill: 'rgba(168, 162, 158, 0.08)', opacity: 0.85 },
+          // 当前(accent) - 叠加,有面积填充
+          { a: 6.0, b: 12.0, c: 0.22, stroke: palette.accent, strokeWidth: 2.2, dash: null, fill: 'rgba(194, 65, 12, 0.15)', opacity: 1.0 },
+        ]}
+      />
+
+      {/* 曲目式方案卡 2:吴bbl 5寸(已收敛) */}
+      <TrackCard
+        title="吴bbl 5寸"
+        fc="MAMBAF722"
+        firmware="BF 4.5"
+        round={5}
+        chip={<span style={ChipStyles.converged}>已收敛 ✓</span>}
+        baseline="P38"
+        current="P38"
+        trend="稳定"
+        alert={null}
+        curves={[
+          // 两条重合,成功绿描边
+          { a: 4.5, b: 8.5, c: 0.55, stroke: palette.okGreen, strokeWidth: 2.2, dash: null, fill: 'rgba(21, 128, 61, 0.12)', opacity: 1.0 },
+        ]}
+      />
+
+      {/* 页脚提示 */}
+      <div style={{
+        padding: '22px 28px 36px',
+        background: palette.paper,
+      }}>
+        <div style={{
+          fontFamily: '"EB Garamond", "New York", Georgia, serif',
+          fontSize: 12,
+          fontStyle: 'italic',
+          color: palette.muted,
+          textAlign: 'center',
+          lineHeight: 1.6,
+          borderTop: '1px dashed ' + palette.rule,
+          paddingTop: 18,
+        }}>
+          🔑 无自动聚合 · 按 chainId 列方案 · craftName 只作显示
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== Root =====
+function App() {
+  return (
+    <IosFrame>
+      <HomeScreen />
+    </IosFrame>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PID_Liner · 独立分析 · 三态状态机原型</title>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+  body { margin:0; padding:40px 16px 64px; background:#eceef1; display:flex; flex-direction:column; align-items:center; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif; }
+  .cap { font-style:italic; color:#6b7280; font-size:13px; margin-bottom:18px; letter-spacing:0.2px; text-align:center; line-height:1.5; max-width:420px; }
+  .mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; font-family:'SF Mono','Menlo',monospace; }
+  .row { display:flex; gap:32; flexWrap:wrap; justify-content:center; align-items:flex-start; }
+</style>
+</head>
+<body>
+<div class="cap">
+  <b>三态状态机</b> · 不是平铺功能区<br/>
+  [空态] →选BBL→ [处理中·不可逆] →走完→ [结果]<br/>
+  多 Session 从独立页降级为结果态顶部 chip · 「选文件即出曲线」一步直达
+</div>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// === IosFrame (iPhone 15 Pro 规格, 复用) ===
+const iosFrameStyles = {
+  wrapper: { display:'inline-block', padding:12, background:'#000', borderRadius:60, boxShadow:'0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
+  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#fff' },
+  statusBar: { position:'absolute', top:0, left:0, right:0, height:54, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 32px', fontSize:16, fontWeight:600, zIndex:20, pointerEvents:'none' },
+  dynamicIsland: { position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', width:124, height:36, background:'#000', borderRadius:999, zIndex:30 },
+  statusIcons: { display:'flex', alignItems:'center', gap:6 },
+  signalIcon: { display:'flex', alignItems:'flex-end', gap:2, height:12 },
+  signalBar: { width:3, background:'currentColor', borderRadius:1 },
+  batteryIcon: { width:26, height:12, border:'1.5px solid currentColor', borderRadius:3, padding:1, position:'relative', opacity:0.8 },
+  batteryCap: { position:'absolute', top:3, right:-3, width:2, height:6, background:'currentColor', borderRadius:'0 1px 1px 0' },
+  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'auto', background:'#f5f5f7' },
+  homeIndicator: { position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', width:140, height:5, background:'rgba(0,0,0,0.3)', borderRadius:999, zIndex:10 },
+};
+function IosFrame({ children, time='9:41', battery=88, label }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center' }}>
+      {label && <div style={{ fontStyle:'italic', color:'#6b7280', fontSize:12, marginBottom:8 }}>{label}</div>}
+      <div style={iosFrameStyles.wrapper}>
+        <div style={{ ...iosFrameStyles.screen, width:393, height:852 }}>
+          <div style={{ ...iosFrameStyles.statusBar, color:'#000' }}>
+            <span className="mono">{time}</span>
+            <div style={iosFrameStyles.statusIcons}>
+              <div style={iosFrameStyles.signalIcon}>
+                <div style={{ ...iosFrameStyles.signalBar, height:4 }} />
+                <div style={{ ...iosFrameStyles.signalBar, height:6 }} />
+                <div style={{ ...iosFrameStyles.signalBar, height:9 }} />
+                <div style={{ ...iosFrameStyles.signalBar, height:11 }} />
+              </div>
+              <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color:'#000' }}>
+                <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+                <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+                <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+              </svg>
+              <div style={iosFrameStyles.batteryIcon}>
+                <div style={{ width:String(battery)+'%', height:'100%', background:'currentColor', borderRadius:1, opacity:0.9 }} />
+                <div style={iosFrameStyles.batteryCap} />
+              </div>
+            </div>
+          </div>
+          <div style={iosFrameStyles.dynamicIsland} />
+          <div style={iosFrameStyles.content}>{children}</div>
+          <div style={iosFrameStyles.homeIndicator} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// === 阶跃响应曲线 (二阶系统) ===
+function stepPath(a,b,c,w,h,samples,yMax){
+  const pts=[];
+  for(let i=0;i<=samples;i++){
+    const t=(i/samples)*1.6;
+    const y=1-Math.exp(-a*t)*(Math.cos(b*t)+c*Math.sin(b*t));
+    const px=(t/1.6)*w;
+    const py=h-(Math.min(Math.max(y,-0.2),yMax)/yMax)*(h-8)-4;
+    pts.push((i===0?'M':'L')+px.toFixed(1)+','+py.toFixed(1));
+  }
+  return pts.join(' ');
+}
+function GridLines({ w, h }) {
+  const ys=[0.25,0.5,0.75,1.0];
+  return (
+    <g>{ys.map((r,i)=>(
+      <line key={i} x1="0" y1={h-r*(h-8)-4} x2={w} y2={h-r*(h-8)-4} stroke="#9ca3af" strokeWidth="0.5" strokeDasharray="2,3" opacity="0.6" />
+    ))}</g>
+  );
+}
+function ProgressRing({ pct, size=44, stroke=5, color='#0d9488', track='#e5e7eb' }) {
+  const r=(size-stroke)/2, circ=2*Math.PI*r, off=circ*(1-pct/100);
+  return (
+    <svg width={size} height={size} style={{ transform:'rotate(-90deg)' }}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeDasharray={circ} strokeDashoffset={off} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// === 设计 token ===
+const C = {
+  bg:'#f5f5f7', card:'#ffffff', ink:'#0f172a', sub:'#64748b', faint:'#94a3b8',
+  line:'#e5e7eb', lineSoft:'#f1f5f9',
+  accent:'#0d9488', accentSoft:'#ccfbf1',
+  warn:'#ea580c', warnSoft:'#fed7aa', warnText:'#9a3412',
+  ok:'#166534', okSoft:'#bbf7d0',
+  yellowSoft:'#fef3c7', yellowText:'#92400e',
+  termBg:'#0f172a', termLine:'#1e293b',
+};
+const CURVE = { baseline:'#9ca3af', current:'#0d9488', predict:'#ea580c', converge:'#166534' };
+
+// === Toast ===
+function Toast({ text }) {
+  if(!text) return null;
+  return (
+    <div style={{ position:'absolute', bottom:60, left:'50%', transform:'translateX(-50%)',
+      background:'rgba(15,23,42,0.92)', color:'#fff', fontSize:12, padding:'8px 14px', borderRadius:8,
+      whiteSpace:'nowrap', zIndex:50, boxShadow:'0 4px 12px rgba(0,0,0,0.2)' }}>{text}</div>
+  );
+}
+
+// === 三个状态常量 ===
+const ST = { EMPTY:'empty', PROCESSING:'processing', RESULT:'result' };
+
+// === 假数据 ===
+const SESSIONS = [
+  { id:0, name:'S1', dur:'00:42', note:'悬停' },
+  { id:1, name:'S2', dur:'02:34', note:'横滚扫频', main:true },
+  { id:2, name:'S3', dur:'01:18', note:'俯仰阶跃' },
+  { id:3, name:'S4', dur:'00:55', note:'偏航测试' },
+];
+const PHASES = [
+  { pct:8,  text:'解码 BBL header...' },
+  { pct:22, text:'提取 Session S2 · 2:34' },
+  { pct:38, text:'转换 BBL → CSV' },
+  { pct:55, text:'注入元数据 (Craft/FW/PID/KV)' },
+  { pct:70, text:'PIDCSVParser 解析轨迹' },
+  { pct:86, text:'PIDTraceAnalyzer 时域/频域特征' },
+  { pct:96, text:'绘制响应曲线 / 噪声频谱' },
+];
+
+// ============ 屏: 空态 ============
+function EmptyScreen({ hasPrevious, previousMeta, onImport, onContinue, onBluetooth }) {
+  return (
+    <div style={{ padding:'24px 20px', height:'100%', display:'flex', flexDirection:'column' }}>
+      <div style={{ textAlign:'center', marginTop:32 }}>
+        <div style={{ fontSize:13, color:C.faint, letterSpacing:1.5, fontWeight:600 }}>PID_Liner · 独立分析</div>
+        <div style={{ fontSize:11, color:C.sub, marginTop:4 }}>isIterationMode = NO · 不写入迭代链</div>
+      </div>
+
+      {/* 主导入按钮 */}
+      <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'center', gap:16, padding:'20px 0' }}>
+        <button onClick={onImport} style={{
+          background:C.accent, color:'#fff', border:'none', borderRadius:16,
+          padding:'22px 24px', fontSize:17, fontWeight:700, cursor:'pointer',
+          boxShadow:'0 8px 20px rgba(13,148,136,0.28)', display:'flex', alignItems:'center', justifyContent:'center', gap:10,
+        }}>
+          <span style={{ fontSize:22 }}>📂</span> 导入 BBL 文件
+        </button>
+        <button onClick={onBluetooth} style={{
+          background:C.card, color:C.ink, border:'1px solid '+C.line, borderRadius:14,
+          padding:'14px', fontSize:14, fontWeight:600, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+        }}>
+          <span style={{ fontSize:16 }}>🔵</span> 蓝牙连接飞控下载
+          <span style={{ fontSize:10, color:C.faint, fontWeight:500, marginLeft:4 }}>Beta</span>
+        </button>
+      </div>
+
+      {/* 继续上次 — 解决退出后重新加载痛点 */}
+      {hasPrevious && previousMeta && (
+        <div onClick={onContinue} style={{
+          background:C.card, border:'1px solid '+C.line, borderRadius:12, padding:'12px 14px',
+          display:'flex', alignItems:'center', gap:12, cursor:'pointer',
+          boxShadow:'0 1px 2px rgba(15,23,42,0.04)',
+        }}>
+          <div style={{ width:40, height:40, borderRadius:10, background:C.accentSoft, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>⏮</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:C.ink }}>继续上次的 {previousMeta.file}</div>
+            <div className="mono" style={{ fontSize:10.5, color:C.sub, marginTop:2 }}>
+              {previousMeta.craft} · {previousMeta.fw} · Session {previousMeta.sessionName} · 已就绪
+            </div>
+          </div>
+          <span style={{ fontSize:12, color:C.accent, fontWeight:700 }}>恢复 ›</span>
+        </div>
+      )}
+
+      <div style={{ textAlign:'center', fontSize:10.5, color:C.faint, marginTop:14, lineHeight:1.5 }}>
+        🔑 选文件即出曲线 · 多 Session 在结果页顶部切换<br/>
+        独立模式:临时缓存数据源,退出不丢,但绝不写迭代链
+      </div>
+    </div>
+  );
+}
+
+// ============ 屏: 处理中 (不可逆) ============
+function ProcessingScreen({ meta, sessionName, pct, phaseText, logLines, onCancel }) {
+  return (
+    <div style={{ padding:'24px 20px', height:'100%', display:'flex', flexDirection:'column' }}>
+      {/* 顶部:不可逆警示 */}
+      <div style={{
+        background:C.warnSoft, border:'1px solid #fdba74', borderRadius:10, padding:'8px 12px',
+        fontSize:11, color:C.warnText, fontWeight:600, textAlign:'center', marginBottom:20,
+      }}>
+        ⚠ 处理中 · 不可返回 · 取消将丢弃本次选择
+      </div>
+
+      <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', gap:20 }}>
+        {/* 进度环 */}
+        <div style={{ position:'relative' }}>
+          <ProgressRing pct={pct} size={96} stroke={8} />
+          <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column' }}>
+            <span className="mono" style={{ fontSize:24, fontWeight:700, color:C.accent }}>{Math.round(pct)}<span style={{ fontSize:13 }}>%</span></span>
+          </div>
+        </div>
+
+        {/* 文件 + Session */}
+        <div style={{ textAlign:'center' }}>
+          <div style={{ fontSize:15, fontWeight:700, color:C.ink }}>{meta.file}</div>
+          <div className="mono" style={{ fontSize:11, color:C.sub, marginTop:4 }}>
+            {meta.craft} · {meta.fw} · Session {sessionName}
+          </div>
+        </div>
+
+        {/* 阶段文字 */}
+        <div style={{ fontSize:12.5, color:C.sub, textAlign:'center', minHeight:18 }}>{phaseText}</div>
+
+        {/* 进度条 */}
+        <div style={{ width:'100%', height:5, background:C.line, borderRadius:999, overflow:'hidden' }}>
+          <div style={{ width:String(pct)+'%', height:'100%', background:C.accent, borderRadius:999, transition:'width 0.3s' }} />
+        </div>
+
+        {/* 日志(折叠风格,直接显示尾部) */}
+        <div style={{
+          width:'100%', background:C.termBg, borderRadius:10, padding:'10px 12px',
+          fontFamily:'SF Mono,Menlo,monospace', fontSize:10, color:'#86efac', lineHeight:1.6,
+          maxHeight:120, overflow:'hidden',
+        }}>
+          {logLines.slice(-5).map((l,i)=>(
+            <div key={i} style={{ opacity: 0.4 + 0.12*i }}>
+              <span style={{ color:'#64748b' }}>›</span> {l}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button onClick={onCancel} style={{
+        background:'transparent', color:C.sub, border:'none', fontSize:13, fontWeight:600,
+        padding:'12px', cursor:'pointer', textDecoration:'underline',
+      }}>取消,重新选择文件</button>
+    </div>
+  );
+}
+
+// ============ 屏: 结果 (稳态) ============
+function ResultScreen({
+  meta, sessions, activeSession, onSelectSession,
+  axis, onAxisChange, points, onPointsChange,
+  onExport, onCopyCLI, onCrashDiag, onReselect,
+}) {
+  const sess = sessions[activeSession];
+  const curveW=300, curveH=130;
+  // 不同 session 不同曲线(假数据可视化差异)
+  const curveSet = [
+    { baseline:{a:4.0,b:9.5,c:0.35}, current:{a:5.2,b:11.0,c:0.28}, predict:{a:6.2,b:12.5,c:0.22} },
+    { baseline:{a:3.8,b:9.0,c:0.40}, current:{a:6.0,b:12.0,c:0.24}, predict:{a:6.8,b:13.0,c:0.20} },
+    { baseline:{a:4.2,b:10.0,c:0.30}, current:{a:4.8,b:10.5,c:0.32}, predict:{a:5.6,b:11.5,c:0.26} },
+    { baseline:{a:4.0,b:9.5,c:0.35}, current:{a:5.0,b:10.0,c:0.30}, predict:{a:5.8,b:11.0,c:0.25} },
+  ];
+  const cv = curveSet[activeSession % curveSet.length];
+  const bl = stepPath(cv.baseline.a,cv.baseline.b,cv.baseline.c,curveW,curveH,Math.max(40,points/2),1.15);
+  const cu = stepPath(cv.current.a,cv.current.b,cv.current.c,curveW,curveH,points,1.15);
+  const pr = stepPath(cv.predict.a,cv.predict.b,cv.predict.c,curveW,curveH,points,1.15);
+
+  // 噪声频谱假数据(按轴/session 略变)
+  const noiseSeed = (activeSession*7 + axis.length*3) % 5;
+  const noiseBars = Array.from({length:32},(_,i)=>{
+    const x=i/32; const env=Math.exp(-Math.pow((x*400-80-noiseSeed*10)/70,2));
+    const ripple=Math.sin(i*0.9+noiseSeed)*0.15+Math.sin(i*1.7)*0.08;
+    return Math.max(0.02, env*(0.7+ripple) + (i%5===0?0.05:0));
+  });
+
+  return (
+    <div style={{ padding:'0 0 24px' }}>
+      {/* 数据源摘要条 */}
+      <div style={{
+        margin:'12px 16px 0', background:C.card, border:'1px solid '+C.line, borderRadius:12,
+        padding:'10px 12px', display:'flex', alignItems:'center', gap:10,
+      }}>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+            <span style={{ fontSize:13, fontWeight:700, color:C.ink }}>{meta.file}</span>
+            <span style={{ fontSize:9, fontWeight:700, color:C.warnText, background:C.warnSoft, padding:'1px 6px', borderRadius:999, letterSpacing:0.3 }}>NO-SAVE</span>
+          </div>
+          <div className="mono" style={{ fontSize:10.5, color:C.sub, marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+            {meta.craft} · {meta.fw} · {meta.kv} · {sess.dur}
+          </div>
+        </div>
+        <button onClick={onReselect} style={{
+          background:'transparent', color:C.sub, border:'1px solid '+C.line, borderRadius:8,
+          fontSize:11, fontWeight:600, padding:'6px 10px', cursor:'pointer', whiteSpace:'nowrap',
+        }}>换文件</button>
+      </div>
+
+      {/* Session chips (横滚) — 多 Session 选择降级到这里 */}
+      <div style={{ margin:'10px 16px 0' }}>
+        <div style={{ fontSize:10, color:C.faint, fontWeight:600, letterSpacing:0.3, marginBottom:6 }}>
+          SESSIONS <span className="mono">· 共 {sessions.length}</span> · 点选切换(会重跑分析)
+        </div>
+        <div style={{ display:'flex', gap:7, overflowX:'auto', paddingBottom:2 }}>
+          {sessions.map(s=>{
+            const active = s.id===activeSession;
+            return (
+              <button key={s.id} onClick={()=>onSelectSession(s.id)} style={{
+                flex:'0 0 auto', background: active ? C.accent : C.card,
+                color: active ? '#fff' : C.ink,
+                border:'1px solid '+(active?C.accent:C.line), borderRadius:10,
+                padding:'8px 12px', cursor:'pointer', textAlign:'left', minWidth:78,
+              }}>
+                <div style={{ fontSize:12, fontWeight:700, display:'flex', alignItems:'center', gap:4 }}>
+                  {s.name}
+                  {s.main && <span style={{ fontSize:8, opacity:0.8 }}>★</span>}
+                </div>
+                <div className="mono" style={{ fontSize:9.5, opacity:0.8, marginTop:1 }}>{s.dur}</div>
+                <div style={{ fontSize:9, opacity:0.7, marginTop:0 }}>{s.note}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 轴 toggle */}
+      <div style={{ margin:'14px 16px 0', display:'flex', background:C.card, border:'1px solid '+C.line, borderRadius:10, padding:3 }}>
+        {['Roll','Pitch','Yaw'].map(a=>{
+          const ax = a.toLowerCase();
+          const active = ax===axis;
+          return (
+            <button key={a} onClick={()=>onAxisChange(ax)} style={{
+              flex:1, background: active ? C.ink : 'transparent', color: active ? '#fff' : C.sub,
+              border:'none', borderRadius:8, padding:'8px', fontSize:13, fontWeight:600, cursor:'pointer',
+            }}>{a}</button>
+          );
+        })}
+      </div>
+
+      {/* 阶跃响应 */}
+      <Section title="阶跃响应" right={
+        <span style={{ fontSize:10, color:C.sub }}>显示点数 <span className="mono" style={{ color:C.ink, fontWeight:700 }}>{points}</span></span>
+      }>
+        <Legend items={[
+          {c:CURVE.baseline, t:'基线', dash:true},
+          {c:CURVE.current, t:'当前'},
+          {c:CURVE.predict, t:'预测'},
+        ]} />
+        <svg width="100%" viewBox={`0 0 ${curveW} ${curveH}`} preserveAspectRatio="none" style={{ display:'block', marginTop:6 }}>
+          <GridLines w={curveW} h={curveH} />
+          <path d={bl} fill="none" stroke={CURVE.baseline} strokeWidth="1.5" strokeDasharray="3,2" />
+          <path d={pr} fill="none" stroke={CURVE.predict} strokeWidth="2" opacity="0.7" />
+          <path d={cu} fill="none" stroke={CURVE.current} strokeWidth="2.4" />
+        </svg>
+        <div className="mono" style={{ display:'flex', justifyContent:'space-between', fontSize:8.5, color:C.faint, marginTop:2 }}>
+          <span>0s</span><span>0.4s</span><span>0.8s</span><span>1.2s</span><span>1.6s</span>
+        </div>
+        {/* 显示点数 slider (50-1000, 对应 viewDidLoad responseDisplayPoints) */}
+        <input type="range" min={50} max={1000} step={50} value={points}
+          onChange={e=>onPointsChange(parseInt(e.target.value))}
+          style={{ width:'100%', marginTop:8, accentColor:C.accent }} />
+        <div style={{ display:'flex', justifyContent:'space-between', fontSize:9, color:C.faint, marginTop:2 }}>
+          <span>50</span><span>1000</span>
+        </div>
+        <div style={{ display:'flex', gap:8, marginTop:10 }}>
+          <SmallBtn onClick={onExport} icon="📤" label="导出响应图" />
+        </div>
+      </Section>
+
+      {/* 噪声频谱 */}
+      <Section title="噪声频谱" right={<span className="mono" style={{ fontSize:10, color:C.sub }}>0–400Hz</span>}>
+        <div style={{ display:'flex', alignItems:'flex-end', gap:1.5, height:70, marginTop:6 }}>
+          {noiseBars.map((v,i)=>(
+            <div key={i} style={{
+              flex:1, height:String(v*100)+'%', minWidth:2,
+              background: i<6 ? CURVE.predict : (v>0.5 ? CURVE.current : C.line),
+              borderRadius:'2px 2px 0 0', opacity:0.85,
+            }} />
+          ))}
+        </div>
+        <div className="mono" style={{ display:'flex', justifyContent:'space-between', fontSize:8.5, color:C.faint, marginTop:4 }}>
+          <span>0Hz</span><span>100</span><span>200</span><span>300</span><span>400</span>
+        </div>
+      </Section>
+
+      {/* 诊断 */}
+      <Section title="诊断评分">
+        <div style={{ display:'flex', alignItems:'center', gap:14 }}>
+          <ProgressRing pct={72} size={56} stroke={6} color={C.warn} />
+          <div style={{ flex:1 }}>
+            <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+              <span className="mono" style={{ fontSize:22, fontWeight:700, color:C.warnText }}>72</span>
+              <span style={{ fontSize:11, color:C.sub }}>/100 · {axis} 轴</span>
+            </div>
+            <div style={{ fontSize:11, color:C.sub, marginTop:2 }}>检测到 2 项问题</div>
+          </div>
+        </div>
+        <div style={{ marginTop:10, display:'flex', flexDirection:'column', gap:6 }}>
+          <IssueChip level="warn" text="P 偏低 · 上升斜率不足(目标 72% @ 0.15s)" />
+          <IssueChip level="info" text="D 略强 · 噪声频段 80Hz 有残留" />
+        </div>
+        <button onClick={onCrashDiag} style={{
+          width:'100%', marginTop:10, background:C.card, color:C.ink, border:'1px solid '+C.line,
+          borderRadius:10, padding:'10px', fontSize:12.5, fontWeight:600, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6,
+        }}>🩺 炸机诊断(领域知识库)</button>
+      </Section>
+
+      {/* CLI 推荐 */}
+      <Section title="CLI 推荐" right={<span style={{ fontSize:9, color:C.faint }}>BF 4.3–4.5</span>}>
+        <div style={{
+          background:C.termBg, borderRadius:10, padding:'10px 12px',
+          fontFamily:'SF Mono,Menlo,monospace', fontSize:11.5, lineHeight:1.9,
+        }}>
+          <CLILine k="p_roll"    old="45"  New="49" />
+          <CLILine k="i_roll"    old="85"  New="85" same />
+          <CLILine k="d_min_roll" old="38" New="42" />
+          <CLILine k="f_roll"    old="70"  New="95" big />
+        </div>
+        <button onClick={onCopyCLI} style={{
+          width:'100%', marginTop:8, background:C.accent, color:'#fff', border:'none', borderRadius:10,
+          padding:'10px', fontSize:12.5, fontWeight:700, cursor:'pointer',
+        }}>📋 复制 CLI 命令</button>
+        <div style={{ fontSize:9.5, color:C.faint, marginTop:6, textAlign:'center', lineHeight:1.5 }}>
+          独立模式:不写入迭代链 · 复制后请到 BF Configurator 粘贴
+        </div>
+      </Section>
+
+      <div style={{ margin:'16px', textAlign:'center', fontSize:10, color:C.faint, lineHeight:1.5 }}>
+        退出后数据源保留 · 下次进入可直接「恢复」<br/>
+        🔑 切 Session / 换轴 不离开结果态(瞬时) · 切 Session 触发重分析(短暂回到处理中)
+      </div>
+    </div>
+  );
+}
+
+// === 小组件 ===
+function Section({ title, right, children }) {
+  return (
+    <div style={{ margin:'14px 16px 0', background:C.card, border:'1px solid '+C.line, borderRadius:12, padding:'12px 14px' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+        <span style={{ fontSize:12.5, fontWeight:700, color:C.ink, letterSpacing:0.3 }}>{title}</span>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+function Legend({ items }) {
+  return (
+    <div style={{ display:'flex', gap:14, fontSize:10, color:C.sub }}>
+      {items.map((it,i)=>(
+        <span key={i} style={{ display:'flex', alignItems:'center', gap:4 }}>
+          <span style={{ width:14, height:2.5, background:it.c, borderRadius:1, opacity:it.dash?0.7:1 }} />
+          {it.t}
+        </span>
+      ))}
+    </div>
+  );
+}
+function SmallBtn({ onClick, icon, label }) {
+  return (
+    <button onClick={onClick} style={{
+      flex:1, background:C.card, color:C.ink, border:'1px solid '+C.line, borderRadius:8,
+      padding:'7px', fontSize:11.5, fontWeight:600, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:4,
+    }}><span>{icon}</span>{label}</button>
+  );
+}
+function IssueChip({ level, text }) {
+  const c = level==='warn' ? { bg:C.warnSoft, tx:C.warnText, dot:CURVE.predict }
+                          : { bg:'#e0f2fe', tx:'#075985', dot:'#0ea5e9' };
+  return (
+    <div style={{ background:c.bg, borderRadius:8, padding:'7px 10px', display:'flex', alignItems:'flex-start', gap:6, fontSize:11, color:c.tx, lineHeight:1.4 }}>
+      <span style={{ width:6, height:6, borderRadius:999, background:c.dot, marginTop:4, flex:'0 0 auto' }} />
+      <span>{text}</span>
+    </div>
+  );
+}
+function CLILine({ k, old, New, same, big }) {
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+      <span style={{ color:'#94a3b8' }}># </span>
+      <span style={{ color:'#7dd3fc' }}>{k}</span>
+      <span style={{ color:'#64748b' }}> :</span>
+      <span style={{ textDecoration:'line-through', color:'#64748b' }}>{old}</span>
+      <span style={{ color:'#475569' }}>→</span>
+      <span style={{ color: same ? '#94a3b8' : (big ? '#fdba74' : '#86efac'), fontWeight: big?700:600 }}>{New}</span>
+    </div>
+  );
+}
+
+// ============ 单机状态机(可交互演示) ============
+function InteractivePhone() {
+  const [state, setState] = useState(ST.EMPTY);
+  const [pct, setPct] = useState(0);
+  const [phaseIdx, setPhaseIdx] = useState(0);
+  const [logLines, setLogLines] = useState([]);
+  const [activeSession, setActiveSession] = useState(1);
+  const [axis, setAxis] = useState('roll');
+  const [points, setPoints] = useState(200);
+  const [toast, setToast] = useState('');
+  const timerRef = useRef(null);
+  const hasPrevious = true;
+  const previousMeta = { file:'001.bbl', craft:'SPEEDYBEEF7MINI', fw:'BF 4.3.1', sessionName:'S2' };
+  const meta = { file:'001.bbl', craft:'SPEEDYBEEF7MINI', fw:'BF 4.3.1', kv:'1505KV' };
+
+  const showToast = (t)=>{ setToast(t); setTimeout(()=>setToast(''), 1400); };
+
+  const startProcessing = (sessionIdx=activeSession)=>{
+    setActiveSession(sessionIdx);
+    setState(ST.PROCESSING);
+    setPct(0); setPhaseIdx(0); setLogLines([]);
+    let p = 0, pi = 0;
+    const logs = [
+      'open 001.bbl','header: BF 4.3.1 / SPEEDYBEEF7MINI','found 4 sessions',
+      `decode session ${SESSIONS[sessionIdx].name} (${SESSIONS[sessionIdx].dur})`,
+      'blackbox_decode → csv','inject # Craft/FW/PID/KV','PIDCSVParser: 128k samples',
+      'PIDTraceAnalyzer: window=8000 overlap=0.9375','gyro lowpass biquad @25Hz','FFT spectrum ok',
+      'response curve built','render charts',
+    ];
+    clearInterval(timerRef.current);
+    timerRef.current = setInterval(()=>{
+      p += 2 + Math.random()*3;
+      const newPi = Math.min(PHASES.length-1, Math.floor(p/14));
+      if(newPi!==pi){ pi=newPi; setPhaseIdx(pi); }
+      setLogLines(prev=>[...prev, logs[Math.min(logs.length-1, Math.floor(p/9))]]);
+      if(p>=100){
+        clearInterval(timerRef.current);
+        setPct(100); setPhaseIdx(PHASES.length-1);
+        setTimeout(()=>setState(ST.RESULT), 350);
+      } else {
+        setPct(p);
+      }
+    }, 120);
+  };
+
+  useEffect(()=>()=>clearInterval(timerRef.current), []);
+
+  const onSelectSession = (id)=>{
+    if(id===activeSession) return;
+    // 切 session:回到处理中(重分析),再回结果 — 体现不可逆性
+    startProcessing(id);
+  };
+
+  return (
+    <IosFrame label="可交互 · 点导入按钮走完整三态">
+      {state===ST.EMPTY && (
+        <EmptyScreen
+          hasPrevious={hasPrevious}
+          previousMeta={previousMeta}
+          onImport={()=>startProcessing(1)}
+          onContinue={()=>{ setActiveSession(1); setState(ST.RESULT); showToast('已恢复上次数据源'); }}
+          onBluetooth={()=>showToast('蓝牙:阶段0协议层开发中')}
+        />
+      )}
+      {state===ST.PROCESSING && (
+        <ProcessingScreen
+          meta={meta}
+          sessionName={SESSIONS[activeSession].name}
+          pct={pct}
+          phaseText={PHASES[phaseIdx].text}
+          logLines={logLines}
+          onCancel={()=>{ clearInterval(timerRef.current); setState(ST.EMPTY); }}
+        />
+      )}
+      {state===ST.RESULT && (
+        <ResultScreen
+          meta={meta}
+          sessions={SESSIONS}
+          activeSession={activeSession}
+          onSelectSession={onSelectSession}
+          axis={axis}
+          onAxisChange={setAxis}
+          points={points}
+          onPointsChange={setPoints}
+          onExport={()=>showToast('已导出响应图到相册')}
+          onCopyCLI={()=>showToast('CLI 已复制到剪贴板')}
+          onCrashDiag={()=>showToast('打开炸机诊断知识库')}
+          onReselect={()=>setState(ST.EMPTY)}
+        />
+      )}
+      <Toast text={toast} />
+    </IosFrame>
+  );
+}
+
+// ============ 三态并排总览(静态快照) ============
+function OverviewRow() {
+  return (
+    <div style={{ display:'flex', gap:32, flexWrap:'wrap', justifyContent:'center', alignItems:'flex-start', marginBottom:48 }}>
+      {/* 空态 */}
+      <IosFrame label="① 空态 Empty · 选文件即出曲线">
+        <EmptyScreen
+          hasPrevious={true}
+          previousMeta={{ file:'001.bbl', craft:'SPEEDYBEEF7MINI', fw:'BF 4.3.1', sessionName:'S2' }}
+          onImport={()=>{}} onContinue={()=>{}} onBluetooth={()=>{}}
+        />
+      </IosFrame>
+      {/* 处理中 */}
+      <IosFrame label="② 处理中 Processing · 不可逆">
+        <ProcessingScreen
+          meta={{ file:'001.bbl', craft:'SPEEDYBEEF7MINI', fw:'BF 4.3.1', kv:'1505KV' }}
+          sessionName="S2"
+          pct={62}
+          phaseText={PHASES[3].text}
+          logLines={['open 001.bbl','header: BF 4.3.1 / SPEEDYBEEF7MINI','found 4 sessions','decode session S2 (02:34)','blackbox_decode → csv','inject # Craft/FW/PID/KV']}
+          onCancel={()=>{}}
+        />
+      </IosFrame>
+      {/* 结果 */}
+      <IosFrame label="③ 结果 Result · 稳态(切 Session 回②)">
+        <ResultScreen
+          meta={{ file:'001.bbl', craft:'SPEEDYBEEF7MINI', fw:'BF 4.3.1', kv:'1505KV' }}
+          sessions={SESSIONS}
+          activeSession={1}
+          onSelectSession={()=>{}}
+          axis="roll" onAxisChange={()=>{}}
+          points={200} onPointsChange={()=>{}}
+          onExport={()=>{}} onCopyCLI={()=>{}} onCrashDiag={()=>{}} onReselect={()=>{}}
+        />
+      </IosFrame>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <div>
+      <OverviewRow />
+      <InteractivePhone />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

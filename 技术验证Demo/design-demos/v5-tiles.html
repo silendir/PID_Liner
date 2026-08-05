@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PID_Liner · 变体 E · 大磁贴亲和派</title>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    background: #eceef1;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 36px 16px 64px;
+  }
+  .label-top {
+    font-style: italic;
+    font-size: 13px;
+    color: #52525b;
+    margin-bottom: 22px;
+    letter-spacing: 0.02em;
+    font-family: -apple-system, sans-serif;
+  }
+</style>
+</head>
+<body>
+  <div class="label-top">变体 E · 大磁贴亲和派</div>
+  <div id="root"></div>
+
+<script type="text/babel">
+const { useState } = React;
+
+// ===== iOS Frame (固定规格 · iPhone 15 Pro) =====
+const iosFrameStyles = {
+  wrapper: { display:'inline-block', padding:12, background:'#000', borderRadius:60, boxShadow:'0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
+  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#fff' },
+  statusBar: { position:'absolute', top:0, left:0, right:0, height:54, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 32px', fontSize:16, fontWeight:600, fontFamily:'-apple-system, sans-serif', zIndex:20, pointerEvents:'none' },
+  dynamicIsland: { position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', width:124, height:36, background:'#000', borderRadius:999, zIndex:30 },
+  statusIcons: { display:'flex', alignItems:'center', gap:6 },
+  signalIcon: { display:'flex', alignItems:'flex-end', gap:2, height:12 },
+  signalBar: { width:3, background:'currentColor', borderRadius:1 },
+  batteryIcon: { width:26, height:12, border:'1.5px solid currentColor', borderRadius:3, padding:1, position:'relative', opacity:0.8 },
+  batteryCap: { position:'absolute', top:3, right:-3, width:2, height:6, background:'currentColor', borderRadius:'0 1px 1px 0' },
+  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'auto' },
+  homeIndicator: { position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', width:140, height:5, background:'rgba(0,0,0,0.3)', borderRadius:999, zIndex:10 },
+};
+function IosFrame({ children, time='9:41', battery=88 }) {
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{ ...iosFrameStyles.screen, width:393, height:852 }}>
+        <div style={{ ...iosFrameStyles.statusBar, color:'#1f2937' }}>
+          <span>{time}</span>
+          <div style={iosFrameStyles.statusIcons}>
+            <div style={iosFrameStyles.signalIcon}>
+              <div style={{ ...iosFrameStyles.signalBar, height:4 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:6 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:9 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:11 }} />
+            </div>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color:'#1f2937' }}>
+              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+            </svg>
+            <div style={iosFrameStyles.batteryIcon}>
+              <div style={{ width:String(battery)+'%', height:'100%', background:'currentColor', borderRadius:1, opacity:0.9 }} />
+              <div style={iosFrameStyles.batteryCap} />
+            </div>
+          </div>
+        </div>
+        <div style={iosFrameStyles.dynamicIsland} />
+        <div style={iosFrameStyles.content}>{children}</div>
+        <div style={iosFrameStyles.homeIndicator} />
+      </div>
+    </div>
+  );
+}
+
+// ===== 步响应曲线 path 生成器 =====
+// ponytail: 字符串拼接,无模板字面量
+function stepPath(a, b, c, w, h, samples, yMax) {
+  const pts = [];
+  for (let i = 0; i <= samples; i++) {
+    const t = (i / samples) * 1.6;
+    const y = 1 - Math.exp(-a * t) * (Math.cos(b * t) + c * Math.sin(b * t));
+    const px = (t / 1.6) * w;
+    const py = h - (Math.min(y, yMax) / yMax) * (h - 8) - 4;
+    pts.push((i === 0 ? 'M' : 'L') + px.toFixed(1) + ',' + py.toFixed(1));
+  }
+  return pts.join(' ');
+}
+
+// 闭合到地面,用于面积填充
+function stepAreaPath(a, b, c, w, h, samples, yMax) {
+  const base = stepPath(a, b, c, w, h, samples, yMax);
+  return base + ' L' + w.toFixed(1) + ',' + h.toFixed(1) + ' L0,' + h.toFixed(1) + ' Z';
+}
+
+// ===== 调色板:亲和圆润派 =====
+// 仅 3 种语义色:主青=迭代 / 黄=单次提醒 / 绿=成功(无彩虹)
+const palette = {
+  paper:    '#f5f5f7',   // 浅暖灰底(亲和感)
+  ink:      '#1f2937',   // 主文字(深石板灰)
+  inkSoft:  '#6b7280',   // 副文字
+  muted:    '#9ca3af',   // 弱灰
+  accent:   '#0d9488',   // 主青(墨绿) - 迭代 / 默认 accent
+  accentDk: '#0f766e',   // 深 accent
+  warn:     '#ca8a04',   // 黄 - 单次 / 提醒
+  warnBg:   'rgba(202, 138, 4, 0.10)',
+  ok:       '#16a34a',   // 绿 - 成功收敛
+  okBg:     'rgba(22, 163, 74, 0.10)',
+  alert:    '#ea580c',   // 橙 - 振荡警报(限定仅一处)
+  accentBg: 'rgba(13, 148, 136, 0.08)',   // accent 淡底(磁贴底色 / 曲线区画框底)
+  accentBg2:'rgba(13, 148, 136, 0.06)',   // 更淡的 accent 底
+};
+
+// 亲和圆润字体栈:优先 SF Pro Rounded,fallback 系统圆润
+const roundedFont = '"SF Pro Rounded", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif';
+const bodyFont = '"SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif';
+
+// 柔和多层阴影(近实 + 远虚):可触摸物理质感
+const softShadow = '0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06)';
+const softShadowLg = '0 2px 6px rgba(15, 23, 42, 0.05), 0 14px 36px rgba(15, 23, 42, 0.08)';
+
+// ===== 状态胶囊(菱形圆角 999) =====
+function Chip({ variant, children }) {
+  const styles = {
+    inProgress: { color: palette.warn, background: palette.warnBg },
+    converged:  { color: palette.ok,   background: palette.okBg },
+    count:      { color: palette.accent,background: palette.accentBg },
+  };
+  const s = styles[variant] || styles.count;
+  return (
+    <span style={{
+      fontFamily: bodyFont,
+      fontSize: 11,
+      fontWeight: 600,
+      letterSpacing: '0.01em',
+      color: s.color,
+      background: s.background,
+      padding: '5px 11px',
+      borderRadius: 999,
+      whiteSpace: 'nowrap',
+      flexShrink: 0,
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4,
+    }}>{children}</span>
+  );
+}
+
+// ===== Hero:圆润大字标题 =====
+function Hero() {
+  return (
+    <div style={{ padding: '6px 22px 4px' }}>
+      <div style={{
+        fontFamily: roundedFont,
+        fontSize: 36,
+        fontWeight: 700,
+        color: palette.ink,
+        letterSpacing: '-0.02em',
+        lineHeight: 1.05,
+      }}>PID_Liner</div>
+      <div style={{
+        fontFamily: bodyFont,
+        fontSize: 15,
+        fontWeight: 500,
+        color: palette.inkSoft,
+        marginTop: 6,
+        lineHeight: 1.4,
+      }}>选一条路:看一眼,还是调到底</div>
+    </div>
+  );
+}
+
+// ===== 双入口大磁贴(iOS 设置组旗舰 cell 风格) =====
+// height≥80,大圆角 20,柔和多层阴影,左侧大号圆形符号背景
+function EntryTile({ symbol, symbolBg, symbolColor, title, subtitle, meta, chip, isPrimary }) {
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 14,
+      padding: '16px 18px',
+      minHeight: 84,
+      borderRadius: 20,
+      background: '#ffffff',
+      boxShadow: isPrimary ? softShadowLg : softShadow,
+      border: '1px solid rgba(15, 23, 42, 0.04)',
+    }}>
+      {/* 左侧大号圆形符号背景 */}
+      <div style={{
+        width: 52,
+        height: 52,
+        borderRadius: 16,
+        background: symbolBg,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 24,
+        fontWeight: 600,
+        color: symbolColor,
+        fontFamily: roundedFont,
+        flexShrink: 0,
+      }}>{symbol}</div>
+
+      {/* 右侧:标题 + 副标题 */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: roundedFont,
+          fontSize: 17,
+          fontWeight: 600,
+          color: palette.ink,
+          letterSpacing: '-0.01em',
+          lineHeight: 1.2,
+        }}>{title}</div>
+        <div style={{
+          fontFamily: bodyFont,
+          fontSize: 13,
+          fontWeight: 400,
+          color: palette.inkSoft,
+          marginTop: 3,
+          lineHeight: 1.35,
+        }}>{subtitle}</div>
+        {meta && (
+          <div style={{
+            fontFamily: bodyFont,
+            fontSize: 11,
+            fontWeight: 500,
+            color: palette.muted,
+            marginTop: 4,
+          }}>{meta}</div>
+        )}
+      </div>
+
+      {/* 角标 + chevron */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+        {chip}
+        <div style={{
+          color: palette.muted,
+          fontSize: 16,
+          fontWeight: 500,
+          lineHeight: 1,
+        }}>›</div>
+      </div>
+    </div>
+  );
+}
+
+// ===== 方案大磁贴(饱满卡片,曲线画框淡底块包裹) =====
+function PlanTile({ name, fc, firmware, chip, baseline, current, trend, alert, alertColor, curves, curveFramed }) {
+  return (
+    <div style={{
+      padding: 18,
+      borderRadius: 22,
+      background: '#ffffff',
+      boxShadow: softShadowLg,
+      border: '1px solid rgba(15, 23, 42, 0.04)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      {/* 标题行:飞机名圆润加粗 + chip */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontFamily: roundedFont,
+            fontSize: 19,
+            fontWeight: 700,
+            color: palette.ink,
+            letterSpacing: '-0.01em',
+            lineHeight: 1.15,
+          }}>{name}</div>
+          <div style={{
+            fontFamily: bodyFont,
+            fontSize: 12,
+            fontWeight: 500,
+            color: palette.inkSoft,
+            marginTop: 3,
+            letterSpacing: '0.01em',
+          }}>{fc} · {firmware}</div>
+        </div>
+        {chip}
+      </div>
+
+      {/* 曲线区(画框式淡 accent 底块包裹 - 签名质感) */}
+      <div style={{
+        position: 'relative',
+        height: 80,
+        borderRadius: 14,
+        background: curveFramed ? palette.accentBg2 : 'rgba(15, 23, 42, 0.02)',
+        padding: '8px 10px',
+        boxSizing: 'border-box',
+      }}>
+        <svg width="100%" height="100%" viewBox="0 0 320 64" preserveAspectRatio="none" style={{ display: 'block' }}>
+          {/* 极淡网格基线 */}
+          <line x1="0" y1="32" x2="320" y2="32" stroke="rgba(15, 23, 42, 0.06)" strokeWidth="0.5" strokeDasharray="2 4" />
+          {curves.map(function (cv, idx) {
+            return (
+              <g key={idx}>
+                <path d={stepAreaPath(cv.a, cv.b, cv.c, 320, 64, 160, 1.3)} fill={cv.fill} />
+                <path
+                  d={stepPath(cv.a, cv.b, cv.c, 320, 64, 160, 1.3)}
+                  fill="none"
+                  stroke={cv.stroke}
+                  strokeWidth={cv.strokeWidth}
+                  strokeDasharray={cv.dash}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={cv.opacity}
+                />
+              </g>
+            );
+          })}
+        </svg>
+        {/* 画框角标 */}
+        <div style={{
+          position: 'absolute', top: 6, right: 10,
+          fontFamily: bodyFont,
+          fontSize: 9,
+          fontWeight: 600,
+          letterSpacing: '0.08em',
+          color: palette.muted,
+          textTransform: 'uppercase',
+        }}>step</div>
+      </div>
+
+      {/* 基线 → 当前 + 趋势 + 警报 */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+        <div style={{
+          fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+          fontSize: 12,
+          color: palette.inkSoft,
+          fontVariantNumeric: 'tabular-nums',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        }}>
+          <span style={{ color: palette.muted }}>基线</span>
+          <span style={{ color: palette.ink, fontWeight: 600 }}>{baseline}</span>
+          <span style={{ color: palette.muted, margin: '0 2px' }}>→</span>
+          <span style={{ color: palette.muted }}>当前</span>
+          <span style={{ color: palette.ink, fontWeight: 600 }}>{current}</span>
+          {trend && <span style={{ marginLeft: 4, color: palette.accentDk, fontWeight: 700 }}>{trend}</span>}
+        </div>
+
+        {alert && (
+          <div style={{
+            fontFamily: bodyFont,
+            fontSize: 11,
+            fontWeight: 600,
+            color: alertColor || palette.alert,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 5,
+              height: 5,
+              borderRadius: '50%',
+              background: alertColor || palette.alert,
+            }} />
+            {alert}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ===== 主页 =====
+function HomeScreen() {
+  return (
+    <div style={{ background: palette.paper, minHeight: '100%', paddingBottom: 24 }}>
+      {/* Hero */}
+      <Hero />
+
+      {/* 双入口大磁贴组 */}
+      <div style={{ padding: '20px 18px 8px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <EntryTile
+          symbol="○"
+          symbolBg={palette.warnBg}
+          symbolColor={palette.warn}
+          title="独立分析"
+          subtitle="导入一次 BBL · 看曲线 · 出建议"
+          chip={<Chip variant="inProgress">不保存</Chip>}
+          isPrimary={false}
+        />
+        <EntryTile
+          symbol="↻"
+          symbolBg={palette.accentBg}
+          symbolColor={palette.accent}
+          title="方案迭代"
+          subtitle="多轮闭环收敛 · 换参飞 → 反馈"
+          chip={<Chip variant="count">2 个进行中</Chip>}
+          isPrimary={true}
+        />
+      </div>
+
+      {/* 我的方案 section 标题 */}
+      <div style={{ padding: '24px 22px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          fontFamily: roundedFont,
+          fontSize: 20,
+          fontWeight: 700,
+          color: palette.ink,
+          letterSpacing: '-0.01em',
+        }}>我的方案</div>
+        <div style={{
+          fontFamily: bodyFont,
+          fontSize: 12,
+          fontWeight: 500,
+          color: palette.muted,
+        }}>· 2</div>
+        <div style={{ flex: 1 }} />
+        <div style={{
+          fontFamily: bodyFont,
+          fontSize: 13,
+          fontWeight: 600,
+          color: palette.accent,
+          background: palette.accentBg,
+          padding: '6px 13px',
+          borderRadius: 999,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+        }}>
+          <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1 }}>+</span>
+          新建
+        </div>
+      </div>
+
+      {/* 方案大磁贴列表 */}
+      <div style={{ padding: '0 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* 方案 1: 怪象3.5寸 (进行中, P45→P49↑, S3 轻微振荡) */}
+        <PlanTile
+          name="怪象3.5寸"
+          fc="SPEEDYBEEF7MINI"
+          firmware="BF 4.3.1"
+          chip={<Chip variant="inProgress">第 3 轮 · 进行中</Chip>}
+          baseline="P45"
+          current="P49"
+          trend="↑"
+          alert="S3 轻微振荡"
+          alertColor={palette.alert}
+          curveFramed={true}
+          curves={[
+            // 基线(灰)
+            { a: 4.0, b: 9.5, c: 0.35, stroke: palette.muted, strokeWidth: 1.6, dash: '4 3', fill: 'rgba(156, 163, 175, 0.10)', opacity: 0.85 },
+            // 当前(墨绿) - 主曲线
+            { a: 6.0, b: 12.0, c: 0.22, stroke: palette.accent, strokeWidth: 2.4, dash: null, fill: 'rgba(13, 148, 136, 0.18)', opacity: 1.0 },
+          ]}
+        />
+
+        {/* 方案 2: 吴bbl 5寸 (已收敛) */}
+        <PlanTile
+          name="吴bbl 5寸"
+          fc="MAMBAF722"
+          firmware="BF 4.5"
+          chip={<Chip variant="converged">第 5 轮 · 已收敛 ✓</Chip>}
+          baseline="P38"
+          current="P38"
+          trend="稳定"
+          alert={null}
+          curveFramed={false}
+          curves={[
+            // 重合曲线(成功绿)
+            { a: 4.5, b: 8.5, c: 0.55, stroke: palette.ok, strokeWidth: 2.4, dash: null, fill: 'rgba(22, 163, 74, 0.14)', opacity: 1.0 },
+          ]}
+        />
+      </div>
+
+      {/* 页脚提示 */}
+      <div style={{ padding: '28px 22px 16px' }}>
+        <div style={{
+          fontFamily: bodyFont,
+          fontSize: 11,
+          fontWeight: 500,
+          color: palette.muted,
+          textAlign: 'center',
+          lineHeight: 1.6,
+          letterSpacing: '0.01em',
+        }}>🔑 无自动聚合 · 按 chainId 列方案 · craftName 只作显示</div>
+      </div>
+    </div>
+  );
+}
+
+// ===== Root =====
+function App() {
+  return (
+    <IosFrame>
+      <HomeScreen />
+    </IosFrame>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>

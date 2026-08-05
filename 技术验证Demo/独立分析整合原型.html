@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PID_Liner · 独立分析整合原型</title>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+  body { margin:0; padding:40px 16px 64px; background:#eceef1; display:flex; flex-direction:column; align-items:center; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif; }
+  .cap { font-style:italic; color:#6b7280; font-size:13px; margin-bottom:18px; letter-spacing:0.2px; text-align:center; line-height:1.5; }
+  .mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; font-family:'SF Mono','Menlo',monospace; }
+</style>
+</head>
+<body>
+<div class="cap">
+  独立分析整合原型 · 把 1.1 三屏(主页导入/转换 → 历史页选择 → 分析页曲线)<br/>合并为单一滚动屏 · 逻辑零损失 · 数据源与分析同屏贯通
+</div>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState } = React;
+
+// === IosFrame (iPhone 15 Pro 规格) ===
+const iosFrameStyles = {
+  wrapper: { display:'inline-block', padding:12, background:'#000', borderRadius:60, boxShadow:'0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
+  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#fff' },
+  statusBar: { position:'absolute', top:0, left:0, right:0, height:54, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 32px', fontSize:16, fontWeight:600, zIndex:20, pointerEvents:'none' },
+  dynamicIsland: { position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', width:124, height:36, background:'#000', borderRadius:999, zIndex:30 },
+  statusIcons: { display:'flex', alignItems:'center', gap:6 },
+  signalIcon: { display:'flex', alignItems:'flex-end', gap:2, height:12 },
+  signalBar: { width:3, background:'currentColor', borderRadius:1 },
+  batteryIcon: { width:26, height:12, border:'1.5px solid currentColor', borderRadius:3, padding:1, position:'relative', opacity:0.8 },
+  batteryCap: { position:'absolute', top:3, right:-3, width:2, height:6, background:'currentColor', borderRadius:'0 1px 1px 0' },
+  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'auto', background:'#f5f5f7' },
+  homeIndicator: { position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', width:140, height:5, background:'rgba(0,0,0,0.3)', borderRadius:999, zIndex:10 },
+};
+function IosFrame({ children, time='9:41', battery=88 }) {
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{ ...iosFrameStyles.screen, width:393, height:852 }}>
+        <div style={{ ...iosFrameStyles.statusBar, color:'#000' }}>
+          <span className="mono">{time}</span>
+          <div style={iosFrameStyles.statusIcons}>
+            <div style={iosFrameStyles.signalIcon}>
+              <div style={{ ...iosFrameStyles.signalBar, height:4 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:6 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:9 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:11 }} />
+            </div>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color:'#000' }}>
+              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+            </svg>
+            <div style={iosFrameStyles.batteryIcon}>
+              <div style={{ width:String(battery)+'%', height:'100%', background:'currentColor', borderRadius:1, opacity:0.9 }} />
+              <div style={iosFrameStyles.batteryCap} />
+            </div>
+          </div>
+        </div>
+        <div style={iosFrameStyles.dynamicIsland} />
+        <div style={iosFrameStyles.content}>{children}</div>
+        <div style={iosFrameStyles.homeIndicator} />
+      </div>
+    </div>
+  );
+}
+
+// 阶跃响应曲线 (二阶系统)
+function stepPath(a,b,c,w,h,samples,yMax){
+  const pts=[];
+  for(let i=0;i<=samples;i++){
+    const t=(i/samples)*1.6;
+    const y=1-Math.exp(-a*t)*(Math.cos(b*t)+c*Math.sin(b*t));
+    const px=(t/1.6)*w;
+    const py=h-(Math.min(y,yMax)/yMax)*(h-8)-4;
+    pts.push((i===0?'M':'L')+px.toFixed(1)+','+py.toFixed(1));
+  }
+  return pts.join(' ');
+}
+
+function GridLines({ w, h }) {
+  const ys = [0.25, 0.5, 0.75, 1.0];
+  return (
+    <g>
+      {ys.map((r, idx) => (
+        <line key={idx} x1="0" y1={h - r*(h-8) - 4} x2={w} y2={h - r*(h-8) - 4}
+              stroke="#9ca3af" strokeWidth="0.5" strokeDasharray="2,3" opacity="0.6" />
+      ))}
+    </g>
+  );
+}
+
+function ProgressRing({ pct, size=44, stroke=4, color='#0d9488', track='#e5e7eb' }) {
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const off = circ * (1 - pct/100);
+  return (
+    <svg width={size} height={size} style={{ transform:'rotate(-90deg)' }}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+              strokeDasharray={circ} strokeDashoffset={off} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// 设计 token (沿用第一版配色)
+const C = {
+  bg: '#f5f5f7', card: '#ffffff', ink: '#0f172a', sub: '#64748b', faint: '#94a3b8',
+  line: '#e5e7eb', lineSoft: '#f1f5f9',
+  accent: '#0d9488', accentSoft: '#ccfbf1',      // 墨绿(主/当前曲线)
+  warn: '#ea580c', warnSoft: '#fed7aa', warnText: '#9a3412',   // 预测曲线/警示
+  ok: '#166534', okSoft: '#bbf7d0',               // 收敛曲线
+  blue: '#2563eb', blueSoft: '#dbeafe',           // Session 选择(1.1 蓝色按钮)
+  yellowSoft: '#fef3c7', yellowText: '#92400e',
+};
+const CURVE = { baseline:'#9ca3af', current:C.accent, predict:C.warn, converge:C.ok };
+
+// === Toast ===
+function Toast({ msg }) {
+  if (!msg) return null;
+  return (
+    <div style={{ position:'absolute', bottom:60, left:'50%', transform:'translateX(-50%)',
+      background:'rgba(15,23,42,0.92)', color:'#fff', fontSize:12, padding:'8px 16px',
+      borderRadius:20, zIndex:50, whiteSpace:'nowrap', boxShadow:'0 4px 16px rgba(0,0,0,0.2)' }}>{msg}</div>
+  );
+}
+
+// === ActionSheet (1.1 风格) ===
+function ActionSheet({ title, items, onClose }) {
+  return (
+    <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.4)', zIndex:40, display:'flex', flexDirection:'column', justifyContent:'flex-end' }}>
+      <div onClick={e=>e.stopPropagation()} style={{ background:'#f2f2f7', margin:8, borderRadius:13, overflow:'hidden' }}>
+        <div style={{ padding:'12px 14px', textAlign:'center', fontSize:12, color:C.sub, borderBottom:'1px solid '+C.line }}>{title}</div>
+        {items.map((it, i) => (
+          <div key={i} onClick={()=>{ it.onTap && it.onTap(); onClose(); }} style={{ padding:'15px 14px', textAlign:'center', fontSize:16, color:it.danger?'#dc2626':C.accent, background:'#fff', borderTop: i>0?'1px solid '+C.lineSoft:'none', fontWeight: it.selected?600:400 }}>{it.label}{it.selected?'  ✓':''}</div>
+        ))}
+        <div style={{ height:8, background:'#f2f2f7' }} />
+        <div onClick={onClose} style={{ padding:'15px 14px', textAlign:'center', fontSize:16, color:C.sub, background:'#fff', fontWeight:600 }}>取消</div>
+      </div>
+    </div>
+  );
+}
+
+// === 主屏 ===
+function Screen({ onToast }) {
+  const [axis, setAxis] = useState(0);            // 0=Roll 1=Pitch 2=Yaw
+  const [points, setPoints] = useState(200);
+  const [sheet, setSheet] = useState(null);        // 'session' | 'kv' | 'crash' | null
+  const [sessionIdx, setSessionIdx] = useState(2); // 当前 Session
+  const [progress, setProgress] = useState(100);   // 转换/解析进度
+  const [status, setStatus] = useState('✅ 解析完成 · 可分析');
+  const [showLog, setShowLog] = useState(false);
+  const [kv] = useState(1505);
+
+  const axes = [
+    { name:'Roll',  baseline:{a:4.0,b:9.5,c:0.35}, current:{a:6.0,b:12.0,c:0.22}, score:72, pBase:45, pNow:49, issues:['S3 轻微振荡','P 偏低'] },
+    { name:'Pitch', baseline:{a:4.2,b:9.0,c:0.40}, current:{a:5.5,b:11.0,c:0.28}, score:81, pBase:46, pNow:48, issues:['响应略慢'] },
+    { name:'Yaw',   baseline:{a:3.8,b:8.5,c:0.45}, current:{a:4.2,b:9.5,c:0.40},  score:88, pBase:35, pNow:35, issues:[] },
+  ];
+  const cur = axes[axis];
+  const curveW = 325, curveH = 130;
+
+  // 模拟"导入并转换"全流程(对应 1.1 convertBBLToCSV + parseAndAnalyze)
+  function runImport() {
+    setProgress(0); setStatus('正在读取 BBL...');
+    let p = 0;
+    const stages = [
+      [15,'正在解码 BBL...'],[35,'解码 Session '+sessionIdx+'...'],[55,'注入元数据...'],
+      [72,'正在解析 CSV...'],[90,'正在分析 '+cur.name+' 轴...'],[100,'✅ 解析完成 · 可分析'],
+    ];
+    let i = 0;
+    const iv = setInterval(()=>{
+      if(i>=stages.length){ clearInterval(iv); onToast('转换完成'); return; }
+      setProgress(stages[i][0]); setStatus(stages[i][1]); i++;
+    }, 280);
+  }
+
+  const baseP = stepPath(cur.baseline.a, cur.baseline.b, cur.baseline.c, curveW, curveH, 120, 1.15);
+  const curP  = stepPath(cur.current.a,  cur.current.b,  cur.current.c,  curveW, curveH, 120, 1.15);
+  const predP = stepPath(cur.current.a+1.5, cur.current.b+1.5, cur.current.c-0.1, curveW, curveH, 120, 1.15);
+
+  return (
+    <div style={{ minHeight:'100%', position:'relative' }}>
+      {/* Nav */}
+      <div style={{ position:'sticky', top:0, zIndex:10, display:'flex', alignItems:'center', justifyContent:'space-between',
+        padding:'10px 16px', background:'rgba(245,245,247,0.92)', backdropFilter:'blur(8px)', borderBottom:'1px solid '+C.line }}>
+        <div style={{ display:'flex', alignItems:'center', gap:4, color:C.accent, fontSize:15, fontWeight:600, cursor:'pointer' }} onClick={()=>onToast('返回(独立模式不留链)')}>
+          <span style={{ fontSize:20, lineHeight:1 }}>‹</span><span>返回</span>
+        </div>
+        <div style={{ fontSize:15, fontWeight:700, color:C.ink }}>PID分析 · 独立</div>
+        <div onClick={()=>onToast('独立模式说明')} style={{ width:28, height:28, borderRadius:14, background:C.lineSoft, display:'flex', alignItems:'center', justifyContent:'center', color:C.sub, fontSize:14, cursor:'pointer', fontWeight:700 }}>ⓘ</div>
+      </div>
+
+      <div style={{ padding:'12px 16px 28px', display:'flex', flexDirection:'column', gap:12 }}>
+
+        {/* NO-SAVE 提示(独立模式核心标识) */}
+        <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 12px',
+          background:C.warnSoft, borderRadius:8, fontSize:11, color:C.warnText, lineHeight:1.4 }}>
+          <span style={{ fontSize:14 }}>🚫</span>
+          <span><b>独立模式</b> · 本轮不写入迭代链 · 不加载链历史(对应 1.1 <span className="mono">isIterationMode=NO</span>)</span>
+        </div>
+
+        {/* 数据源区(整合自 1.1 ViewController 主页) */}
+        <Section title="数据源" hint="原主页 · 导入/Session/转换 三步同屏">
+          <div style={{ background:C.lineSoft, borderRadius:8, padding:'11px 12px', marginBottom:10 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+              <span style={{ fontSize:16 }}>📄</span>
+              <span className="mono" style={{ fontSize:13, fontWeight:700, color:C.ink }}>001.bbl</span>
+              <span style={{ fontSize:10, fontWeight:600, color:C.accent, background:C.accentSoft, padding:'2px 7px', borderRadius:999 }}>Session {sessionIdx}</span>
+              <span style={{ fontSize:10, fontWeight:600, color:C.faint, background:'#fff', border:'1px solid '+C.line, padding:'2px 7px', borderRadius:999 }}>1505KV</span>
+            </div>
+            <div className="mono" style={{ fontSize:10.5, color:C.sub, lineHeight:1.5 }}>
+              SPEEDYBEEF7MINI · BF 4.3.1 · 飞行 02:34 · 3 个 Session
+            </div>
+          </div>
+
+          {/* 1.1 三按钮(蓝=Session / 绿=转换 / 灰=导入) */}
+          <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+            <button onClick={()=>setSheet('session')} style={btn(C.blue, C.blueSoft)}>🔄 换 Session</button>
+            <button onClick={runImport} style={btn(C.accent, C.accentSoft)}>🔁 转换 BBL→CSV</button>
+            <button onClick={()=>setSheet('import')} style={btn(C.sub, '#e2e8f0')}>📂 导入</button>
+          </div>
+
+          {/* 进度条 + 状态(对应 1.1 progressView + statusLabel) */}
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <div style={{ flex:1, height:5, background:C.line, borderRadius:3, overflow:'hidden' }}>
+              <div style={{ width:progress+'%', height:'100%', background:progress<100?C.accent:C.ok, borderRadius:3, transition:'width 0.25s' }} />
+            </div>
+            <span style={{ fontSize:10.5, color:progress<100?C.accent:C.ok, fontWeight:600, minWidth:32, textAlign:'right' }} className="mono">{progress}%</span>
+          </div>
+          <div style={{ fontSize:11, color:C.sub, marginTop:6 }}>{status}</div>
+
+          {/* 日志折叠区(对应 1.1 logTextView · Menlo) */}
+          <div onClick={()=>setShowLog(s=>!s)} style={{ marginTop:8, fontSize:10.5, color:C.faint, display:'flex', alignItems:'center', gap:4, cursor:'pointer' }}>
+            <span>{showLog?'▾':'▸'}</span><span>转换日志</span>
+          </div>
+          {showLog && (
+            <div className="mono" style={{ marginTop:6, background:'#0f172a', color:'#86efac', borderRadius:6, padding:'10px 12px',
+              fontSize:10, lineHeight:1.6, maxHeight:120, overflow:'auto' }}>
+              [decode] BBL: 001.bbl, 3 sessions<br/>
+              [decode] session 2: 14820 frames @ 1kHz<br/>
+              [inject] # Craft name: SPEEDYBEEF7MINI<br/>
+              [inject] # Firmware version: BF 4.3.1<br/>
+              [inject] # PID roll: 45,85,38,72<br/>
+              [parse] sampleRate=1000, cutFreq=25<br/>
+              [analyze] Roll/Pitch/Yaw ✓
+            </div>
+          )}
+        </Section>
+
+        {/* 轴切换(对应 1.1 updateToggleControls) */}
+        <div style={{ display:'flex', background:C.card, borderRadius:10, padding:4, border:'1px solid '+C.line, gap:4 }}>
+          {axes.map((a, i) => (
+            <div key={i} onClick={()=>{ setAxis(i); onToast('切到 '+a.name+' 轴'); }}
+              style={{ flex:1, textAlign:'center', padding:'9px 0', borderRadius:7, fontSize:13, fontWeight:600, cursor:'pointer',
+                background: axis===i ? C.accent : 'transparent', color: axis===i ? '#fff' : C.sub,
+                transition:'all 0.15s' }}>{a.name}</div>
+          ))}
+        </div>
+
+        {/* 阶跃响应(整合自 PIDAnalysis 响应图) */}
+        <Section title="阶跃响应" hint="响应图 Tab" right={
+          <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:10, color:C.sub }}>
+            <span>显示点数</span>
+            <input type="range" min={50} max={1000} step={50} value={points}
+              onChange={e=>setPoints(+e.target.value)} style={{ width:80, accentColor:C.accent }} />
+            <span className="mono" style={{ minWidth:28, color:C.ink, fontWeight:600 }}>{points}</span>
+          </div>
+        }>
+          {/* 图例 */}
+          <div style={{ display:'flex', gap:14, fontSize:10, color:C.sub, marginBottom:6, flexWrap:'wrap' }}>
+            <Legend color={CURVE.baseline} dash>基线</Legend>
+            <Legend color={CURVE.current}>当前</Legend>
+            <Legend color={CURVE.predict} dash>预测</Legend>
+            <Legend color={CURVE.converge}>收敛目标</Legend>
+          </div>
+          <svg width="100%" viewBox={'0 0 '+curveW+' '+curveH} preserveAspectRatio="none" style={{ display:'block' }}>
+            <GridLines w={curveW} h={curveH} />
+            <path d={baseP} fill="none" stroke={CURVE.baseline} strokeWidth="1.5" strokeDasharray="3,2" />
+            <path d={predP} fill="none" stroke={CURVE.predict} strokeWidth="1.5" strokeDasharray="4,2" opacity="0.7" />
+            <path d={stepPath(cur.current.a+3,cur.current.b+2.5,cur.current.c-0.15,curveW,curveH,120,1.15)} fill="none" stroke={CURVE.converge} strokeWidth="1.5" strokeDasharray="2,2" opacity="0.5" />
+            <path d={curP} fill="none" stroke={CURVE.current} strokeWidth="2.5" />
+          </svg>
+          <div className="mono" style={{ display:'flex', justifyContent:'space-between', fontSize:8.5, color:C.faint, marginTop:3 }}>
+            <span>0s</span><span>0.4s</span><span>0.8s</span><span>1.2s</span><span>1.6s</span>
+          </div>
+          <div style={{ display:'flex', justifyContent:'flex-end', marginTop:8 }}>
+            <button onClick={()=>onToast('导出响应图(分享)')} style={ghostBtn()}>📤 导出</button>
+          </div>
+        </Section>
+
+        {/* 噪声频谱(响应图旁的噪声图 Tab) */}
+        <Section title="噪声频谱" hint="噪声图 Tab">
+          <svg width="100%" viewBox={'0 0 '+curveW+' 90'} preserveAspectRatio="none" style={{ display:'block' }}>
+            {Array.from({length:48}).map((_,i)=>{
+              const f = i/47;
+              const mag = Math.exp(-f*2.5) * (0.7 + 0.3*Math.sin(f*15)) * 80;
+              return <rect key={i} x={i*(curveW/48)} y={88-mag} width={curveW/48-1.5} height={mag} fill={i<8?C.warn:C.accent} opacity={0.55+0.4*(1-f)} rx={1} />;
+            })}
+            <line x1="0" y1={88-16} x2={curveW} y2={88-16} stroke={CURVE.baseline} strokeWidth="0.6" strokeDasharray="3,2" />
+          </svg>
+          <div className="mono" style={{ display:'flex', justifyContent:'space-between', fontSize:8.5, color:C.faint, marginTop:3 }}>
+            <span>0Hz</span><span>100</span><span>200</span><span>300</span><span>400Hz</span>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:8 }}>
+            <span style={{ fontSize:10, color:C.sub }}>🎯 噪声峰值 ~80Hz(电机带)</span>
+            <button onClick={()=>onToast('导出噪声图(分享)')} style={ghostBtn()}>📤 导出</button>
+          </div>
+        </Section>
+
+        {/* 诊断 + 评分(整合自 CrashDiagnosisEngine + 曲线诊断) */}
+        <Section title="诊断" hint="炸机诊断 + 曲线诊断合一">
+          <div style={{ display:'flex', gap:12, alignItems:'center' }}>
+            <div style={{ position:'relative', width:54, height:54, flexShrink:0 }}>
+              <ProgressRing pct={cur.score} size={54} stroke={5} color={cur.score>=85?C.ok:cur.score>=75?C.accent:C.warn} />
+              <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column' }}>
+                <span className="mono" style={{ fontSize:15, fontWeight:700, color:C.ink }}>{cur.score}</span>
+                <span style={{ fontSize:7, color:C.faint }}>分</span>
+              </div>
+            </div>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:C.ink, marginBottom:4 }}>{cur.name} 轴诊断</div>
+              {cur.issues.length ? cur.issues.map((iss,i)=>(
+                <div key={i} style={{ fontSize:11, color:C.warnText, display:'flex', alignItems:'center', gap:4, marginBottom:2 }}>
+                  <span>⚠</span><span>{iss}</span>
+                </div>
+              )) : <div style={{ fontSize:11, color:C.ok, display:'flex', alignItems:'center', gap:4 }}>✓ 曲线健康,无异常</div>}
+            </div>
+          </div>
+          <button onClick={()=>setSheet('crash')} style={{ ...btn(C.warn, C.warnSoft), width:'100%', marginTop:10, padding:'11px 0' }}>
+            🩺 炸机诊断(原历史页 ActionSheet)
+          </button>
+        </Section>
+
+        {/* CLI 推荐(整合自 PIDCLIGenerator) */}
+        <Section title="CLI 推荐" hint="BF 4.3 → d_min 命名">
+          <div style={{ background:'#0f172a', borderRadius:8, padding:'12px 14px' }} className="mono">
+            {[
+              ['p_roll', cur.pNow, cur.pBase],
+              ['i_roll', 60, 60],
+              ['d_min_roll', 35, 38],
+              ['f_roll', 25, 20],
+            ].map(([k,v,base],i)=>(
+              <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'3px 0', fontSize:12 }}>
+                <span style={{ color:'#94a3b8' }}>{k}</span>
+                <span style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  <span style={{ color:'#64748b', fontSize:10, textDecoration:'line-through' }}>{base}</span>
+                  <span style={{ color: v!==base ? '#86efac' : '#e2e8f0', fontWeight:700 }}>{v}</span>
+                  {v!==base && <span style={{ color:v>base?'#86efac':'#fca5a5', fontSize:9 }}>{v>base?'↑':'↓'}{Math.abs((v-base)/base*100).toFixed(1)}%</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+          <button onClick={()=>onToast('CLI 已复制到剪贴板')} style={{ ...btn(C.accent, C.accentSoft), width:'100%', marginTop:10, padding:'11px 0', fontWeight:700 }}>
+            📋 复制 CLI 命令
+          </button>
+        </Section>
+
+        {/* 底部说明 */}
+        <div style={{ marginTop:6, padding:'10px 12px', background:'#fff', border:'1px dashed '+C.line, borderRadius:8,
+          fontSize:10.5, color:C.sub, lineHeight:1.5, textAlign:'center' }}>
+          <span style={{ marginRight:4 }}>🔑</span>
+          独立模式 · 数据源与分析同屏 · <b>退出后数据源保留,无需重转</b>(解决 1.1 三屏退出重载痛点)
+        </div>
+      </div>
+
+      {/* ActionSheet 们 */}
+      {sheet==='session' && (
+        <ActionSheet title="选择 Session · 001.bbl" onClose={()=>setSheet(null)} items={[
+          { label:'全部转换', onTap:()=>{ setSessionIdx(-1); onToast('已选: 全部'); } },
+          { label:'Session 1 · 00:48', selected:sessionIdx===1, onTap:()=>{ setSessionIdx(1); } },
+          { label:'Session 2 · 02:34', selected:sessionIdx===2, onTap:()=>{ setSessionIdx(2); } },
+          { label:'Session 3 · 01:12', selected:sessionIdx===3, onTap:()=>{ setSessionIdx(3); } },
+        ]} />
+      )}
+      {sheet==='import' && (
+        <ActionSheet title="导入文件" onClose={()=>setSheet(null)} items={[
+          { label:'📂 从文件 App 导入 (.bbl / .csv)', onTap:()=>onToast('唤起 UIDocumentPicker') },
+          { label:'📎 从 iTunes 文件共享导入', onTap:()=>onToast('iTunes 共享') },
+        ]} />
+      )}
+      {sheet==='crash' && (
+        <ActionSheet title="🩺 炸机诊断 · 001.bbl Session 2" onClose={()=>setSheet(null)} items={[
+          { label:'开始流式诊断', onTap:()=>onToast('CrashDiagnosisEngine 启动') },
+        ]} />
+      )}
+    </div>
+  );
+}
+
+// 小组件
+function Section({ title, hint, right, children }) {
+  return (
+    <div style={{ background:C.card, borderRadius:12, border:'1px solid '+C.line, boxShadow:'0 1px 2px rgba(15,23,42,0.04)', padding:'13px 14px' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, gap:8 }}>
+        <div style={{ minWidth:0 }}>
+          <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+            <span style={{ fontSize:13, fontWeight:700, color:C.ink }}>{title}</span>
+            {hint && <span style={{ fontSize:9, color:C.faint }}>· {hint}</span>}
+          </div>
+        </div>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+function Legend({ color, dash, children }) {
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:4 }}>
+      <span style={{ width:14, height:2.5, background:color, borderRadius:1, opacity: dash?0.7:1 }} />
+      {children}
+    </span>
+  );
+}
+function btn(color, bg) {
+  return { flex:1, padding:'10px 0', fontSize:11.5, fontWeight:600, color, background:bg,
+    border:'1px solid '+color, borderRadius:8, cursor:'pointer', transition:'transform 0.1s' };
+}
+function ghostBtn() {
+  return { padding:'7px 14px', fontSize:11, fontWeight:600, color:C.sub, background:'#fff',
+    border:'1px solid '+C.line, borderRadius:7, cursor:'pointer' };
+}
+
+function App() {
+  const [toast, setToast] = useState('');
+  const [timer, setTimer] = useState(null);
+  function showToast(msg) {
+    setToast(msg);
+    if (timer) clearTimeout(timer);
+    const t = setTimeout(()=>setToast(''), 1600);
+    setTimer(t);
+  }
+  return (
+    <IosFrame>
+      <Screen onToast={showToast} />
+      <Toast msg={toast} />
+    </IosFrame>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PID_Liner · 变体 B · 数据仪表盘派</title>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+  body { margin:0; padding:40px 16px 64px; background:#eceef1; display:flex; flex-direction:column; align-items:center; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif; }
+  .cap { font-style:italic; color:#6b7280; font-size:13px; margin-bottom:18px; letter-spacing:0.2px; }
+  .mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+</style>
+</head>
+<body>
+<div class="cap">变体 B · 数据仪表盘派</div>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+// === IosFrame (规格: iPhone 15 Pro) ===
+const iosFrameStyles = {
+  wrapper: { display:'inline-block', padding:12, background:'#000', borderRadius:60, boxShadow:'0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
+  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#fff' },
+  statusBar: { position:'absolute', top:0, left:0, right:0, height:54, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 32px', fontSize:16, fontWeight:600, fontFamily:'-apple-system, sans-serif', zIndex:20, pointerEvents:'none' },
+  dynamicIsland: { position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', width:124, height:36, background:'#000', borderRadius:999, zIndex:30 },
+  statusIcons: { display:'flex', alignItems:'center', gap:6 },
+  signalIcon: { display:'flex', alignItems:'flex-end', gap:2, height:12 },
+  signalBar: { width:3, background:'currentColor', borderRadius:1 },
+  batteryIcon: { width:26, height:12, border:'1.5px solid currentColor', borderRadius:3, padding:1, position:'relative', opacity:0.8 },
+  batteryCap: { position:'absolute', top:3, right:-3, width:2, height:6, background:'currentColor', borderRadius:'0 1px 1px 0' },
+  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'auto', background:'#f5f5f7' },
+  homeIndicator: { position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', width:140, height:5, background:'rgba(0,0,0,0.3)', borderRadius:999, zIndex:10 },
+};
+function IosFrame({ children, time='9:41', battery=88 }) {
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{ ...iosFrameStyles.screen, width:393, height:852 }}>
+        <div style={{ ...iosFrameStyles.statusBar, color:'#000' }}>
+          <span className="mono">{time}</span>
+          <div style={iosFrameStyles.statusIcons}>
+            <div style={iosFrameStyles.signalIcon}>
+              <div style={{ ...iosFrameStyles.signalBar, height:4 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:6 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:9 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:11 }} />
+            </div>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color:'#000' }}>
+              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+            </svg>
+            <div style={iosFrameStyles.batteryIcon}>
+              <div style={{ width:String(battery)+'%', height:'100%', background:'currentColor', borderRadius:1, opacity:0.9 }} />
+              <div style={iosFrameStyles.batteryCap} />
+            </div>
+          </div>
+        </div>
+        <div style={iosFrameStyles.dynamicIsland} />
+        <div style={iosFrameStyles.content}>{children}</div>
+        <div style={iosFrameStyles.homeIndicator} />
+      </div>
+    </div>
+  );
+}
+
+// === 阶跃响应曲线 (二阶系统: 1 - e^-at*(cos bt + c sin bt)) ===
+function stepPath(a,b,c,w,h,samples,yMax){
+  const pts=[];
+  for(let i=0;i<=samples;i++){
+    const t=(i/samples)*1.6;
+    const y=1-Math.exp(-a*t)*(Math.cos(b*t)+c*Math.sin(b*t));
+    const px=(t/1.6)*w;
+    const py=h-(Math.min(y,yMax)/yMax)*(h-8)-4;
+    pts.push((i===0?'M':'L')+px.toFixed(1)+','+py.toFixed(1));
+  }
+  return pts.join(' ');
+}
+
+// 网格底(虚线 25/50/75/100%)
+function GridLines({ w, h }) {
+  const ys = [0.25, 0.5, 0.75, 1.0];
+  return (
+    <g>
+      {ys.map((r, idx) => (
+        <line key={idx} x1="0" y1={h - r*(h-8) - 4} x2={w} y2={h - r*(h-8) - 4}
+              stroke="#9ca3af" strokeWidth="0.5" strokeDasharray="2,3" opacity="0.6" />
+      ))}
+    </g>
+  );
+}
+
+// 进度环
+function ProgressRing({ pct, size=36, stroke=4, color='#0d9488', track='#e5e7eb' }) {
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const off = circ * (1 - pct/100);
+  return (
+    <svg width={size} height={size} style={{ transform:'rotate(-90deg)' }}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+              strokelinecap="round" strokeDasharray={circ} strokeDashoffset={off} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// === 设计 token ===
+const C = {
+  bg: '#f5f5f7',
+  card: '#ffffff',
+  ink: '#0f172a',
+  sub: '#64748b',
+  faint: '#94a3b8',
+  line: '#e5e7eb',
+  lineSoft: '#f1f5f9',
+  accent: '#0d9488',      // 墨绿
+  accentSoft: '#ccfbf1',
+  warn: '#ea580c',        // 警示橙
+  warnSoft: '#fed7aa',
+  warnText: '#9a3412',
+  ok: '#166534',          // 成功绿
+  okSoft: '#bbf7d0',
+  yellowSoft: '#fef3c7',
+  yellowText: '#92400e',
+};
+
+// === Stat Card (双入口) ===
+function StatCard({ main, mainSub, label, desc, accent, mainColor, isNum, onClick, badge }) {
+  return (
+    <div onClick={onClick} style={{
+      background:C.card, borderRadius:12, padding:'14px 14px 12px',
+      border:'1px solid '+C.line, boxShadow:'0 1px 2px rgba(15,23,42,0.04)',
+      flex:1, display:'flex', flexDirection:'column', gap:6, position:'relative',
+      cursor:'pointer', minHeight:108,
+    }}>
+      {badge && (
+        <div style={{ position:'absolute', top:10, right:10, fontSize:9, fontWeight:600,
+          color:C.faint, letterSpacing:0.4 }}>{badge}</div>
+      )}
+      <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+        <span className="mono" style={{
+          fontSize: isNum ? 34 : 22, fontWeight:700, color: mainColor || C.ink,
+          lineHeight:1, letterSpacing: isNum ? '-1px' : '0',
+        }}>{main}</span>
+        <span style={{ fontSize:11, fontWeight:600, color:C.sub, letterSpacing:0.3 }}>{mainSub}</span>
+      </div>
+      <div style={{ fontSize:13, fontWeight:600, color:C.ink, marginTop:2 }}>{label}</div>
+      <div style={{ fontSize:10.5, color:C.sub, lineHeight:1.4, marginTop:'auto' }}>{desc}</div>
+    </div>
+  );
+}
+
+// === 方案仪表盘卡 ===
+function PlanCard({ plan }) {
+  const { name, craft, fw, chip, chipBg, chipColor, progress, ringPct,
+          rmse, pBase, pNow, pDelta, pArrow, pColor, alert, alertText,
+          curve, statusLine } = plan;
+
+  const curveW = 280, curveH = 64;
+  const baseline = stepPath(curve.baseline.a, curve.baseline.b, curve.baseline.c, curveW, curveH, 80, 1.15);
+  const current = stepPath(curve.current.a, curve.current.b, curve.current.c, curveW, curveH, 80, 1.15);
+  // 面积填充(当前曲线下方)
+  const fill = current + ' L'+curveW+','+curveH+' L0,'+curveH+' Z';
+
+  return (
+    <div style={{
+      background:C.card, borderRadius:12, padding:'14px 14px 12px',
+      border:'1px solid '+C.line, boxShadow:'0 1px 2px rgba(15,23,42,0.04)',
+      display:'flex', flexDirection:'column', gap:10,
+    }}>
+      {/* Header: 名称 + chip */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:14, fontWeight:700, color:C.ink, lineHeight:1.2 }}>{name}</div>
+          <div className="mono" style={{ fontSize:10.5, color:C.sub, marginTop:2 }}>
+            {craft} · <span style={{ color:C.faint }}>{fw}</span>
+          </div>
+        </div>
+        <span style={{
+          fontSize:10.5, fontWeight:600, padding:'3px 8px', borderRadius:999,
+          background:chipBg, color:chipColor, whiteSpace:'nowrap', letterSpacing:0.2,
+        }}>{chip}</span>
+      </div>
+
+      {/* KPI 横排 4 个 */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:0,
+           borderTop:'1px solid '+C.lineSoft, borderBottom:'1px solid '+C.lineSoft, padding:'8px 0' }}>
+        <div style={{ borderRight:'1px solid '+C.lineSoft, paddingRight:6 }}>
+          <div style={{ fontSize:9, color:C.faint, letterSpacing:0.4, fontWeight:600 }}>轮次</div>
+          <div className="mono" style={{ fontSize:15, fontWeight:700, color:C.ink, marginTop:1 }}>
+            {progress}<span style={{ fontSize:10, color:C.faint, fontWeight:500 }}>/5</span>
+          </div>
+        </div>
+        <div style={{ borderRight:'1px solid '+C.lineSoft, paddingRight:6, paddingLeft:6 }}>
+          <div style={{ fontSize:9, color:C.faint, letterSpacing:0.4, fontWeight:600 }}>RMSE</div>
+          <div className="mono" style={{ fontSize:15, fontWeight:700, color:C.ink, marginTop:1 }}>{rmse}</div>
+        </div>
+        <div style={{ borderRight:'1px solid '+C.lineSoft, paddingRight:6, paddingLeft:6 }}>
+          <div style={{ fontSize:9, color:C.faint, letterSpacing:0.4, fontWeight:600 }}>P 变化</div>
+          <div style={{ fontSize:13, fontWeight:700, color:pColor, marginTop:1, display:'flex', alignItems:'center', gap:2 }}>
+            <span style={{ fontSize:11 }}>{pArrow}</span>
+            <span className="mono">{pDelta}</span>
+          </div>
+        </div>
+        <div style={{ paddingLeft:6 }}>
+          <div style={{ fontSize:9, color:C.faint, letterSpacing:0.4, fontWeight:600 }}>收敛度</div>
+          <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:1 }}>
+            <ProgressRing pct={ringPct} size={22} stroke={3} color={ringPct>=100?C.ok:C.accent} />
+            <span className="mono" style={{ fontSize:13, fontWeight:700, color:ringPct>=100?C.ok:C.ink }}>{ringPct}%</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 迷你曲线 + 网格 */}
+      <div>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 }}>
+          <span style={{ fontSize:10, color:C.sub, fontWeight:600, letterSpacing:0.3 }}>阶跃响应对比</span>
+          <div style={{ display:'flex', gap:8, fontSize:9, color:C.faint }}>
+            <span style={{ display:'flex', alignItems:'center', gap:3 }}>
+              <span style={{ width:10, height:2, background:'#cbd5e1', borderRadius:1 }} />基线
+            </span>
+            <span style={{ display:'flex', alignItems:'center', gap:3 }}>
+              <span style={{ width:10, height:2, background:C.accent, borderRadius:1 }} />当前
+            </span>
+          </div>
+        </div>
+        <svg width="100%" viewBox={'0 0 '+curveW+' '+curveH} preserveAspectRatio="none" style={{ display:'block' }}>
+          <GridLines w={curveW} h={curveH} />
+          <path d={fill} fill={C.accent} opacity="0.08" />
+          <path d={baseline} fill="none" stroke="#cbd5e1" strokeWidth="1.5" strokeDasharray="3,2" />
+          <path d={current} fill="none" stroke={C.accent} strokeWidth="2" />
+        </svg>
+        <div className="mono" style={{ display:'flex', justifyContent:'space-between', fontSize:8.5, color:C.faint, marginTop:2 }}>
+          <span>0s</span><span>0.4s</span><span>0.8s</span><span>1.2s</span><span>1.6s</span>
+        </div>
+      </div>
+
+      {/* 状态行 + P 详情 */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
+           fontSize:11, paddingTop:8, borderTop:'1px solid '+C.lineSoft }}>
+        <span style={{ color:C.sub }}>
+          <span className="mono" style={{ color:C.faint }}>P </span>
+          <span className="mono">{pBase}</span>
+          <span style={{ color:C.faint, margin:'0 3px' }}>→</span>
+          <span className="mono" style={{ fontWeight:700, color:C.ink }}>{pNow}</span>
+        </span>
+        <span style={{ display:'flex', alignItems:'center', gap:4, color: alert ? C.warnText : C.ok, fontWeight:600 }}>
+          {alert ? '⚠ ' + alertText : statusLine}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// === 页面 ===
+function App() {
+  const plan1 = {
+    name: '怪象3.5寸',
+    craft: 'SPEEDYBEEF7MINI',
+    fw: 'BF 4.3.1',
+    chip: '第3轮 · 进行中',
+    chipBg: C.yellowSoft,
+    chipColor: C.yellowText,
+    progress: 3,
+    ringPct: 60,
+    rmse: '0.072',
+    pBase: 45, pNow: 49, pDelta: '+8.9%', pArrow: '↑', pColor: C.accent,
+    alert: true, alertText: 'S3 轻微振荡',
+    curve: { baseline:{a:4.0,b:9.5,c:0.35}, current:{a:6.0,b:12.0,c:0.22} },
+  };
+  const plan2 = {
+    name: '吴bbl 5寸',
+    craft: 'MAMBAF722',
+    fw: 'BF 4.5',
+    chip: '第5轮 · 已收敛 ✓',
+    chipBg: C.okSoft,
+    chipColor: C.ok,
+    progress: 5,
+    ringPct: 100,
+    rmse: '0.041',
+    pBase: 38, pNow: 38, pDelta: '0%', pArrow: '→', pColor: C.faint,
+    alert: false, statusLine: '✓ 稳定收敛',
+    curve: { baseline:{a:4.5,b:8.5,c:0.55}, current:{a:4.5,b:8.5,c:0.55} },
+  };
+
+  return (
+    <IosFrame>
+      <div style={{ padding:'12px 16px 24px' }}>
+        {/* 标题 */}
+        <div style={{ marginBottom:14, marginTop:6 }}>
+          <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+            <span style={{ fontSize:24, fontWeight:700, color:C.ink, letterSpacing:-0.5 }}>PID_Liner</span>
+            <span style={{ fontSize:11, color:C.faint, fontWeight:500, letterSpacing:0.3 }}>v2</span>
+          </div>
+          <div style={{ fontSize:12, color:C.sub, marginTop:2 }}>选一条路:看一眼,还是调到底</div>
+        </div>
+
+        {/* 双入口 stat card */}
+        <div style={{ display:'flex', gap:10, marginBottom:18 }}>
+          <StatCard
+            main="单次" mainSub=""
+            label="独立分析"
+            desc="导入 BBL · 看曲线出建议"
+            badge="NO-SAVE"
+            mainColor={C.ink}
+          />
+          <StatCard
+            main="2" mainSub="进行中"
+            label="方案迭代"
+            desc="多轮闭环 · 换参飞 → 反馈"
+            badge="CHAINS"
+            isNum={true}
+            mainColor={C.accent}
+          />
+        </div>
+
+        {/* 我的方案 section */}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+          <span style={{ fontSize:13, fontWeight:700, color:C.ink, letterSpacing:0.2 }}>我的方案</span>
+          <span className="mono" style={{ fontSize:10, color:C.faint }}>按 chainId · 共 2</span>
+        </div>
+
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+          <PlanCard plan={plan1} />
+          <PlanCard plan={plan2} />
+        </div>
+
+        {/* 页脚提示 */}
+        <div style={{
+          marginTop:18, padding:'10px 12px',
+          background:'#fff', border:'1px dashed '+C.line, borderRadius:8,
+          fontSize:10.5, color:C.sub, lineHeight:1.5, textAlign:'center',
+        }}>
+          <span style={{ marginRight:4 }}>🔑</span>
+          无自动聚合 · 按 <span className="mono" style={{ color:C.ink, fontWeight:600 }}>chainId</span> 列方案 ·
+          <span className="mono" style={{ color:C.ink, fontWeight:600 }}> craftName </span> 只作显示
+        </div>
+      </div>
+    </IosFrame>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

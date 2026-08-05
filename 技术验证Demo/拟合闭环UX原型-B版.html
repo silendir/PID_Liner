@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PID_Liner 拟合闭环 • 4屏原型 · B版(仪表盘派)</title>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #eceef1;
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+    color: #1f2937;
+    padding: 48px 32px;
+    min-height: 100vh;
+  }
+  .mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; font-family: "SF Mono", "SF Pro Text", Menlo, monospace; }
+  .page-title { font-family: "New York", Georgia, serif; font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }
+  .page-sub { font-size: 15px; color: #6b7280; margin-bottom: 40px; max-width: 980px; line-height: 1.6; }
+  .page-sub b { color: #0d9488; }
+  .phones-row { display: flex; gap: 36px; flex-wrap: wrap; align-items: flex-start; }
+  .phone-col { display: flex; flex-direction: column; align-items: center; }
+  .phone-label { font-size: 13px; color: #6b7280; margin-bottom: 12px; font-style: italic; letter-spacing: 0.3px; }
+  .phone-label b { color: #1f2937; font-style: normal; }
+  .toast { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(17,24,39,0.92); color: #fff; font-size: 13px; padding: 10px 18px; border-radius: 999px; z-index: 50; pointer-events: none; white-space: nowrap; }
+  .sheet-mask { position: absolute; inset: 0; background: rgba(0,0,0,0.4); z-index: 40; display: flex; align-items: flex-end; }
+  .sheet { background: #f5f5f7; width: 100%; border-radius: 22px 22px 0 0; padding: 8px 16px 22px; max-height: 88%; overflow-y: auto; }
+  .sheet-handle { width: 40px; height: 5px; background: #d1d5db; border-radius: 999px; margin: 6px auto 14px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState } = React;
+
+/* ===== 设计 token(墨绿系,与第一版一致;曲线色定义不动) ===== */
+const C = {
+  bg: '#f5f5f7', card: '#ffffff', ink: '#0f172a', sub: '#64748b', faint: '#94a3b8',
+  line: '#e5e7eb', lineSoft: '#f1f5f9',
+  accent: '#0d9488',       // 墨绿(当前曲线 / 主操作)
+  accentSoft: '#ccfbf1', accentDeep: '#0f766e',
+  warn: '#ea580c',         // 推荐橙虚 / 振荡
+  warnSoft: '#fed7aa', warnText: '#9a3412',
+  ok: '#166534',           // 收敛绿
+  okSoft: '#bbf7d0',
+  yellowSoft: '#fef3c7', yellowText: '#92400e',
+  baseLine: '#9ca3af',     // 基线曲线灰(第一版定义,不改)
+};
+/* 曲线色定义(第一版,钉死不动) */
+const CURVE = { baseline: '#9ca3af', current: '#0d9488', predict: '#ea580c', converged: '#166534' };
+
+/* ===== IosFrame(iPhone 15 Pro) ===== */
+const iosFrameStyles = {
+  wrapper: { display:'inline-block', padding:12, background:'#000', borderRadius:60, boxShadow:'0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
+  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#fff' },
+  statusBar: { position:'absolute', top:0, left:0, right:0, height:54, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 32px', fontSize:16, fontWeight:600, zIndex:20, pointerEvents:'none' },
+  dynamicIsland: { position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', width:124, height:36, background:'#000', borderRadius:999, zIndex:30 },
+  statusIcons: { display:'flex', alignItems:'center', gap:6 },
+  signalIcon: { display:'flex', alignItems:'flex-end', gap:2, height:12 },
+  signalBar: { width:3, background:'currentColor', borderRadius:1 },
+  batteryIcon: { width:26, height:12, border:'1.5px solid currentColor', borderRadius:3, padding:1, position:'relative', opacity:0.8 },
+  batteryCap: { position:'absolute', top:3, right:-3, width:2, height:6, background:'currentColor', borderRadius:'0 1px 1px 0' },
+  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'auto', background:C.bg },
+  homeIndicator: { position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', width:140, height:5, background:'rgba(0,0,0,0.3)', borderRadius:999, zIndex:10 },
+};
+function IosFrame({ children, time='9:41', battery=88 }) {
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{ ...iosFrameStyles.screen, width:393, height:852 }}>
+        <div style={{ ...iosFrameStyles.statusBar, color:'#000' }}>
+          <span className="mono">{time}</span>
+          <div style={iosFrameStyles.statusIcons}>
+            <div style={iosFrameStyles.signalIcon}>
+              <div style={{ ...iosFrameStyles.signalBar, height:4 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:6 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:9 }} />
+              <div style={{ ...iosFrameStyles.signalBar, height:11 }} />
+            </div>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill="none" style={{ color:'#000' }}>
+              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+            </svg>
+            <div style={iosFrameStyles.batteryIcon}>
+              <div style={{ width:String(battery)+'%', height:'100%', background:'currentColor', borderRadius:1, opacity:0.9 }} />
+              <div style={iosFrameStyles.batteryCap} />
+            </div>
+          </div>
+        </div>
+        <div style={iosFrameStyles.dynamicIsland} />
+        <div style={iosFrameStyles.content}>{children}</div>
+        <div style={iosFrameStyles.homeIndicator} />
+      </div>
+    </div>
+  );
+}
+
+/* ===== 步响应曲线(二阶:1 - e^-at*(cos bt + c sin bt)) ===== */
+function stepPath(a, b, c, w, h, samples, yMax) {
+  const pts = [];
+  for (let i = 0; i <= samples; i++) {
+    const t = (i / samples) * 1.6;
+    const y = 1 - Math.exp(-a * t) * (Math.cos(b * t) + c * Math.sin(b * t));
+    const px = (t / 1.6) * w;
+    const py = h - (Math.min(y, yMax) / yMax) * (h - 8) - 4;
+    pts.push((i === 0 ? 'M' : 'L') + px.toFixed(1) + ',' + py.toFixed(1));
+  }
+  return pts.join(' ');
+}
+function GridLines({ w, h }) {
+  return (
+    <g>
+      {[0.25,0.5,0.75,1.0].map(function(r,i){
+        return <line key={i} x1={0} y1={h - r*(h-8) - 4} x2={w} y2={h - r*(h-8) - 4} stroke={C.faint} strokeWidth={0.5} strokeDasharray="2,3" opacity="0.55" />;
+      })}
+    </g>
+  );
+}
+/* 标准曲线组件(网格 + 可选多层曲线) */
+function CurveChart({ w, h, layers, showAxis }) {
+  w = w || 300; h = h || 130;
+  return (
+    <svg width="100%" viewBox={'0 0 '+w+' '+h} preserveAspectRatio="none" style={{ display:'block' }}>
+      <GridLines w={w} h={h} />
+      <line x1={0} y1={h-4} x2={w} y2={h-4} stroke={C.line} strokeWidth={1} />
+      {layers.map(function(L,i){
+        const p = stepPath(L.a, L.b, L.c, w, h, 80, 1.1);
+        const fill = L.fill ? p + ' L'+w+','+h+' L0,'+h+' Z' : null;
+        return (
+          <g key={i}>
+            {fill ? <path d={fill} fill={L.stroke} opacity="0.08" /> : null}
+            <path d={p} fill="none" stroke={L.stroke} strokeWidth={L.w || 2} strokeDasharray={L.dash || undefined} strokeLinecap="round" />
+            {L.label ? <text x={w-4} y={13} textAnchor="end" fontSize={9} fill={L.stroke} fontWeight="700">{L.label}</text> : null}
+          </g>
+        );
+      })}
+      {showAxis ? (
+        <g className="mono">
+          {[0,0.4,0.8,1.2,1.6].map(function(t,i){
+            return <text key={i} x={(t/1.6)*w} y={h-1} textAnchor={i===0?'start':(i===4?'end':'middle')} fontSize={7.5} fill={C.faint}>{t}s</text>;
+          })}
+        </g>
+      ) : null}
+    </svg>
+  );
+}
+/* 进度环(收敛度) */
+function ProgressRing({ pct, size=22, stroke=3, color }) {
+  color = color || (pct >= 100 ? C.ok : C.accent);
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const off = circ * (1 - pct/100);
+  return (
+    <svg width={size} height={size} style={{ transform:'rotate(-90deg)' }}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={C.line} strokeWidth={stroke} />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeDasharray={circ} strokeDashoffset={off} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/* ===== 通用 UI ===== */
+function NavBar({ title, badge, badgeTone, onBack }) {
+  const tone = badgeTone === 'iter' ? { bg:C.accentSoft, color:C.accentDeep }
+            : badgeTone === 'warn' ? { bg:C.yellowSoft, color:C.yellowText }
+            : { bg:C.lineSoft, color:C.sub };
+  return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 16px 12px' }}>
+      <div onClick={onBack} style={{ fontSize:22, color:C.accent, cursor:'pointer', width:28, lineHeight:1 }}>‹</div>
+      <div style={{ fontSize:16, fontWeight:600, color:C.ink }}>{title}</div>
+      {badge ? <span style={{ fontSize:10, padding:'3px 8px', borderRadius:999, background:tone.bg, color:tone.color, fontWeight:600, letterSpacing:0.3 }}>{badge}</span> : <div style={{width:28}} />}
+    </div>
+  );
+}
+function Card({ children, pad }) {
+  return <div style={{ background:C.card, borderRadius:12, border:'1px solid '+C.line, boxShadow:'0 1px 2px rgba(15,23,42,0.04)', padding: pad || '14px' }}>{children}</div>;
+}
+function Chip({ children, tone }) {
+  const t = tone === 'prog' ? { bg:C.yellowSoft, color:C.yellowText }
+          : tone === 'done' ? { bg:C.okSoft, color:C.ok }
+          : tone === 'iter' ? { bg:C.accentSoft, color:C.accentDeep }
+          : tone === 'warn' ? { bg:C.warnSoft, color:C.warnText }
+          : { bg:C.lineSoft, color:C.sub };
+  return <span style={{ fontSize:10.5, fontWeight:600, padding:'3px 8px', borderRadius:999, background:t.bg, color:t.color, letterSpacing:0.2, whiteSpace:'nowrap' }}>{children}</span>;
+}
+function SectionLabel({ children, right }) {
+  return (
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'14px 16px 8px' }}>
+      <span style={{ fontSize:11.5, fontWeight:700, color:C.sub, letterSpacing:0.4 }}>{children}</span>
+      {right || null}
+    </div>
+  );
+}
+function Btn({ children, kind, onClick, style }) {
+  const s = kind === 'primary' ? { background:C.accent, color:'#fff' }
+          : kind === 'ghost' ? { background:'transparent', color:C.accent, padding:'10px' }
+          : { background:C.lineSoft, color:C.ink };
+  return <button onClick={onClick} style={{ display:'block', width:'100%', padding:'13px', border:'none', borderRadius:12, fontSize:14.5, fontWeight:600, cursor:'pointer', textAlign:'center', fontFamily:'inherit', ...s, ...style }}>{children}</button>;
+}
+function CliBlock({ text }) {
+  return <pre className="mono" style={{ fontSize:11.5, lineHeight:1.7, background:'#0f172a', color:'#e2e8f0', padding:12, borderRadius:10, whiteSpace:'pre', overflowX:'auto', margin:0 }}>{text}</pre>;
+}
+/* KPI 单元(仪表盘小格) */
+function Kpi({ label, value, sub, color, ring }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:1 }}>
+      <div style={{ fontSize:9, color:C.faint, letterSpacing:0.4, fontWeight:600 }}>{label}</div>
+      <div style={{ display:'flex', alignItems:'center', gap:4, marginTop:1 }}>
+        {ring ? <ProgressRing pct={ring} /> : null}
+        <span className="mono" style={{ fontSize:14, fontWeight:700, color: color || C.ink }}>{value}</span>
+        {sub ? <span style={{ fontSize:10, color:C.faint, fontWeight:500 }}>{sub}</span> : null}
+      </div>
+    </div>
+  );
+}
+function KpiRow({ items }) {
+  return (
+    <div style={{ display:'grid', gridTemplateColumns:'repeat('+items.length+', 1fr)', gap:0, borderTop:'1px solid '+C.lineSoft, borderBottom:'1px solid '+C.lineSoft, padding:'9px 0' }}>
+      {items.map(function(it,i){
+        return <div key={i} style={{ borderRight: i<items.length-1 ? '1px solid '+C.lineSoft : 'none', paddingRight:6, paddingLeft: i===0 ? 0 : 6 }}><Kpi {...it} /></div>;
+      })}
+    </div>
+  );
+}
+
+/* ===== Toast hook ===== */
+function useToast() {
+  const [msg, setMsg] = useState(null);
+  const show = function(m){ setMsg(m); setTimeout(function(){ setMsg(null); }, 1500); };
+  const node = msg ? <div className="toast">{msg}</div> : null;
+  return [show, node];
+}
+
+/* ============================================================
+   屏1 · 方案列表(首页)· 仪表盘派
+   ============================================================ */
+function ScreenPlans() {
+  const [show, toast] = useToast();
+  return (
+    <div style={{ padding:'10px 16px 24px', position:'relative' }}>
+      <div style={{ marginBottom:14, marginTop:6 }}>
+        <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+          <span style={{ fontSize:24, fontWeight:700, color:C.ink, letterSpacing:-0.5 }}>PID_Liner</span>
+          <span className="mono" style={{ fontSize:11, color:C.faint, fontWeight:500 }}>v2</span>
+        </div>
+        <div style={{ fontSize:12, color:C.sub, marginTop:2 }}>选一条路:看一眼,还是调到底</div>
+      </div>
+
+      {/* 双入口 StatCard */}
+      <div style={{ display:'flex', gap:10, marginBottom:16 }}>
+        <Card pad="13px 14px 12px">
+          <div style={{ position:'relative' }}>
+            <div style={{ position:'absolute', top:-2, right:-2, fontSize:9, fontWeight:600, color:C.faint, letterSpacing:0.4 }}>NO-SAVE</div>
+            <div style={{ fontSize:22, fontWeight:700, color:C.ink, lineHeight:1 }}>单次</div>
+            <div style={{ fontSize:13, fontWeight:600, color:C.ink, marginTop:6 }}>独立分析</div>
+            <div style={{ fontSize:10.5, color:C.sub, lineHeight:1.4, marginTop:3 }}>导入 BBL · 看曲线出建议</div>
+          </div>
+        </Card>
+        <div onClick={function(){ show('→ 已在下方方案列表'); }} style={{ flex:1, cursor:'pointer' }}>
+          <Card pad="13px 14px 12px">
+            <div style={{ position:'relative' }}>
+              <div style={{ position:'absolute', top:-2, right:-2, fontSize:9, fontWeight:600, color:C.accentDeep, letterSpacing:0.4 }}>CHAINS</div>
+              <div style={{ display:'flex', alignItems:'baseline', gap:4 }}>
+                <span className="mono" style={{ fontSize:30, fontWeight:700, color:C.accent, lineHeight:1, letterSpacing:'-1px' }}>2</span>
+                <span style={{ fontSize:11, fontWeight:600, color:C.sub }}>进行中</span>
+              </div>
+              <div style={{ fontSize:13, fontWeight:600, color:C.ink, marginTop:6 }}>方案迭代</div>
+              <div style={{ fontSize:10.5, color:C.sub, lineHeight:1.4, marginTop:3 }}>多轮闭环 · 换参飞 → 反馈</div>
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      <SectionLabel right={<span className="mono" style={{ fontSize:10, color:C.faint }}>按 chainId · 共 2</span>}>我的方案</SectionLabel>
+
+      {/* 方案 1 · 进行中 */}
+      <div onClick={function(){ show('→ 进入方案工作台(屏3)'); }} style={{ cursor:'pointer', marginBottom:10 }}>
+        <Card>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8, marginBottom:10 }}>
+            <div>
+              <div style={{ fontSize:14, fontWeight:700, color:C.ink }}>怪象3.5寸</div>
+              <div className="mono" style={{ fontSize:10.5, color:C.sub, marginTop:2 }}>SPEEDYBEEF7MINI · <span style={{ color:C.faint }}>BF 4.3.1</span></div>
+            </div>
+            <Chip tone="prog">第3轮 · 进行中</Chip>
+          </div>
+          <KpiRow items={[
+            { label:'轮次', value:'3', sub:'/5' },
+            { label:'RMSE', value:'0.072' },
+            { label:'P 变化', value:'+8.9%', color:C.accent, ring:null },
+            { label:'收敛度', value:'60%', ring:60 },
+          ]} />
+          <div style={{ marginTop:8 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', fontSize:9, color:C.faint, marginBottom:3 }}>
+              <span style={{ fontWeight:600, color:C.sub, letterSpacing:0.3 }}>阶跃响应对比</span>
+              <span><span style={{ display:'inline-block', width:9, height:2, background:C.baseLine, verticalAlign:'middle', borderRadius:1 }} /> 基线 &nbsp;<span style={{ display:'inline-block', width:9, height:2, background:C.accent, verticalAlign:'middle', borderRadius:1 }} /> 当前</span>
+            </div>
+            <CurveChart w={280} h={56} layers={[
+              { a:4.0, b:9.5, c:0.35, stroke:C.baseLine, w:1.5, dash:'3,2' },
+              { a:6.0, b:12.0, c:0.22, stroke:C.accent, w:2, fill:true },
+            ]} />
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:11, paddingTop:8, marginTop:6, borderTop:'1px solid '+C.lineSoft }}>
+            <span className="mono" style={{ color:C.sub }}>P 45 <span style={{ color:C.faint }}>→</span> <span style={{ color:C.ink, fontWeight:700 }}>49</span></span>
+            <span style={{ color:C.warnText, fontWeight:600, fontSize:10.5 }}>⚠ S3 轻微振荡</span>
+          </div>
+        </Card>
+      </div>
+
+      {/* 方案 2 · 已收敛 */}
+      <div onClick={function(){ show('→ 进入方案工作台(屏3)'); }} style={{ cursor:'pointer', marginBottom:10 }}>
+        <Card>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8, marginBottom:10 }}>
+            <div>
+              <div style={{ fontSize:14, fontWeight:700, color:C.ink }}>吴bbl 5寸</div>
+              <div className="mono" style={{ fontSize:10.5, color:C.sub, marginTop:2 }}>MAMBAF722 · <span style={{ color:C.faint }}>BF 4.5</span></div>
+            </div>
+            <Chip tone="done">第5轮 · 已收敛 ✓</Chip>
+          </div>
+          <KpiRow items={[
+            { label:'轮次', value:'5', sub:'/5' },
+            { label:'RMSE', value:'0.041' },
+            { label:'P 变化', value:'0%', color:C.faint },
+            { label:'收敛度', value:'100%', color:C.ok, ring:100 },
+          ]} />
+          <div style={{ marginTop:8 }}>
+            <div style={{ fontSize:9, color:C.faint, marginBottom:3, fontWeight:600, color:C.sub, letterSpacing:0.3 }}>阶跃响应 · 基线与当前重合</div>
+            <CurveChart w={280} h={56} layers={[
+              { a:4.5, b:8.5, c:0.55, stroke:C.baseLine, w:1.5, dash:'3,2' },
+              { a:4.5, b:8.5, c:0.55, stroke:C.converged, w:2 },
+            ]} />
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:11, paddingTop:8, marginTop:6, borderTop:'1px solid '+C.lineSoft }}>
+            <span className="mono" style={{ color:C.sub }}>P 38 <span style={{ color:C.faint }}>→</span> <span style={{ color:C.ink, fontWeight:700 }}>38</span></span>
+            <span style={{ color:C.ok, fontWeight:600, fontSize:10.5 }}>✓ 稳定收敛</span>
+          </div>
+        </Card>
+      </div>
+
+      <div style={{ marginTop:14, padding:'9px 12px', background:'#fff', border:'1px dashed '+C.line, borderRadius:8, fontSize:10, color:C.sub, textAlign:'center', lineHeight:1.5 }}>
+        <span style={{ marginRight:4 }}>🔑</span>无自动聚合 · 按 <span className="mono" style={{ color:C.ink, fontWeight:600 }}>chainId</span> 列方案 ·<span className="mono" style={{ color:C.ink, fontWeight:600 }}> craftName </span>只作显示
+      </div>
+      {toast}
+    </div>
+  );
+}
+
+/* ============================================================
+   屏2 · 独立分析页(isIter=NO)· 仪表盘派
+   ============================================================ */
+function ScreenIndependent() {
+  const [show, toast] = useToast();
+  return (
+    <div style={{ position:'relative' }}>
+      <NavBar title="独立分析" badge="NO-SAVE" badgeTone="warn" />
+      <div style={{ padding:'0 16px 24px' }}>
+        {/* BBL 卡 + 质量门 */}
+        <Card>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <div>
+              <div style={{ fontSize:14, fontWeight:700, color:C.ink }}>wu3.BBL</div>
+              <div className="mono" style={{ fontSize:11, color:C.sub, marginTop:2 }}>Session 2 · 5寸 · BF4.5</div>
+            </div>
+            <span onClick={function(){ show('重新选择 Session'); }} style={{ fontSize:12, color:C.accent, cursor:'pointer', fontWeight:600 }}>换 Session</span>
+          </div>
+          <KpiRow items={[
+            { label:'RMSE', value:'0.063' },
+            { label:'采样', value:'8kHz' },
+            { label:'时长', value:'03:42' },
+            { label:'质量门', value:'通过', color:C.ok },
+          ]} />
+        </Card>
+
+        <SectionLabel>步响应曲线 · roll</SectionLabel>
+        <Card>
+          <CurveChart w={324} h={140} showAxis layers={[
+            { a:5.8, b:11, c:0.28, stroke:C.accent, w:2.4, fill:true, label:'S2 当前' },
+          ]} />
+          <KpiRow items={[
+            { label:'上升时间', value:'0.18s' },
+            { label:'超调', value:'12%' },
+            { label:'稳态', value:'✓', color:C.ok },
+            { label:'频谱主峰', value:'62Hz' },
+          ]} />
+        </Card>
+
+        <SectionLabel>反解建议(单次)</SectionLabel>
+        <Card>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+            <div className="mono" style={{ fontSize:16, fontWeight:700, color:C.ink }}>P = 26.2 <span style={{ fontSize:12, color:C.faint, fontWeight:500 }}>±4.2%</span></div>
+            <Chip tone="iter">达标</Chip>
+          </div>
+          <div style={{ fontSize:11.5, color:C.sub, marginBottom:10 }}>D / FF 沿用 header 真值(2h-a 证伪 P-only)</div>
+          <CliBlock text={'set p_roll = 26\nset i_roll = 85\nset d_min_roll = 44\nset f_roll = 0'} />
+          <Btn kind="ghost" onClick={function(){ show('已复制 CLI'); }} style={{ marginTop:8 }}>复制 CLI</Btn>
+        </Card>
+
+        <div style={{ padding:'12px', fontSize:11.5, color:C.yellowText, background:C.yellowSoft, borderRadius:10, marginTop:10, textAlign:'center', lineHeight:1.5 }}>
+          本次分析不保存。如需多轮迭代,请 <span style={{ color:C.accent, fontWeight:700 }}>加入方案 →</span>
+        </div>
+        <div style={{ fontSize:10, color:C.faint, textAlign:'center', marginTop:12, fontStyle:'italic' }}>🔑 isIter=NO · 不加载链历史 · 不保存 · 1对1 干净</div>
+        {toast}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   屏3 · 方案工作台(isIter=YES)· 仪表盘派
+   ============================================================ */
+function ScreenWorkbench() {
+  const [show, toast] = useToast();
+  const [showPredict, setShowPredict] = useState(true);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  return (
+    <div style={{ position:'relative' }}>
+      <NavBar title="怪象3.5寸" badge="方案迭代" badgeTone="iter" />
+      <div style={{ padding:'0 16px 24px' }}>
+        {/* 轮次进度卡 */}
+        <Card>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+            <Chip tone="prog">第3轮 · 进行中</Chip>
+            <span className="mono" style={{ fontSize:10.5, color:C.sub }}>SPEEDYBEEF7MINI · BF4.3.1</span>
+          </div>
+          {/* 轮次链 */}
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            {[
+              { lbl:'基线', v:'P45', c:C.sub },
+              { lbl:'第2轮', v:'P45', c:C.sub },
+              { lbl:'当前·第3轮', v:'P49', c:C.accent },
+              { lbl:'推荐·第4轮', v:'P47', c:C.warn },
+            ].map(function(s,i,arr){
+              return (
+                <div key={i} style={{ display:'flex', alignItems:'center', flex:1 }}>
+                  <div style={{ textAlign:'center' }}>
+                    <div style={{ fontSize:9.5, color:s.c, fontWeight:600 }}>{s.lbl}</div>
+                    <div className="mono" style={{ fontSize:15, fontWeight:700, color:s.c, marginTop:1 }}>{s.v}</div>
+                  </div>
+                  {i < arr.length-1 ? <div style={{ color:C.faint, fontSize:11, margin:'0 4px' }}>→</div> : null}
+                </div>
+              );
+            })}
+          </div>
+          <KpiRow items={[
+            { label:'已迭代', value:'3', sub:'/5轮' },
+            { label:'RMSE', value:'0.072' },
+            { label:'P 累计', value:'+8.9%', color:C.accent },
+            { label:'收敛度', value:'60%', ring:60 },
+          ]} />
+        </Card>
+
+        <SectionLabel right={
+          <span onClick={function(){ setShowPredict(!showPredict); }} style={{ fontSize:11.5, color:C.accent, cursor:'pointer', fontWeight:600 }}>
+            {showPredict ? '− 隐藏预测' : '+ 显示预测虚线'}
+          </span>
+        }>曲线对比 · roll</SectionLabel>
+        <Card>
+          <CurveChart w={324} h={150} showAxis layers={[
+            { a:4.0, b:9.5, c:0.35, stroke:C.baseLine, w:1.8, dash:'3,2', label:'基线 S1' },
+            { a:6.0, b:12.0, c:0.22, stroke:C.accent, w:2.4, fill:true, label:'当前 S3' },
+            showPredict ? { a:5.4, b:9.0, c:0.42, stroke:C.predict, w:2.2, dash:'6,4', label:'预测 S4' } : null,
+          ].filter(Boolean)} />
+          <div style={{ display:'flex', gap:14, fontSize:10, marginTop:8, color:C.sub }}>
+            <span><span style={{ display:'inline-block', width:11, height:2, background:C.baseLine, verticalAlign:'middle' }} /> 基线</span>
+            <span><span style={{ display:'inline-block', width:11, height:2, background:C.accent, verticalAlign:'middle' }} /> 当前轮</span>
+            {showPredict ? <span style={{ color:C.warnText }}><span style={{ display:'inline-block', width:11, height:0, borderTop:'2px dashed '+C.predict, verticalAlign:'middle' }} /> 推荐(预测)</span> : null}
+          </div>
+        </Card>
+
+        <SectionLabel>第4轮推荐 · 滑块 CLI</SectionLabel>
+        <Card>
+          <div style={{ fontSize:12, marginBottom:10, color:C.sub, lineHeight:1.5 }}>
+            <span style={{ color:C.warnText, fontWeight:600 }}>⚠ S3 振荡</span> · 反解建议 <span className="mono" style={{ color:C.accent, fontWeight:700 }}>pi_gain 109 → 100</span>(回调)+ <span className="mono" style={{ color:C.accent, fontWeight:700 }}>d_gain +5</span>
+          </div>
+          <KpiRow items={[
+            { label:'PI 联调', value:'100', color:C.accent },
+            { label:'D 增益', value:'117', color:C.accent },
+            { label:'FF', value:'0', color:C.faint },
+            { label:'力度', value:'×1.0', color:C.sub },
+          ]} />
+          <div style={{ marginTop:10 }}>
+            <CliBlock text={'set simplified_pids_mode = RPY\nset simplified_master_multiplier = 100\nset simplified_pi_gain = 100\nset simplified_d_gain = 117\nset simplified_feedforward_gain = 0'} />
+          </div>
+          <Btn kind="ghost" onClick={function(){ show('已复制 CLI • 拿去 BF 粘贴'); }} style={{ marginTop:8 }}>复制 CLI</Btn>
+        </Card>
+
+        <Btn kind="primary" onClick={function(){ setSheetOpen(true); }} style={{ marginTop:10 }}>导入下一轮返参 →</Btn>
+        <div style={{ fontSize:10, color:C.faint, textAlign:'center', marginTop:8, fontStyle:'italic' }}>飞手换参飞后,导新 BBL → 弹 Session 选择</div>
+
+        {sheetOpen ? <SessionSheet onClose={function(){ setSheetOpen(false); show('已合并到本方案 • 第4轮曲线接入'); }} /> : null}
+        {toast}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   屏4 · Session 选择 sheet · 仪表盘派
+   ============================================================ */
+function SessionSheet({ onClose }) {
+  const [sel, setSel] = useState(1);
+  const sessions = [
+    { id:0, t:'02:14', pid:'P45/80/30 FF0', q:'阶跃', qOk:true,  a:5.0, b:9.5, c:0.4 },
+    { id:1, t:'03:42', pid:'P49/88/30 FF0', q:'阶跃·振荡', qOk:false, a:6.3, b:13, c:0.2 },
+    { id:2, t:'01:08', pid:'P45/80/30 FF0', q:'非阶跃', qOk:false, a:2.0, b:9.5, c:0.4 },
+    { id:3, t:'04:25', pid:'P45/80/35 FF0', q:'阶跃', qOk:true,  a:5.9, b:9.0, c:0.38 },
+  ];
+  return (
+    <div className="sheet-mask" onClick={onClose}>
+      <div className="sheet" onClick={function(e){ e.stopPropagation(); }}>
+        <div className="sheet-handle" />
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div style={{ fontSize:16, fontWeight:700, color:C.ink }}>导入 btfl_new.BBL</div>
+          <span className="mono" style={{ fontSize:11, color:C.sub }}>4 个 Session</span>
+        </div>
+        <div style={{ fontSize:11.5, color:C.sub, marginBottom:12, marginTop:2 }}>选择一个 Session · 用户主动决定去留</div>
+
+        {sessions.map(function(s){
+          const isSel = sel === s.id;
+          return (
+            <div key={s.id} onClick={function(){ setSel(s.id); }} style={{
+              display:'flex', alignItems:'center', gap:12, padding:'11px 12px', background:'#fff',
+              borderRadius:10, marginBottom:7, cursor:'pointer', border:'2px solid '+(isSel?C.accent:'transparent'),
+            }}>
+              <div style={{ flexShrink:0, width:64, height:34, background:C.lineSoft, borderRadius:6, padding:2 }}>
+                <CurveChart w={60} h={30} layers={[{ a:s.a, b:s.b, c:s.c, stroke: isSel?C.accent:C.baseLine, w:1.8 }]} />
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div className="mono" style={{ fontSize:12.5, fontWeight:700, color:C.ink }}>Session {s.id+1} <span style={{ color:C.faint, fontWeight:500, fontSize:11 }}>· {s.t}</span></div>
+                <div className="mono" style={{ fontSize:10.5, color:C.sub, marginTop:2 }}>{s.pid}</div>
+              </div>
+              <Chip tone={s.qOk ? 'iter' : 'warn'}>{s.qOk ? '✓ ' : '⚠ '}{s.q}</Chip>
+              <div style={{ width:18, height:18, borderRadius:'50%', border:'2px solid '+(isSel?C.accent:C.line), flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                {isSel ? <div style={{ width:9, height:9, borderRadius:'50%', background:C.accent }} /> : null}
+              </div>
+            </div>
+          );
+        })}
+
+        <div style={{ display:'flex', gap:7, marginTop:12 }}>
+          <Btn kind="default" onClick={onClose} style={{ flex:1, fontSize:13, padding:'11px' }}>丢弃</Btn>
+          <Btn kind="default" onClick={onClose} style={{ flex:1, fontSize:13, padding:'11px' }}>另立新方案</Btn>
+          <Btn kind="primary" onClick={onClose} style={{ flex:1.3, fontSize:13, padding:'11px' }}>合并到本方案</Btn>
+        </div>
+        <div style={{ fontSize:10, color:C.faint, textAlign:'center', marginTop:10, fontStyle:'italic' }}>🔑 三选一 · 不自动合并 · 不自动聚合</div>
+      </div>
+    </div>
+  );
+}
+
+/* 屏4 静态展示态(背景模糊 + sheet 浮起) */
+function ScreenSheet() {
+  return (
+    <div style={{ position:'relative', width:393, height:764, overflow:'hidden', background:C.bg }}>
+      <div style={{ opacity:0.45, filter:'blur(1.5px)' }}>
+        <NavBar title="怪象3.5寸" badge="方案迭代" badgeTone="iter" />
+        <div style={{ padding:'0 16px' }}>
+          <Card><Chip tone="prog">第3轮 · 进行中</Chip></Card>
+        </div>
+      </div>
+      <SessionSheetStatic />
+    </div>
+  );
+}
+function SessionSheetStatic() {
+  const sessions = [
+    { id:0, t:'02:14', pid:'P45/80/30 FF0', q:'阶跃', qOk:true,  a:5.0, b:9.5, c:0.4 },
+    { id:1, t:'03:42', pid:'P49/88/30 FF0', q:'阶跃·振荡', qOk:false, a:6.3, b:13, c:0.2 },
+    { id:2, t:'01:08', pid:'P45/80/30 FF0', q:'非阶跃', qOk:false, a:2.0, b:9.5, c:0.4 },
+    { id:3, t:'04:25', pid:'P45/80/35 FF0', q:'阶跃', qOk:true,  a:5.9, b:9.0, c:0.38 },
+  ];
+  return (
+    <div className="sheet-mask">
+      <div className="sheet">
+        <div className="sheet-handle" />
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div style={{ fontSize:16, fontWeight:700, color:C.ink }}>导入 btfl_new.BBL</div>
+          <span className="mono" style={{ fontSize:11, color:C.sub }}>4 个 Session</span>
+        </div>
+        <div style={{ fontSize:11.5, color:C.sub, marginBottom:12, marginTop:2 }}>选择一个 Session · 用户主动决定去留</div>
+        {sessions.map(function(s,i){
+          const isSel = i === 1;
+          return (
+            <div key={s.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'11px 12px', background:'#fff', borderRadius:10, marginBottom:7, border:'2px solid '+(isSel?C.accent:'transparent') }}>
+              <div style={{ flexShrink:0, width:64, height:34, background:C.lineSoft, borderRadius:6, padding:2 }}>
+                <CurveChart w={60} h={30} layers={[{ a:s.a, b:s.b, c:s.c, stroke: isSel?C.accent:C.baseLine, w:1.8 }]} />
+              </div>
+              <div style={{ flex:1 }}>
+                <div className="mono" style={{ fontSize:12.5, fontWeight:700, color:C.ink }}>Session {s.id+1} <span style={{ color:C.faint, fontWeight:500, fontSize:11 }}>· {s.t}</span></div>
+                <div className="mono" style={{ fontSize:10.5, color:C.sub, marginTop:2 }}>{s.pid}</div>
+              </div>
+              <Chip tone={s.qOk ? 'iter' : 'warn'}>{s.qOk ? '✓ ' : '⚠ '}{s.q}</Chip>
+              <div style={{ width:18, height:18, borderRadius:'50%', border:'2px solid '+(isSel?C.accent:C.line), flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                {isSel ? <div style={{ width:9, height:9, borderRadius:'50%', background:C.accent }} /> : null}
+              </div>
+            </div>
+          );
+        })}
+        <div style={{ display:'flex', gap:7, marginTop:12 }}>
+          <Btn kind="default" style={{ flex:1, fontSize:13, padding:'11px' }}>丢弃</Btn>
+          <Btn kind="default" style={{ flex:1, fontSize:13, padding:'11px' }}>另立新方案</Btn>
+          <Btn kind="primary" style={{ flex:1.3, fontSize:13, padding:'11px' }}>合并到本方案</Btn>
+        </div>
+        <div style={{ fontSize:10, color:C.faint, textAlign:'center', marginTop:10, fontStyle:'italic' }}>🔑 三选一 · 不自动合并 · 不自动聚合</div>
+      </div>
+    </div>
+  );
+}
+
+/* ===== App ===== */
+function App() {
+  return (
+    <div>
+      <div className="page-title">拟合闭环 • 4 屏原型 · B版(仪表盘派)</div>
+      <div className="page-sub">
+        验证 <b>用户主动方案制</b> UX 假设:<b>仪表盘派</b>视觉(KPI 横排 / 网格曲线 / 收敛环 / mono 数字)。默认独立分析 + 用户主动建方案 + 主动合并 Session。砍掉自动 craftName 聚合毒。配色与曲线色定义沿用第一版(墨绿 accent · 基线灰 / 当前青 / 推荐橙虚 / 收敛绿)。每台可点 —— 屏1 卡片 / 屏3 预测虚线开关 / 屏3 导入下一轮弹 sheet。⚠ KPI 数字(RMSE / 收敛度)为<b>原型占位</b>,落地代码时需接入真实数据源。
+      </div>
+      <div className="phones-row">
+        <div className="phone-col">
+          <div className="phone-label">屏1 · <b>方案列表(首页)</b></div>
+          <IosFrame><ScreenPlans /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">屏2 · <b>独立分析</b> (isIter=NO)</div>
+          <IosFrame><ScreenIndependent /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">屏3 · <b>方案工作台</b> (isIter=YES)</div>
+          <IosFrame><ScreenWorkbench /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">屏4 · <b>Session 选择 sheet</b></div>
+          <IosFrame><ScreenSheet /></IosFrame>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
