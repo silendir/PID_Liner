@@ -161,24 +161,30 @@ function ScreenPlans() {
         <div style={{width:28}} />
       </div>
 
-      <div style={{marginBottom:18}}>
+      <div style={{marginBottom:14}}>
         <div className="h-display" style={{fontSize:27, fontWeight:700, letterSpacing:-0.4}}>PID_Liner</div>
-        <div className="muted" style={{fontSize:13, marginTop:2}}>独立分析 • 方案迭代</div>
+        <div className="muted" style={{fontSize:13, marginTop:2}}>选一条路:看一眼,还是调到底</div>
       </div>
 
-      <div className="card" onClick={function(){ setSel('indep'); show('→ 进入独立分析页(屏2)'); }}
-        style={{cursor:'pointer', border: sel==='indep' ? '2px solid #0d9488' : '2px solid transparent'}}>
-        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
-          <div>
-            <div style={{fontSize:16, fontWeight:700}}>快速分析一次飞行</div>
-            <div className="muted" style={{fontSize:12.5, marginTop:3}}>导入 BBL • 看曲线 • 出建议</div>
-          </div>
-          <div style={{fontSize:11, color:'#92400e', background:'#fef3c7', padding:'4px 10px', borderRadius:8, fontWeight:600}}>不建方案 • 不保存</div>
+      {/* Y 型双入口 */}
+      <div style={{display:'flex', gap:10, marginBottom:6}}>
+        <div onClick={function(){ setSel('indep'); show('→ 进入独立分析页(屏2)'); }}
+          style={{flex:1, cursor:'pointer', background:'#fff', borderRadius:16, padding:'14px 12px', boxShadow:'0 1px 2px rgba(0,0,0,0.04)', border: sel==='indep' ? '2px solid #0d9488' : '2px solid transparent'}}>
+          <div style={{fontSize:22, marginBottom:6}}>🛩️</div>
+          <div style={{fontSize:14.5, fontWeight:700}}>独立分析</div>
+          <div className="muted" style={{fontSize:11.5, marginTop:3, lineHeight:1.4}}>导入一次 BBL<br/>看曲线 • 出建议</div>
+          <div style={{fontSize:10, color:'#92400e', background:'#fef3c7', padding:'2px 7px', borderRadius:6, fontWeight:600, display:'inline-block', marginTop:8}}>不保存</div>
         </div>
-        <div className="tap-hint" style={{textAlign:'left', marginTop:10}}>点此进入 →</div>
+        <div onClick={function(){ setSel('iter'); show('→ 进入方案迭代(下方方案列表)'); }}
+          style={{flex:1, cursor:'pointer', background:'#fff', borderRadius:16, padding:'14px 12px', boxShadow:'0 1px 2px rgba(0,0,0,0.04)', border: sel==='iter' ? '2px solid #0d9488' : '2px solid transparent'}}>
+          <div style={{fontSize:22, marginBottom:6}}>🎯</div>
+          <div style={{fontSize:14.5, fontWeight:700}}>方案迭代</div>
+          <div className="muted" style={{fontSize:11.5, marginTop:3, lineHeight:1.4}}>多轮闭环收敛<br/>换参飞 → 反馈</div>
+          <div style={{fontSize:10, color:'#0f766e', background:'#ccfbf1', padding:'2px 7px', borderRadius:6, fontWeight:600, display:'inline-block', marginTop:8}}>2 个进行中</div>
+        </div>
       </div>
 
-      <div style={{display:'flex', alignItems:'center', gap:8, margin:'18px 4px 12px'}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, margin:'14px 4px 10px'}}>
         <div style={{fontSize:14, fontWeight:700}}>我的方案</div>
         <div className="muted" style={{fontSize:12}}>2 个</div>
         <div style={{flex:1}} />
