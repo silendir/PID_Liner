@@ -18,6 +18,9 @@
   .branch-tag.indep { background: #fef3c7; color: #92400e; }
   .branch-tag.iter  { background: #ccfbf1; color: #0f766e; }
   .branch-tag.home  { background: #e0e7ff; color: #3730a3; }
+  .branch-tag.diag  { background: #ffe4e6; color: #9f1239; }
+  .badge-pro { font-size: 10px; padding: 3px 8px; border-radius: 999px; background: #fde68a; color: #92400e; font-weight: 700; letter-spacing: 0.5px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .branch-title { font-size: 18px; font-weight: 700; }
   .branch-desc  { font-size: 12.5px; color: #6b7280; }
   .branch-line  { flex: 1; height: 1px; background: #d1d5db; }
@@ -196,6 +199,23 @@ function ScreenHome() {
         </div>
       </div>
 
+      {/* 第三入口:炸机诊断(付费,平行功能,独立 isIter=NO 不进链) */}
+      <div onClick={function(){ setSel('diag'); show('→ 炸机诊断 · AI 找根因'); }}
+        style={{cursor:'pointer', background:'#fff', borderRadius:16, padding:'14px 16px', marginBottom:6, boxShadow:'0 1px 2px rgba(0,0,0,0.04)', border: sel==='diag' ? '2px solid #9f1239' : '2px solid transparent', display:'flex', alignItems:'center', gap:12}}>
+        <div style={{fontSize:24}}>🩺</div>
+        <div style={{flex:1}}>
+          <div style={{display:'flex', alignItems:'center', gap:8}}>
+            <span style={{fontSize:14.5, fontWeight:700}}>炸机诊断</span>
+            <span className="badge-pro">PRO</span>
+          </div>
+          <div className="muted" style={{fontSize:11.5, marginTop:3}}>AI 找炸机根因 · 失步 / 烧电机 / 缺相</div>
+        </div>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontSize:10, color:'#92400e', fontWeight:600}}>本月剩余</div>
+          <div style={{fontSize:15, fontWeight:700, color:'#92400e'}}>3 次</div>
+        </div>
+      </div>
+
       <div style={{display:'flex', alignItems:'center', gap:8, margin:'14px 4px 10px'}}>
         <div style={{fontSize:14, fontWeight:700}}>我的方案</div>
         <div className="muted" style={{fontSize:12}}>2 个 · 按 chainId</div>
@@ -221,7 +241,7 @@ function ScreenHome() {
         </div>
         <div style={{marginTop:8, fontSize:12}}><span className="muted">基线 P38</span> <span style={{color:'#166534'}}>→ 当前 P38 稳定</span></div>
       </div>
-      <div className="tap-hint">🔑 首页双入口 · 独立分析(isIter=NO)/ 方案迭代(isIter=YES) 完全隔离</div>
+      <div className="tap-hint">🔑 三入口 · 独立分析 / 方案迭代(免费·本地算) 与 炸机诊断(付费·线上AI) 平行</div>
       {toast}
     </div></div>
   );
@@ -621,6 +641,140 @@ function ScreenSheet() {
 }
 
 /* =====================================================================
+   炸机诊断分支 · 线上 AI + localIndicators 可视化 (PRO 付费)
+   ===================================================================== */
+
+// 屏: 加载中(流式输出,可停止)
+function ScreenCrashLoading() {
+  return (
+    <div className="scr"><div className="scr-pad" style={{display:'flex', flexDirection:'column', height:'100%'}}>
+      <div className="nav-bar">
+        <div className="nav-back" style={{visibility:'hidden', color:'#cbd5e1'}}>‹</div>
+        <div className="nav-title">炸机诊断</div>
+        <div style={{display:'flex', gap:12, fontSize:17}}>
+          <span style={{color:'#9ca3af'}}>🔄</span>
+          <span style={{color:'#9ca3af'}}>⚙</span>
+          <span style={{color:'#ef4444', cursor:'pointer'}}>⏹</span>
+        </div>
+      </div>
+      <div style={{background:'#fff7ed', border:'1px solid #fdba74', borderRadius:10, padding:'8px 12px', fontSize:11, color:'#9a3412', fontWeight:600, textAlign:'center', marginBottom:20}}>
+        ⚠ AI 流式分析中 · 停止将中断本次诊断
+      </div>
+      <div style={{flex:1, display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', gap:16}}>
+        <div style={{width:48, height:48, border:'4px solid #e5e7eb', borderTopColor:'#9f1239', borderRadius:'50%', animation:'spin 1s linear infinite'}} />
+        <div style={{textAlign:'center'}}>
+          <div style={{fontSize:15, fontWeight:700}}>btfl_crash.BBL</div>
+          <div className="muted" style={{fontSize:11, marginTop:4}}>SPEEDYBEEF7MINI · BF4.3.1 · 01:23</div>
+        </div>
+        <div style={{fontSize:12.5, color:'#6b7280'}}>⏳ GLM-4.7-Flash 正在分析...</div>
+        <div style={{width:'100%', background:'#0f172a', borderRadius:10, padding:'10px 12px', fontFamily:'SF Mono,Menlo,monospace', fontSize:10, color:'#86efac', lineHeight:1.7, maxHeight:110, overflow:'hidden'}}>
+          <div style={{color:'#64748b'}}>› 上传飞行数据到 Worker...</div>
+          <div style={{opacity:0.8}}>› 本地异常检测:roll 频域异常 ⚠</div>
+          <div style={{opacity:0.9}}>› AI 流式分析中▌</div>
+        </div>
+      </div>
+      <button className="btn btn-ghost" style={{color:'#ef4444'}}>⏹ 停止分析</button>
+      <div className="tap-hint">🔑 流式 onStreamingText · cancelCurrentRequest · Worker 代理(API key 不在端侧)</div>
+    </div></div>
+  );
+}
+
+// 屏: 完成(AI 报告 + localIndicators 可视化)
+function ScreenCrashResult() {
+  const indicators = [
+    { icon:'🔴', color:'#dc2626', type:'roll 失步 (desync)', axis:'roll', detail:'峰值频率 80Hz · 持续 0.8s', peak:0.62, root:true, causedBy:null },
+    { icon:'🟡', color:'#ea580c', type:'pitch 振荡', axis:'pitch', detail:'超调 35% · 2 次震荡', peak:0.68, root:false, causedBy:'roll 失步' },
+    { icon:'🟢', color:'#166534', type:'电机温度偏高', axis:null, detail:'峰值 78°C', peak:0.55, root:false, causedBy:null },
+  ];
+  return (
+    <div className="scr"><div className="scr-pad">
+      <div className="nav-bar">
+        <div className="nav-back">‹</div>
+        <div className="nav-title">炸机诊断</div>
+        <div style={{display:'flex', gap:12, fontSize:17, cursor:'pointer'}}>
+          <span>🔄</span>
+          <span>⚙</span>
+          <span style={{color:'#ef4444'}}>⏹</span>
+        </div>
+      </div>
+
+      {/* 付费墙位(IAP 占位,StoreKit 后置) */}
+      <div className="card" style={{padding:'10px 14px', display:'flex', alignItems:'center', gap:10, background:'#fffbeb', border:'1px solid #fde68a'}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12, fontWeight:700, color:'#92400e'}}>🩺 AI 炸机诊断 · 本月剩余 3 次</div>
+          <div className="muted" style={{fontSize:10, marginTop:2}}>GLM-4.7-Flash · 每次诊断消耗 1 次 API 配额</div>
+        </div>
+        <button className="btn btn-primary" style={{width:'auto', fontSize:11, padding:'7px 12px', background:'#92400e'}}>🔓 解锁 ›</button>
+      </div>
+
+      <div style={{fontSize:11, color:'#6b7280', margin:'4px 4px 8px'}}>btfl_crash.BBL · SPEEDYBEEF7MINI · BF4.3.1 · 01:23 · 1505KV</div>
+
+      {/* AI 诊断报告(Menlo 黑底) */}
+      <div className="cli-block" style={{whiteSpace:'pre-wrap', lineHeight:1.65}}>{'📋 AI 诊断报告\n\n本次飞行在 01:23(62% 时刻)发生\n严重炸机。检测到 roll 轴高频失步\n(desync),伴随 pitch 振荡。\n\n根因:P 项过高 → PID 环路饱和 →\n电机无法响应快速杆量变化 → 失步\n→ 炸机。\n\n建议:降 P 15%,检查电机 KV 匹配。'}</div>
+
+      {/* localIndicators 可视化(1.1 算了没用 → 原型补) */}
+      <div style={{display:'flex', alignItems:'center', gap:8, margin:'14px 4px 8px'}}>
+        <div style={{fontSize:12, fontWeight:700, color:'#6b7280'}}>检测到的异常</div>
+        <span className="chip">3 项 · 1 根因</span>
+      </div>
+
+      {indicators.map(function(it, i){
+        return (
+          <div key={i} className="card" style={{padding:'12px 14px', borderLeft:'4px solid '+it.color}}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
+              <div style={{flex:1}}>
+                <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
+                  <span style={{fontSize:13, fontWeight:700}}>{it.icon} {it.type}</span>
+                  {it.axis ? <span style={{fontSize:9, padding:'1px 6px', borderRadius:999, background:'#f3f4f6', color:'#6b7280', fontWeight:700, textTransform:'uppercase'}}>{it.axis}</span> : null}
+                  {it.root ? <span style={{fontSize:9, padding:'1px 6px', borderRadius:999, background:'#fee2e2', color:'#991b1b', fontWeight:700}}>⭐ 根因</span> : null}
+                </div>
+                <div className="muted" style={{fontSize:11, marginTop:4}}>{it.detail}</div>
+                {it.causedBy ? <div style={{fontSize:10.5, color:'#92400e', marginTop:4}}>← 由「{it.causedBy}」引发</div> : null}
+              </div>
+              <div style={{fontSize:9, color:'#6b7280', textAlign:'right'}}>
+                <div>峰值时刻</div>
+                <div style={{fontWeight:700, fontSize:13, color:it.color}}>{Math.round(it.peak*100)}%</div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* 因果链 isRootCause → causedBy */}
+      <div className="card" style={{padding:'12px 14px'}}>
+        <div style={{fontSize:11, fontWeight:700, color:'#6b7280', marginBottom:8}}>因果链 · 根因 → 结果</div>
+        <div style={{display:'flex', alignItems:'center', gap:6, fontSize:11, flexWrap:'wrap'}}>
+          <span style={{padding:'4px 9px', background:'#fee2e2', color:'#991b1b', borderRadius:6, fontWeight:700}}>roll 失步</span>
+          <span className="muted">→</span>
+          <span style={{padding:'4px 9px', background:'#fef3c7', color:'#9a3412', borderRadius:6, fontWeight:700}}>pitch 振荡</span>
+          <span className="muted">→</span>
+          <span style={{padding:'4px 9px', background:'#f3f4f6', color:'#374151', borderRadius:6, fontWeight:700}}>炸机</span>
+        </div>
+      </div>
+
+      {/* 飞行进度时间线 peakOccurrenceRatio */}
+      <div className="card" style={{padding:'12px 14px'}}>
+        <div style={{fontSize:11, fontWeight:700, color:'#6b7280', marginBottom:14}}>飞行进度时间线 · 最严重时刻</div>
+        <div style={{position:'relative', height:30}}>
+          <div style={{position:'absolute', top:13, left:0, right:0, height:4, background:'#e5e7eb', borderRadius:999}} />
+          {/* first→last 失步区间 */}
+          <div style={{position:'absolute', top:11, left:'45%', width:'30%', height:8, background:'#fecaca', borderRadius:999, opacity:0.75}} />
+          {/* peak 标记 */}
+          <div style={{position:'absolute', top:0, left:'62%', transform:'translateX(-50%)', fontSize:9, color:'#dc2626', fontWeight:700, whiteSpace:'nowrap'}}>62% 🔥</div>
+          <div style={{position:'absolute', top:7, left:'62%', transform:'translateX(-50%)', width:16, height:16, background:'#dc2626', borderRadius:'50%', border:'3px solid #fff', boxShadow:'0 0 0 1px #dc2626'}} />
+        </div>
+        <div style={{display:'flex', justifyContent:'space-between', fontSize:9, color:'#9ca3af', marginTop:6}}>
+          <span>0% · 起飞</span>
+          <span>炸机 · 100%</span>
+        </div>
+      </div>
+
+      <div className="tap-hint">🔑 localIndicators 可视化(1.1 算了没用)· 指标卡 + 因果链 + 时间线 · 反哺代码</div>
+    </div></div>
+  );
+}
+
+/* =====================================================================
    总集成 App
    ===================================================================== */
 function App() {
@@ -628,20 +782,20 @@ function App() {
     <div>
       <div className="page-title">PID_Liner · 总集成原型</div>
       <div className="page-sub">
-        <b>双分支并存</b>:首页 Y 型双入口 → <b>独立分析分支</b>(isIter=NO · 三态状态机:空→处理中→结果)与<b>方案迭代分支</b>(isIter=YES · 工作台→导入下一轮)完全隔离。
-        独立分析把 1.1 多页跳转整合为<b>单屏三态条件渲染</b>,多 Session 降级为结果态顶部 chip;方案迭代复用迭代链(chainId)多轮闭环。
+        <b>三入口并存</b>:首页 Y 型 → <b>独立分析</b>(isIter=NO · 三态状态机)/ <b>方案迭代</b>(isIter=YES · 多轮闭环)/ <b>🩺炸机诊断</b>(线上 AI · 付费)。
+        前两者<b>免费·本地算</b>;炸机诊断走 <b>GLM-4.7-Flash 线上 AI</b>(per-request 成本 → IAP 付费墙),独立入口便于单独门禁(见 [[monetization-iap-strategy]])。
       </div>
 
       {/* 首页 */}
       <div className="branch-band">
         <span className="branch-tag home">首页</span>
-        <span className="branch-title">双入口 · 选一条路</span>
-        <span className="branch-desc">独立分析 / 方案迭代 完全隔离</span>
+        <span className="branch-title">三入口 · 选一条路</span>
+        <span className="branch-desc">免费(独立/迭代) + 付费(炸机诊断) 平行</span>
         <span className="branch-line" />
       </div>
       <div className="phones-row">
         <div className="phone-col">
-          <div className="phone-label">首页 • <b>双入口 + 方案列表</b></div>
+          <div className="phone-label">首页 • <b>三入口 + 方案列表</b></div>
           <IosFrame><ScreenHome /></IosFrame>
         </div>
       </div>
@@ -683,6 +837,24 @@ function App() {
         <div className="phone-col">
           <div className="phone-label">② 导入下一轮 · <b>Session 选择</b></div>
           <IosFrame><ScreenSheet /></IosFrame>
+        </div>
+      </div>
+
+      {/* 炸机诊断分支(PRO 付费) */}
+      <div className="branch-band">
+        <span className="branch-tag diag">炸机诊断 · PRO</span>
+        <span className="branch-title">线上 AI · 找炸机根因</span>
+        <span className="branch-desc">GLM-4.7-Flash 流式 · localIndicators 可视化 · 付费墙</span>
+        <span className="branch-line" />
+      </div>
+      <div className="phones-row">
+        <div className="phone-col">
+          <div className="phone-label">① 分析中 · <b>流式输出</b></div>
+          <IosFrame><ScreenCrashLoading /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">② 报告 · <b>异常指标 + 因果链 + 时间线</b></div>
+          <IosFrame><ScreenCrashResult /></IosFrame>
         </div>
       </div>
     </div>
