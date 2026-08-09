@@ -49,6 +49,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// 获取最新一轮记录
 - (nullable PIDTuningRecord *)latestRecord;
 
+/// 移除最新一轮记录(appendRecord 的逆操作;空链无操作;Q7 撤销最新轮)
+- (void)removeLastRecord;
+
 @end
 
 NS_ASSUME_NONNULL_END

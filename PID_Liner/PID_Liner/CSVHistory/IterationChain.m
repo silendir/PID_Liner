@@ -37,6 +37,12 @@
     }
 }
 
+/// 移除最新一轮(appendRecord 的逆操作;空链无操作)
+- (void)removeLastRecord {
+    if (self.records.count == 0) return;
+    [self.records removeLastObject];
+}
+
 #pragma mark - 序列化
 
 - (NSDictionary *)toDictionary {

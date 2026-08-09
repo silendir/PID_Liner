@@ -8,6 +8,7 @@
 #import "HomeViewController.h"
 #import "CSVHistoryViewController.h"
 #import "IndependentAnalysisViewController.h"
+#import "IterationWorkbenchViewController.h"
 #import "IterationChainManager.h"
 #import "IterationChain.h"
 
@@ -371,10 +372,27 @@
     [self.navigationController pushViewController:vc animated:YES];
 }
 
-/// 🎯 方案迭代 → 0.3 指向现有 CSVHistory(方案列表);0.4 新建 IterationWorkbench
+/// 🎯 方案迭代 → 有链进最近一条工作台;无链提示先建方案(0.4c-1)
 - (void)iterationEntryTapped {
     NSLog(@"[Home] 方案迭代入口");
-    [self pushCSVHistory];
+    [self openLatestWorkbenchOrPrompt];
+}
+
+/// 🎯 入口:有方案 → push 最近一条链的工作台;无方案 → 提示(建方案流程 0.4c-2 接)
+- (void)openLatestWorkbenchOrPrompt {
+    [self loadSchemes];  // 刷新方案列表(按 createdAt 倒序)
+    IterationChain *latest = self.schemes.firstObject;
+    if (latest) {
+        IterationWorkbenchViewController *vc = [[IterationWorkbenchViewController alloc] initWithChainId:latest.chainId];
+        [self.navigationController pushViewController:vc animated:YES];
+    } else {
+        UIAlertController *alert = [UIAlertController
+            alertControllerWithTitle:@"还没有方案"
+                             message:@"方案迭代以「导入 BBL 建方案」为起点。\n(新建方案流程将在下一版接入;当前可在 ☰ 总列表导入 BBL)"
+                      preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+    }
 }
 
 /// 🩺 炸机诊断 → 0.3 指向现有 CSVHistory(选记录诊断);0.4 独立诊断屏
@@ -434,8 +452,10 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    // 0.3:点方案 → 进 CSVHistory(看该链记录);0.4 → IterationWorkbench
-    [self pushCSVHistory];
+    // 0.4c:点方案 → 进该链的工作台
+    IterationChain *chain = self.schemes[indexPath.row];
+    IterationWorkbenchViewController *vc = [[IterationWorkbenchViewController alloc] initWithChainId:chain.chainId];
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 @end

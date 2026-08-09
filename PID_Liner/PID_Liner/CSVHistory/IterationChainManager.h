@@ -48,6 +48,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// @param chainId 目标链ID
 - (void)appendRecord:(PIDTuningRecord *)record toChain:(NSString *)chainId;
 
+/// 移除指定链的最新一轮记录(appendRecord:toChain: 的逆操作;Q7 撤销最新轮,空链/无链无操作)
+/// @param chainId 目标链ID
+- (void)removeLastRecordFromChain:(NSString *)chainId;
+
 #pragma mark - 删除
 
 /// 删除指定链

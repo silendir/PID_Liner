@@ -136,6 +136,22 @@ static NSString *const kChainDirectoryName = @"IterationChains";
           (long)record.iteration, chainId, chain.craftName);
 }
 
+#pragma mark - 撤销(Q7)
+
+/// 移除最新一轮(Q7:只删最新轮 + 硬删;空链/无链无操作)
+- (void)removeLastRecordFromChain:(NSString *)chainId {
+    if (!chainId.length) return;
+    IterationChain *chain = [self chainForId:chainId];
+    if (!chain) {
+        NSLog(@"⚠️ [迭代链] 撤销失败,未找到链: %@", chainId);
+        return;
+    }
+    if (chain.records.count == 0) return;
+    [chain removeLastRecord];
+    [self saveChain:chain];
+    NSLog(@"↩ [迭代链] 已撤销链%@最新轮 (剩余%lu轮)", chainId, (unsigned long)chain.records.count);
+}
+
 #pragma mark - 删除
 
 - (void)deleteChain:(NSString *)chainId {
