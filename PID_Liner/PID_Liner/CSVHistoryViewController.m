@@ -11,7 +11,7 @@
 #import "CSVRenameView.h"
 #import "CrashDiagnosisViewController.h"
 #import "IterationChainManager.h"
-#import "BlackboxDecoder.h"
+#import "BBLImportService.h"
 
 #pragma mark - CSVRecord Implementation
 
@@ -219,9 +219,8 @@ static NSMutableSet<NSString *> *kDemoPromptedKeys(void) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-/// 加入示例 = copy bundle 001.bbl → 沙盒 → 转 CSV(精简) → reload
+/// 加入示例 = copy bundle 001.bbl → 沙盒 → 转 CSV(经 BBLImportService 统一管线) → reload
 /// 🔑 加入后即普通记录,与用户导入的记录完全一样;bundle 001.bbl 实体永远不动
-/// TODO(0.4): 抽 BBLImportService 统一 ViewController 与 demo 的 BBL→CSV 管线(消除重复)
 - (void)loadDemoBBLAndReload {
     NSString *bundlePath = [[NSBundle mainBundle] pathForResource:@"001" ofType:@"bbl"];
     if (!bundlePath) {
@@ -244,95 +243,22 @@ static NSMutableSet<NSString *> *kDemoPromptedKeys(void) {
     }
 
     __weak typeof(self) weakSelf = self;
-    // 后台转 CSV(001.bbl ≈ 2.1M,避免阻塞 UI)
+    // 后台转 CSV(经 BBLImportService 统一管线;001.bbl 取第一个 Session,motorKV=nil)
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
-        decoder.outputDirectory = docs;
-        NSArray<BBLSessionInfo *> *sessions = [decoder listLogs:destBBL];
-        if (sessions.count == 0) {
-            NSLog(@"❌ [Demo] 001.bbl 无可解析 Session");
+        NSError *convErr = nil;
+        NSString *csvPath = [[BBLImportService shared] convertBBL:destBBL
+                                                          logIndex:0
+                                                           motorKV:nil
+                                                             error:&convErr];
+        if (!csvPath) {
+            NSLog(@"❌ [Demo] 001.bbl 转换失败: %@", convErr.localizedDescription);
             return;
         }
-        BBLSessionInfo *first = sessions[0];
-        int result = [decoder decodeFlightLog:destBBL logIndex:first.logIndex];
-        if (result != 0) {
-            NSLog(@"❌ [Demo] 解码失败: %@", decoder.lastErrorMessage);
-            return;
-        }
-
-        // BlackboxDecoder 生成 {basename}.{logIndex+1}.csv(001.bbl logIndex=0 → 001.01.csv)
-        NSString *origName = [NSString stringWithFormat:@"%@.%02d.csv",
-                              [@"001.bbl" stringByDeletingPathExtension], first.logIndex + 1];
-        NSString *origPath = [docs stringByAppendingPathComponent:origName];
-
-        // 重命名为标准 {源}_{时间戳}_session{N}.csv(与 ViewController 命名一致)
-        NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
-        fmt.dateFormat = @"yyyyMMdd_HHmmss";
-        NSString *ts = [fmt stringFromDate:[NSDate date]];
-        NSString *csvName = [NSString stringWithFormat:@"001_%@_session%ld.csv",
-                             ts, (long)(first.logIndex + 1)];
-        NSString *csvPath = [docs stringByAppendingPathComponent:csvName];
-        if ([fm fileExistsAtPath:csvPath]) {
-            [fm removeItemAtPath:csvPath error:nil];
-        }
-        NSError *mvErr = nil;
-        if (![fm moveItemAtPath:origPath toPath:csvPath error:&mvErr]) {
-            NSLog(@"⚠️ [Demo] 重命名失败,保留原名: %@", mvErr.localizedDescription);
-            csvPath = origPath;
-        }
-
-        // 注入元数据注释行(craftName/fw/PID/flightTime),供 PIDCSVParser 解析
-        [weakSelf injectDemoMetadataToCSV:csvPath header:first.header];
-
         // 回主线程刷新列表
         dispatch_async(dispatch_get_main_queue(), ^{
             [weakSelf loadExistingCSVFiles];
         });
     });
-}
-
-/// 向 CSV 头部注入 BBL 元数据注释行(demo 精简版,无 motorKV;与 ViewController.injectCraftNameToCSV 同源)
-- (void)injectDemoMetadataToCSV:(NSString *)csvPath header:(BBLLogHeader *)header {
-    if (!csvPath || !header) return;
-    NSError *err = nil;
-    NSString *content = [NSString stringWithContentsOfFile:csvPath
-                                                  encoding:NSUTF8StringEncoding
-                                                     error:&err];
-    if (err || !content) {
-        NSLog(@"⚠️ [Demo] 读取 CSV 失败: %@", err.localizedDescription);
-        return;
-    }
-
-    NSMutableString *prefix = [NSMutableString string];
-    if (header.craftName.length > 0) {
-        [prefix appendFormat:@"# Craft name:%@\n", header.craftName];
-    }
-    if (header.startDatetimeUs > 0) {
-        [prefix appendFormat:@"# Flight time:%lld\n", header.startDatetimeUs];
-    }
-    NSInteger fw = header.firmwareVersionCode;
-    if (fw > 0) {
-        [prefix appendFormat:@"# Firmware version:%ld\n", (long)fw];
-    }
-    NSDictionary *pidValues = header.currentPIDValues;
-    for (NSString *axis in @[@"roll", @"pitch", @"yaw"]) {
-        NSDictionary *axisPID = pidValues[axis];
-        if (![axisPID isKindOfClass:[NSDictionary class]]) continue;
-        int p = [axisPID[@"p"] intValue];
-        int i = [axisPID[@"i"] intValue];
-        int d = [axisPID[@"d"] intValue];
-        int ff = [axisPID[@"ff"] intValue];
-        if (p > 0 || i > 0 || d > 0 || ff > 0) {
-            [prefix appendFormat:@"# PID %@:%d,%d,%d,%d\n", axis, p, i, d, ff];
-        }
-    }
-
-    if (prefix.length == 0) return;
-    NSString *newContent = [prefix stringByAppendingString:content];
-    NSError *writeErr = nil;
-    if (![newContent writeToFile:csvPath atomically:YES encoding:NSUTF8StringEncoding error:&writeErr]) {
-        NSLog(@"⚠️ [Demo] 注入元数据写入失败: %@", writeErr.localizedDescription);
-    }
 }
 
 /// Documents 目录(沙盒)

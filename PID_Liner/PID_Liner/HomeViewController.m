@@ -7,6 +7,7 @@
 
 #import "HomeViewController.h"
 #import "CSVHistoryViewController.h"
+#import "IndependentAnalysisViewController.h"
 #import "IterationChainManager.h"
 #import "IterationChain.h"
 
@@ -363,10 +364,11 @@
 
 #pragma mark - 三入口 Actions
 
-/// 🛩️ 独立分析 → 0.3 指向现有 CSVHistory(选记录分析);0.4 改三态状态机
+/// 🛩️ 独立分析 → 独立分析三态状态机(0.4b:替换临时 pushCSVHistory)
 - (void)independentEntryTapped {
     NSLog(@"[Home] 独立分析入口");
-    [self pushCSVHistory];
+    IndependentAnalysisViewController *vc = [[IndependentAnalysisViewController alloc] init];
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 /// 🎯 方案迭代 → 0.3 指向现有 CSVHistory(方案列表);0.4 新建 IterationWorkbench
