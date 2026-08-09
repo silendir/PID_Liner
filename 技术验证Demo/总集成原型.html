@@ -9,7 +9,7 @@
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #eceef1; font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif; color: #1f2937; padding: 48px 32px; }
+  body { background: #eceef1; font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif; color: #1f2937; padding: 0 32px; }
   .page-title { font-family: "New York", Georgia, serif; font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }
   .page-sub { font-size: 14px; color: #6b7280; margin-bottom: 24px; max-width: 1100px; line-height: 1.7; }
   .page-sub b { color: #0d9488; }
@@ -29,7 +29,7 @@
   .phone-label { font-size: 13px; color: #6b7280; margin-bottom: 12px; font-style: italic; letter-spacing: 0.3px; text-align:center; }
   .phone-label b { color: #1f2937; font-style: normal; }
   /* 复用 拟合闭环UX原型 的 class 系统(统一视觉) */
-  .scr { width: 393px; height: 764px; overflow: hidden; position: relative; background: #f5f5f7; }
+  .scr { width: 393px; height: 764px; overflow: visible; position: relative; background: #f5f5f7; }
   .scr-pad { padding: 8px 18px 18px; height: 100%; overflow-y: auto; }
   .nav-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px 14px; }
   .nav-back { font-size: 22px; color: #0d9488; cursor: pointer; width: 28px; }
@@ -51,7 +51,7 @@
   .tap-hint { font-size: 11px; color: #9ca3af; text-align: center; margin-top: 8px; font-style: italic; line-height: 1.5; }
   .cli-block { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.7; background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 10px; white-space: pre; overflow-x: auto; }
   .toast { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(17,24,39,0.92); color: #fff; font-size: 13px; padding: 10px 18px; border-radius: 999px; z-index: 50; pointer-events: none; }
-  .sheet-mask { position: absolute; inset: 0; background: rgba(0,0,0,0.4); z-index: 40; display: flex; align-items: flex-end; }
+  .sheet-mask { position: absolute; top: -54px; right: 0; bottom: -34px; left: 0; background: rgba(0,0,0,0.4); z-index: 40; display: flex; align-items: flex-end; }
   .sheet { background: #f5f5f7; width: 100%; border-radius: 22px 22px 0 0; padding: 8px 18px 22px; max-height: 88%; overflow-y: auto; }
   .sheet-handle { width: 40px; height: 5px; background: #d1d5db; border-radius: 999px; margin: 6px auto 14px; }
   .sess-row { display: flex; align-items: center; gap: 12px; padding: 12px; background: #fff; border-radius: 12px; margin-bottom: 8px; cursor: pointer; border: 2px solid transparent; }
@@ -62,6 +62,36 @@
   .sess-radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #d1d5db; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
   .sess-radio.on { border-color: #0d9488; }
   .sess-radio.on::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: #0d9488; }
+
+  /* ===== 侧滑抽屉(左=总列表 原始记录 / 右=子列表 各功能副本)===== */
+  .drawer-mask { position: absolute; top: -54px; right: 0; bottom: -34px; left: 0; background: rgba(0,0,0,0.45); z-index: 38; }
+  .drawer { position: absolute; top: -54px; bottom: -34px; width: 86%; background: #f5f5f7; z-index: 42; display: flex; flex-direction: column; box-shadow: 2px 0 24px rgba(0,0,0,0.18); }
+  .drawer.right { right: 0; box-shadow: -2px 0 24px rgba(0,0,0,0.18); }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 8px; }
+  .drawer-title { font-size: 16px; font-weight: 700; }
+  .drawer-close { font-size: 20px; color: #6b7280; cursor: pointer; width: 28px; text-align: right; }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 0 12px 16px; }
+  .lock-bar { display: flex; align-items: center; gap: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; border-radius: 10px; padding: 8px 12px; font-size: 11px; font-weight: 600; margin-bottom: 6px; line-height: 1.4; }
+  .copy-bar { display: flex; align-items: center; gap: 8px; background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3; border-radius: 10px; padding: 8px 12px; font-size: 11px; font-weight: 600; margin-bottom: 6px; line-height: 1.4; }
+  .section-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 700; color: #6b7280; padding: 12px 6px 6px; letter-spacing: 0.3px; }
+  .section-head .cnt { font-weight: 600; color: #9ca3af; }
+  .rec-row { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 12px; padding: 10px 12px; margin-bottom: 7px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+  .rec-row .grip { color: #cbd5e1; font-size: 16px; cursor: grab; flex-shrink: 0; }
+  .rec-info { flex: 1; min-width: 0; }
+  .rec-info .t { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rec-info .s { font-size: 10.5px; color: #9ca3af; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rec-act { display: flex; gap: 8px; font-size: 14px; color: #9ca3af; flex-shrink: 0; }
+  .rec-act span { cursor: pointer; }
+
+  /* ===== 落盘改名弹窗(总列表/子列表统一)===== */
+  .modal-mask { position: absolute; top: -54px; right: 0; bottom: -34px; left: 0; background: rgba(0,0,0,0.4); z-index: 46; display: flex; align-items: center; justify-content: center; padding: 28px; }
+  .modal-card { background: #fff; border-radius: 18px; padding: 20px 18px 16px; width: 100%; max-width: 300px; }
+  .modal-title { font-size: 15px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+  .modal-sub { font-size: 11px; color: #9ca3af; text-align: center; margin-bottom: 14px; }
+  .modal-input { width: 100%; border: 2px solid #e5e7eb; border-radius: 10px; padding: 12px; font-size: 14px; font-family: inherit; outline: none; box-sizing: border-box; }
+  .modal-input:focus { border-color: #0d9488; }
+  .modal-btns { display: flex; gap: 8px; margin-top: 14px; }
+  .nav-icon { font-size: 20px; color: #0d9488; cursor: pointer; width: 28px; text-align: left; }
 </style>
 </head>
 <body>
@@ -73,7 +103,7 @@ const { useState, useEffect, useRef } = React;
 /* ===== IosFrame (共享) ===== */
 const iosFrameStyles = {
   wrapper: { display:'inline-block', padding:12, background:'#000', borderRadius:60, boxShadow:'0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
-  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#fff' },
+  screen: { position:'relative', borderRadius:48, overflow:'hidden', background:'#f5f5f7' },
   statusBar: { position:'absolute', top:0, left:0, right:0, height:54, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 32px', fontSize:16, fontWeight:600, zIndex:20, pointerEvents:'none' },
   dynamicIsland: { position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', width:124, height:36, background:'#000', borderRadius:999, zIndex:30 },
   statusIcons: { display:'flex', alignItems:'center', gap:6 },
@@ -81,7 +111,7 @@ const iosFrameStyles = {
   signalBar: { width:3, background:'currentColor', borderRadius:1 },
   batteryIcon: { width:26, height:12, border:'1.5px solid currentColor', borderRadius:3, padding:1, position:'relative', opacity:0.8 },
   batteryCap: { position:'absolute', top:3, right:-3, width:2, height:6, background:'currentColor', borderRadius:'0 1px 1px 0' },
-  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'auto' },
+  content: { position:'absolute', top:54, left:0, right:0, bottom:34, overflow:'visible' },
   homeIndicator: { position:'absolute', bottom:10, left:'50%', transform:'translateX(-50%)', width:140, height:5, background:'rgba(0,0,0,0.3)', borderRadius:999, zIndex:10 },
 };
 function IosFrame({ children }) {
@@ -165,15 +195,143 @@ function useToast() {
 }
 
 /* =====================================================================
-   首页 (Y 型双入口 + 方案列表)
+   落盘改名弹窗 (总列表/子列表统一交互)
+   触发于落盘瞬间:默认沿用源名 + 高亮全选 + 用户自行定夺
+   ===================================================================== */
+function RenameModal({ defaultName, source, sub, onCancel, onSave }) {
+  const [val, setVal] = useState(defaultName);
+  const inputRef = useRef(null);
+  useEffect(function(){
+    const el = inputRef.current;
+    if (el) { el.focus(); el.select(); }   // 🔑 高亮全选
+  }, []);
+  return (
+    <div className="modal-mask" onClick={onCancel}>
+      <div className="modal-card" onClick={function(e){ e.stopPropagation(); }}>
+        <div className="modal-title">保存为</div>
+        <div className="modal-sub">{sub || '默认沿用源名 · 可当场改名'}</div>
+        <input ref={inputRef} className="modal-input" value={val}
+          onChange={function(e){ setVal(e.target.value); }}
+          onKeyDown={function(e){ if(e.key==='Enter') onSave(val); }} />
+        <div className="muted" style={{fontSize:10, marginTop:6}}>数据源:{source}</div>
+        <div className="modal-btns">
+          <button className="btn btn-secondary" style={{flex:1}} onClick={onCancel}>取消</button>
+          <button className="btn btn-primary" style={{flex:1.3}} onClick={function(){ onSave(val); }}>保存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
+   左侧滑 · 总列表 (原始记录仓库 · 常驻单例 · 全局 ☰ 呼出)
+   bbl→csv 转换产物 · 按天 section 分组 · 只读对外 · 各功能仅 copy 副本
+   ===================================================================== */
+function LeftDrawer({ onClose, onImportBBL, onRename }) {
+  // 按天分组的原始记录(TableView section 概念 · 非 BBL sessionIndex)
+  const groups = [
+    { day:'今天 · 08-09', recs:[
+      { name:'怪象3.5寸_S2.csv', src:'001.bbl',     meta:'02:34 · 2.1MB · S2' },
+      { name:'吴bbl_S1.csv',     src:'003.bbl',     meta:'01:12 · 1.4MB · S1' },
+    ]},
+    { day:'昨天 · 08-08', recs:[
+      { name:'btfl_new_S3.csv',  src:'btfl_new.BBL',meta:'03:42 · 3.0MB · S3' },
+      { name:'test_hover_S1.csv',src:'hover.BBL',   meta:'00:55 · 0.8MB · S1' },
+    ]},
+    { day:'08-05', recs:[
+      { name:'old_data_S1.csv',  src:'old.BBL',     meta:'02:10 · 1.9MB · S1' },
+    ]},
+  ];
+  return (
+    <div>
+      <div className="drawer-mask" onClick={onClose} />
+      <div className="drawer">
+        <div className="drawer-head">
+          <div>
+            <div className="drawer-title">📂 原始记录</div>
+            <div className="muted" style={{fontSize:10.5}}>总列表 · 唯一数据源 · 常驻单例</div>
+          </div>
+          <div className="drawer-close" onClick={onClose}>✕</div>
+        </div>
+        <div className="drawer-body">
+          <button className="btn btn-primary" style={{fontSize:13.5, padding:'12px', marginBottom:8}} onClick={onImportBBL}>📂 导入 BBL 转 CSV(复用文件名)</button>
+          <div className="lock-bar"><span>🔒</span><span>原始记录 · 只读对外 · 任何功能(含未来新增)仅 copy 副本,不得修改/删除</span></div>
+          {groups.map(function(g){
+            return (
+              <div key={g.day}>
+                <div className="section-head"><span>{g.day}</span><span className="cnt">{g.recs.length} 条</span></div>
+                {g.recs.map(function(r){
+                  return (
+                    <div key={r.name} className="rec-row">
+                      <span className="grip" title="拖拽调序">≡</span>
+                      <div className="rec-info">
+                        <div className="t">{r.name}</div>
+                        <div className="s">← {r.src} · {r.meta}</div>
+                      </div>
+                      <div className="rec-act"><span title="改名" onClick={function(){ onRename(r); }}>✏️</span></div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          <div className="tap-hint">🔑 ☰ 全局总列表 · 按天 section · ✏️改名 · ≡调序 · 只读</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
+   右侧滑 · 子列表 (各功能独立副本 · push 进功能页后右上角呼出)
+   由原始记录 copy 而来 · 与原始记录互不相干 · 各功能各自管理
+   ===================================================================== */
+function RightDrawer({ title, sub, recs, onClose, onCopyNew }) {
+  return (
+    <div>
+      <div className="drawer-mask" onClick={onClose} />
+      <div className="drawer right">
+        <div className="drawer-head">
+          <div>
+            <div className="drawer-title">{title}</div>
+            <div className="muted" style={{fontSize:10.5}}>{sub}</div>
+          </div>
+          <div className="drawer-close" onClick={onClose}>✕</div>
+        </div>
+        <div className="drawer-body">
+          <div className="copy-bar"><span>📋</span><span>副本 · 由原始记录 copy · 可自由归类/迭代,与原始互不相干</span></div>
+          {recs.map(function(r){
+            return (
+              <div key={r.name} className="rec-row">
+                <span className="grip" title="拖拽调序">≡</span>
+                <div className="rec-info">
+                  <div className="t">{r.name}</div>
+                  <div className="s">← {r.src} · {r.meta}</div>
+                </div>
+                <div className="rec-act"><span title="改名">✏️</span></div>
+              </div>
+            );
+          })}
+          <button className="btn btn-secondary" style={{fontSize:12.5, padding:'11px', marginTop:8}} onClick={onCopyNew}>+ 从原始记录 copy</button>
+          <div className="tap-hint">🔑 右侧滑 · 本功能独立副本 · 核心逻辑同总列表(都是拿数据→处理)</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================================
+   首页 (Y 型三入口 + 方案列表 + 左上角 ☰ 唤总列表)
    ===================================================================== */
 function ScreenHome() {
   const [show, toast] = useToast();
   const [sel, setSel] = useState(null);
+  const [leftOpen, setLeftOpen] = useState(false);
+  const [rename, setRename] = useState(null);
   return (
     <div className="scr"><div className="scr-pad">
       <div className="nav-bar">
-        <div className="nav-back" style={{visibility:'hidden'}}>‹</div>
+        <div className="nav-icon" onClick={function(){ setLeftOpen(true); }}>☰</div>
         <div className="nav-title">PID_Liner</div>
         <div style={{width:28}} />
       </div>
@@ -241,8 +399,23 @@ function ScreenHome() {
         </div>
         <div style={{marginTop:8, fontSize:12}}><span className="muted">基线 P38</span> <span style={{color:'#166534'}}>→ 当前 P38 稳定</span></div>
       </div>
-      <div className="tap-hint">🔑 三入口 · 独立分析 / 方案迭代(免费·本地算) 与 炸机诊断(付费·线上AI) 平行</div>
+      <div className="tap-hint">🔑 三入口 · 左上角 ☰ 唤总列表(原始记录仓库) · 各功能 copy 副本,原始只读</div>
       {toast}
+
+      {/* 左侧滑 · 总列表(全局 ☰ 唤出 · 原始记录仓库)*/}
+      {leftOpen && <LeftDrawer
+        onClose={function(){ setLeftOpen(false); }}
+        onImportBBL={function(){ setLeftOpen(false); setRename({defaultName:'001', source:'001.bbl', sub:'BBL→CSV 转换完成 · 默认复用 bbl 名'}); }}
+        onRename={function(r){ setRename({defaultName:r.name.replace(/\.csv$/,''), source:r.src, sub:'重命名(只改显示名 · 文件内容不动)'}); }}
+      />}
+      {/* 落盘改名弹窗(总列表/子列表统一交互)*/}
+      {rename && <RenameModal
+        defaultName={rename.defaultName}
+        source={rename.source}
+        sub={rename.sub}
+        onCancel={function(){ setRename(null); }}
+        onSave={function(v){ setRename(null); show('✓ 已保存:' + v); }}
+      />}
     </div></div>
   );
 }
@@ -427,6 +600,7 @@ function ScreenWorkbench() {
   const [phaseText, setPhaseText] = useState('');
   const [round, setRound] = useState(3);     // 当前轮次(合并后 +1)
   const timerRef = useRef(null);
+  const [rightOpen, setRightOpen] = useState(false);  // 右侧滑 · 方案子列表(副本)
 
   const PHASES = [
     { p:15, t:'打开 btfl_new.BBL...' },
@@ -478,7 +652,10 @@ function ScreenWorkbench() {
       <div className="nav-bar">
         <div className="nav-back">‹</div>
         <div className="nav-title">怪象3.5寸</div>
-        <div className="nav-badge iter">方案迭代</div>
+        <div style={{display:'flex', alignItems:'center', gap:10}}>
+          <span className="nav-badge iter">方案迭代</span>
+          <span className="nav-icon" style={{textAlign:'right', color:'#0f766e'}} onClick={function(){ setRightOpen(true); }} title="方案副本列表">📋</span>
+        </div>
       </div>
       <div className="card" style={{padding:'14px 16px'}}>
         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
@@ -539,6 +716,19 @@ function ScreenWorkbench() {
       <div className="tap-hint">🔑 isIter=YES · 点「导入下一轮」看 inline loading → sheet → 合并后原地刷新轮次</div>
 
       {phase==='sheet' && <InteractiveSessionSheet onMerge={onMerge} onDiscard={onDiscard} onFork={onFork} />}
+
+      {/* 右侧滑 · 方案子列表(push 进工作台后右上角 📋 呼出 · 副本)*/}
+      {rightOpen && <RightDrawer
+        title="📋 方案 · 副本"
+        sub="子列表 · 仅方案迭代"
+        recs={[
+          { name:'怪象3.5寸 · 第3轮', src:'怪象3.5寸_S2.csv', meta:'副本 · 进行中' },
+          { name:'怪象3.5寸 · 第2轮', src:'怪象3.5寸_S1.csv', meta:'副本 · 已归档' },
+          { name:'吴bbl5寸 · 第5轮',  src:'吴bbl_S1.csv',     meta:'副本 · 已收敛 ✓' },
+        ]}
+        onClose={function(){ setRightOpen(false); }}
+        onCopyNew={function(){ setRightOpen(false); show('→ 唤出左侧总列表选记录 copy'); }}
+      />}
       {toast}
     </div></div>
   );
@@ -775,6 +965,67 @@ function ScreenCrashResult() {
 }
 
 /* =====================================================================
+   展示屏 (侧滑抽屉打开态 / 落盘弹窗态 · 平铺静态展示全貌)
+   ===================================================================== */
+function ShowcaseTotalList() {
+  return (
+    <div className="scr"><div className="scr-pad">
+      <div className="nav-bar">
+        <div className="nav-icon">☰</div>
+        <div className="nav-title">PID_Liner</div>
+        <div style={{width:28}} />
+      </div>
+      <div className="muted" style={{fontSize:11, padding:'4px 4px'}}>首页被遮罩 · 左侧滑(总列表)滑入</div>
+      <LeftDrawer onClose={function(){}} onImportBBL={function(){}} onRename={function(){}} />
+    </div></div>
+  );
+}
+
+function ShowcaseRename() {
+  return (
+    <div className="scr">
+      <div className="scr-pad" style={{opacity:0.45, filter:'blur(1.5px)'}}>
+        <div className="nav-bar">
+          <div className="nav-icon">☰</div>
+          <div className="nav-title">PID_Liner</div>
+          <div style={{width:28}} />
+        </div>
+        <div className="muted" style={{fontSize:11, padding:'4px 4px'}}>总列表 · 落盘瞬间弹窗</div>
+      </div>
+      <RenameModal defaultName="001" source="001.bbl" sub="BBL→CSV 转换完成 · 默认复用 bbl 名" onCancel={function(){}} onSave={function(){}} />
+    </div>
+  );
+}
+
+function ShowcaseRight() {
+  return (
+    <div className="scr">
+      <div className="scr-pad" style={{opacity:0.45, filter:'blur(1.5px)'}}>
+        <div className="nav-bar">
+          <div className="nav-back">‹</div>
+          <div className="nav-title">怪象3.5寸</div>
+          <div style={{display:'flex', alignItems:'center', gap:10}}>
+            <span className="nav-badge iter">方案迭代</span>
+            <span className="nav-icon" style={{textAlign:'right', color:'#0f766e'}}>📋</span>
+          </div>
+        </div>
+      </div>
+      <RightDrawer
+        title="📋 方案 · 副本"
+        sub="子列表 · 仅方案迭代"
+        recs={[
+          { name:'怪象3.5寸 · 第3轮', src:'怪象3.5寸_S2.csv', meta:'副本 · 进行中' },
+          { name:'怪象3.5寸 · 第2轮', src:'怪象3.5寸_S1.csv', meta:'副本 · 已归档' },
+          { name:'吴bbl5寸 · 第5轮',  src:'吴bbl_S1.csv',     meta:'副本 · 已收敛 ✓' },
+        ]}
+        onClose={function(){}}
+        onCopyNew={function(){}}
+      />
+    </div>
+  );
+}
+
+/* =====================================================================
    总集成 App
    ===================================================================== */
 function App() {
@@ -782,21 +1033,39 @@ function App() {
     <div>
       <div className="page-title">PID_Liner · 总集成原型</div>
       <div className="page-sub">
-        <b>三入口并存</b>:首页 Y 型 → <b>独立分析</b>(isIter=NO · 三态状态机)/ <b>方案迭代</b>(isIter=YES · 多轮闭环)/ <b>🩺炸机诊断</b>(线上 AI · 付费)。
-        前两者<b>免费·本地算</b>;炸机诊断走 <b>GLM-4.7-Flash 线上 AI</b>(per-request 成本 → IAP 付费墙),独立入口便于单独门禁(见 [[monetization-iap-strategy]])。
+        <b>左右分工数据架构</b>:左上角 <b>☰ 全局总列表</b>(原始记录仓库 · bbl→csv 产物 · 只读对外 · 按天 section 分组 · 改名/调序 · 常驻单例)→ 各功能 <b>copy 副本</b>到自己的右侧滑子列表,原始记录永不被改/删。<br/>
+        <b>三入口并存</b>:首页 Y 型 → <b>独立分析</b>(isIter=NO · 三态状态机)/ <b>方案迭代</b>(isIter=YES · 多轮闭环)/ <b>🩺炸机诊断</b>(线上 AI · 付费)。前两者<b>免费·本地算</b>;炸机诊断走 <b>GLM-4.7-Flash 线上 AI</b>(per-request 成本 → IAP 付费墙)。
       </div>
 
       {/* 首页 */}
       <div className="branch-band">
         <span className="branch-tag home">首页</span>
-        <span className="branch-title">三入口 · 选一条路</span>
-        <span className="branch-desc">免费(独立/迭代) + 付费(炸机诊断) 平行</span>
+        <span className="branch-title">三入口 · 选一条路 · 左上角 ☰ 唤总列表</span>
+        <span className="branch-desc">免费(独立/迭代) + 付费(炸机诊断) 平行 · ☰ 全局总列表</span>
         <span className="branch-line" />
       </div>
       <div className="phones-row">
         <div className="phone-col">
-          <div className="phone-label">首页 • <b>三入口 + 方案列表</b></div>
+          <div className="phone-label">首页 • <b>三入口 + 方案列表</b> · 点 ☰</div>
           <IosFrame><ScreenHome /></IosFrame>
+        </div>
+      </div>
+
+      {/* 原始记录仓库(左侧滑 · 总列表 · 全局 ☰)*/}
+      <div className="branch-band">
+        <span className="branch-tag" style={{background:'#ecfdf5', color:'#065f46'}}>☰ 总列表</span>
+        <span className="branch-title">原始记录仓库 · 全局左侧滑 · 只读对外</span>
+        <span className="branch-desc">bbl→csv 产物 · 按天 section · 改名/调序 · 各功能仅 copy 副本</span>
+        <span className="branch-line" />
+      </div>
+      <div className="phones-row">
+        <div className="phone-col">
+          <div className="phone-label">☰ 左侧滑 · <b>原始记录仓库(总列表)</b></div>
+          <IosFrame><ShowcaseTotalList /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">落盘 · <b>改名弹窗(默认源名+高亮全选)</b></div>
+          <IosFrame><ShowcaseRename /></IosFrame>
         </div>
       </div>
 
@@ -831,12 +1100,16 @@ function App() {
       </div>
       <div className="phones-row">
         <div className="phone-col">
-          <div className="phone-label">① 工作台 · <b>怪象3.5寸 第3轮</b></div>
+          <div className="phone-label">① 工作台 · <b>怪象3.5寸 第3轮</b> · 点 📋</div>
           <IosFrame><ScreenWorkbench /></IosFrame>
         </div>
         <div className="phone-col">
           <div className="phone-label">② 导入下一轮 · <b>Session 选择</b></div>
           <IosFrame><ScreenSheet /></IosFrame>
+        </div>
+        <div className="phone-col">
+          <div className="phone-label">③ 右侧滑 · <b>方案副本列表(子列表)</b></div>
+          <IosFrame><ShowcaseRight /></IosFrame>
         </div>
       </div>
 
