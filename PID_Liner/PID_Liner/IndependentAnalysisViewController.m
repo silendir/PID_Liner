@@ -463,6 +463,8 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         [[PIDAnalysisViewController alloc] initWithCSVFilePath:self.sessionCSVPaths[idx]];
     // 🔑 isIter=NO:独立分析不复用迭代链,不保存(右路 1.1 前 1对1 干净版)
     // PIDAnalysisViewController 默认 isIterationMode=NO,此处不显式置位以保持默认
+    // 🔑 0.4c-2:隐藏内置「导入下一轮」按钮,独立分析保持纯分析入口(不入方案),避免误触发建链
+    vc.hidesBuiltinImportButton = YES;
 
     [self addChildViewController:vc];
     vc.view.translatesAutoresizingMaskIntoConstraints = NO;

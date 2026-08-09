@@ -49,6 +49,18 @@ NS_ASSUME_NONNULL_BEGIN
  */
 + (CGFloat)fullyExpandedRequiredHeight;
 
+/**
+ * 容器(工作台)嵌入时调用:绑定为迭代模式,关联指定链
+ * 预填该链历史,供 startAnalysis 画历史预测虚线 + toggle
+ */
+- (void)configureForIterationWithChainId:(NSString *)chainId;
+
+/**
+ * 容器嵌入时设 YES:隐藏内置「导入新一轮 BBL」按钮
+ * 工作台/独立分析有自己的导入/不入方案流程,避免重复按钮 + 入口隔离
+ */
+@property (nonatomic, assign) BOOL hidesBuiltinImportButton;
+
 @end
 
 NS_ASSUME_NONNULL_END

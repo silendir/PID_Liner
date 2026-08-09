@@ -352,6 +352,9 @@
 
     // 🔑 0.4c-1 嵌入单 CSV(isIter=NO 简化);0.4c-2 改 isIter=YES + chainId 画历史虚线
     PIDAnalysisViewController *vc = [[PIDAnalysisViewController alloc] initWithCSVFilePath:csvPath];
+    // 🔑 0.4c-2 第1步:迭代模式绑定(画历史预测虚线)+ 隐藏内置导入按钮(用工作台自己的Session流程)
+    [vc configureForIterationWithChainId:self.chainId];
+    vc.hidesBuiltinImportButton = YES;
     [self addChildViewController:vc];
     vc.view.translatesAutoresizingMaskIntoConstraints = NO;
     [self.chartContainer addSubview:vc.view];

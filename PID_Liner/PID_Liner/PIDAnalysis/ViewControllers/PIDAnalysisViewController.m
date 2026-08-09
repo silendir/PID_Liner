@@ -428,6 +428,8 @@
     importNextButton.contentEdgeInsets = UIEdgeInsetsMake(10, 20, 10, 20);
     [importNextButton addTarget:self action:@selector(importNextBBLTapped) forControlEvents:UIControlEventTouchUpInside];
     [contentView addSubview:importNextButton];
+    // 🔑 0.4c-2:容器(工作台/独立分析)嵌入时隐藏内置导入按钮,避免与容器自己的导入流程重复 + 入口隔离
+    importNextButton.hidden = self.hidesBuiltinImportButton;
     objc_setAssociatedObject(vc, "importNextButton", importNextButton, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     [NSLayoutConstraint activateConstraints:@[
@@ -505,6 +507,18 @@
                               + spacing;                             // contentView.bottom
     CGFloat tabBarHeight = 49;
     return infoBarArea + sliderArea + scrollViewTopGap + contentViewHeight + tabBarHeight;
+}
+
+#pragma mark - 容器嵌入配置(任务#28 0.4c-2)
+
+/// 工作台嵌入:绑定为迭代模式 + 预填链历史(供 startAnalysis 画历史预测虚线)
+/// 工作台在 initWithCSVFilePath 之后、startAnalysis 之前调用
+- (void)configureForIterationWithChainId:(NSString *)chainId {
+    _isIterationMode = YES;
+    _currentChainId = [chainId copy];
+    // csvFilePath 已由 initWithCSVFilePath 设好,此处预填该链 records,
+    // 后续 performAnalysis 画图时遍历 tuningHistory 即可绘出历史虚线
+    [self loadTuningHistory];
 }
 
 - (UIViewController *)createNoiseViewController {
