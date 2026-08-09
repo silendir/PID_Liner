@@ -71,10 +71,19 @@
 }
 
 - (void)setupUI {
+    // 🔑 整体可滚动:让响应图容器有充足高度(屏幕宽×1.5),内容超出屏幕时垂直滚动
+    UIScrollView *scrollView = [[UIScrollView alloc] init];
+    scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:scrollView];
+
+    UIView *contentView = [[UIView alloc] init];
+    contentView.translatesAutoresizingMaskIntoConstraints = NO;
+    [scrollView addSubview:contentView];
+
     // 顶部链头
     UIView *header = [[UIView alloc] init];
     header.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:header];
+    [contentView addSubview:header];
 
     _schemeNameLabel = [[UILabel alloc] init];
     _schemeNameLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
@@ -104,12 +113,12 @@
     chainTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
     chainTitle.textColor = [UIColor secondaryLabelColor];
     chainTitle.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:chainTitle];
+    [contentView addSubview:chainTitle];
 
     _iterationChainScroll = [[UIScrollView alloc] init];
     _iterationChainScroll.showsHorizontalScrollIndicator = NO;
     _iterationChainScroll.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:_iterationChainScroll];
+    [contentView addSubview:_iterationChainScroll];
 
     // 响应图容器
     UILabel *chartTitle = [[UILabel alloc] init];
@@ -117,13 +126,13 @@
     chartTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
     chartTitle.textColor = [UIColor secondaryLabelColor];
     chartTitle.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:chartTitle];
+    [contentView addSubview:chartTitle];
 
     _chartContainer = [[UIView alloc] init];
     _chartContainer.backgroundColor = [UIColor secondarySystemBackgroundColor];
     _chartContainer.layer.cornerRadius = 10;
     _chartContainer.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:_chartContainer];
+    [contentView addSubview:_chartContainer];
 
     // 导入下一轮按钮
     _importNextButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -134,7 +143,7 @@
     _importNextButton.layer.cornerRadius = 12;
     _importNextButton.translatesAutoresizingMaskIntoConstraints = NO;
     [_importNextButton addTarget:self action:@selector(importNextTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:_importNextButton];
+    [contentView addSubview:_importNextButton];
 
     // 推荐区 / CLI 区占位
     _placeholderLabel = [[UILabel alloc] init];
@@ -147,13 +156,26 @@
     _placeholderLabel.layer.cornerRadius = 8;
     _placeholderLabel.clipsToBounds = YES;
     _placeholderLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:_placeholderLabel];
+    [contentView addSubview:_placeholderLabel];
 
     [NSLayoutConstraint activateConstraints:@[
+        // scrollView 铺满
+        [scrollView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
+        [scrollView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [scrollView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [scrollView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+
+        // contentView 撑开 contentSize(宽度=scrollView 宽,高度由内容钉底)
+        [contentView.topAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.topAnchor],
+        [contentView.leadingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.leadingAnchor],
+        [contentView.trailingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.trailingAnchor],
+        [contentView.bottomAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.bottomAnchor],
+        [contentView.widthAnchor constraintEqualToAnchor:scrollView.frameLayoutGuide.widthAnchor],
+
         // 链头
-        [header.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],
-        [header.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
-        [header.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [header.topAnchor constraintEqualToAnchor:contentView.topAnchor constant:12],
+        [header.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
+        [header.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
         [header.heightAnchor constraintEqualToConstant:34],
 
         [_schemeNameLabel.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
@@ -168,33 +190,35 @@
 
         // 轮次链
         [chainTitle.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:16],
-        [chainTitle.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [chainTitle.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
 
         [_iterationChainScroll.topAnchor constraintEqualToAnchor:chainTitle.bottomAnchor constant:6],
-        [_iterationChainScroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-        [_iterationChainScroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [_iterationChainScroll.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor],
+        [_iterationChainScroll.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor],
         [_iterationChainScroll.heightAnchor constraintEqualToConstant:56],
 
         // 响应图
         [chartTitle.topAnchor constraintEqualToAnchor:_iterationChainScroll.bottomAnchor constant:14],
-        [chartTitle.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [chartTitle.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
 
         [_chartContainer.topAnchor constraintEqualToAnchor:chartTitle.bottomAnchor constant:6],
-        [_chartContainer.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
-        [_chartContainer.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
-        [_chartContainer.heightAnchor constraintEqualToConstant:240],
+        [_chartContainer.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
+        [_chartContainer.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
+        // 🔑 图表容器高度 = 屏幕宽 × 1.5(给 PIDAnalysisVC 的 slider/图表/CLI 充足空间,不再被压成 ~100pt)
+        [_chartContainer.heightAnchor constraintEqualToAnchor:contentView.widthAnchor multiplier:1.5],
 
         // 推荐区占位
         [_placeholderLabel.topAnchor constraintEqualToAnchor:_chartContainer.bottomAnchor constant:12],
-        [_placeholderLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
-        [_placeholderLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [_placeholderLabel.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
+        [_placeholderLabel.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
         [_placeholderLabel.heightAnchor constraintEqualToConstant:60],
 
-        // 导入按钮
+        // 导入按钮(钉 contentView 底,撑开 contentSize)
         [_importNextButton.topAnchor constraintEqualToAnchor:_placeholderLabel.bottomAnchor constant:14],
-        [_importNextButton.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
-        [_importNextButton.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
-        [_importNextButton.heightAnchor constraintEqualToConstant:46]
+        [_importNextButton.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
+        [_importNextButton.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
+        [_importNextButton.heightAnchor constraintEqualToConstant:46],
+        [_importNextButton.bottomAnchor constraintEqualToAnchor:contentView.bottomAnchor constant:-16]
     ]];
 }
 
