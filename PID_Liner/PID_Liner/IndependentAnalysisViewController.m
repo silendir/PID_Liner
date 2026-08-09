@@ -8,6 +8,9 @@
 #import "IndependentAnalysisViewController.h"
 #import "BBLImportService.h"
 #import "PIDAnalysisViewController.h"
+#import "IterationWorkbenchViewController.h"
+#import "IterationChainManager.h"
+#import "PIDCSVParser.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 /// 三态(条件渲染,不平铺)
@@ -55,6 +58,13 @@ typedef NS_ENUM(NSInteger, IndepState) {
 
     [self setupUI];
     [self loadLastCSV];          // 读「继续上次」缓存
+
+    // 🔑 任务#28 0.4c-2 第3步(Q3):「纳入迭代」桥接 — 把当前分析结果建链首飞轮,推入工作台
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:@"纳入迭代"
+                style:UIBarButtonItemStylePlain
+               target:self
+               action:@selector(includeInIterationTapped)];
     self.state = IndepStateEmpty;
     [self applyState];
 }
@@ -260,6 +270,8 @@ typedef NS_ENUM(NSInteger, IndepState) {
     self.emptyView.hidden = (self.state != IndepStateEmpty);
     self.processingView.hidden = (self.state != IndepStateProcessing);
     self.resultView.hidden = (self.state != IndepStateResult);
+    // 「纳入迭代」仅结果态可用(空态/处理中无可建链的数据)
+    self.navigationItem.rightBarButtonItem.enabled = (self.state == IndepStateResult);
 }
 
 #pragma mark - 空态:导入
@@ -509,6 +521,38 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         self.lastCSVPath = nil;
         self.lastCSVCard.hidden = YES;
     }
+}
+
+#pragma mark - 桥接:纳入迭代(任务#28 0.4c-2 第3步 Q3)
+
+/// 把当前独立分析(选中 Session)建成迭代链首飞轮,推入工作台继续多轮迭代
+- (void)includeInIterationTapped {
+    if (self.state != IndepStateResult) return;
+    if (self.selectedSessionIndex < 0
+        || self.selectedSessionIndex >= (NSInteger)self.sessionCSVPaths.count) {
+        [self showAlertWithTitle:@"无法纳入" message:@"请先选择一个 Session"];
+        return;
+    }
+
+    NSString *csvPath = self.sessionCSVPaths[self.selectedSessionIndex];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (csvPath.length == 0 || ![fm fileExistsAtPath:csvPath]) {
+        [self showAlertWithTitle:@"无法纳入" message:@"CSV 文件不存在"];
+        return;
+    }
+
+    // craftName 从 CSV 头解析(链头显示用;空则工作台兜底显示"方案 xxx")
+    NSString *craftName = [[PIDCSVParser parser] extractCraftNameFromCSV:csvPath] ?: @"";
+
+    // 建链(只建壳,首轮 record 由工作台嵌入 VC 分析完自动 appendRecord)
+    IterationChain *chain = [[IterationChainManager sharedManager]
+        createChainWithCraftName:craftName
+                         csvPath:csvPath
+                     sessionIndex:self.selectedSessionIndex];
+
+    IterationWorkbenchViewController *wb = [[IterationWorkbenchViewController alloc] initWithChainId:chain.chainId];
+    wb.hidesBottomBarWhenPushed = YES;
+    [self.navigationController pushViewController:wb animated:YES];
 }
 
 #pragma mark - 辅助

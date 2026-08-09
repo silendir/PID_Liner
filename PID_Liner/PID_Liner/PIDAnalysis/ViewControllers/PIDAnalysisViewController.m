@@ -2380,6 +2380,11 @@
     }
 
     [self saveCurrentRecordToChain:self.currentChainId currentPID:currentPID];
+
+    // 🔑 任务#28 0.4c-2 第3步:通知容器(工作台)本轮分析+保存到链已完成
+    // (appendRecord 已同步完成,链 records 已更新;block 由容器实现并负责切主线程)
+    // 非迭代模式不会走到这里(上方三个 early return 已拦截)
+    if (self.onAnalysisComplete) self.onAnalysisComplete();
 }
 
 /// 🔧 构建并保存调参记录到指定迭代链

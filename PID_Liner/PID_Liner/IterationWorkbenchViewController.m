@@ -10,8 +10,12 @@
 #import "IterationChain.h"
 #import "PIDTuningRecord.h"
 #import "PIDAnalysisViewController.h"
+#import "BBLImportService.h"
+#import "PIDCSVParser.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <SVProgressHUD/SVProgressHUD.h>
 
-@interface IterationWorkbenchViewController ()
+@interface IterationWorkbenchViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, copy) NSString *chainId;
 @property (nonatomic, strong, nullable) IterationChain *chain;
 
@@ -29,6 +33,9 @@
 
 // 导入下一轮按钮
 @property (nonatomic, strong) UIButton *importNextButton;
+
+/// 导入下一轮暂存:用户选中的本轮 CSV(嵌入 VC 分析完自动 appendRecord 进链后,由回调清空)
+@property (nonatomic, copy, nullable) NSString *pendingNextRoundCSVPath;
 
 @end
 
@@ -310,7 +317,10 @@
         self.currentAnalysisVC = nil;
     }
 
-    NSString *csvPath = [self latestCSVPath];
+    // 🔑 任务#28 0.4c-2 第3步:优先用「导入下一轮」暂存的 CSV;其次取链最新轮 CSV
+    NSString *csvPath = self.pendingNextRoundCSVPath.length > 0
+        ? self.pendingNextRoundCSVPath
+        : [self latestCSVPath];
     if (csvPath.length == 0) {
         UILabel *hint = [[UILabel alloc] init];
         hint.text = @"暂无可分析的 CSV";
@@ -345,6 +355,20 @@
         [vc.view.bottomAnchor constraintEqualToAnchor:self.chartContainer.bottomAnchor]
     ]];
     [vc didMoveToParentViewController:self];
+
+    // 🔑 任务#28 0.4c-2 第3步:VC 分析完(含 appendRecord 到链)回调,即时刷新链头/轮次链
+    __weak typeof(self) weakSelf = self;
+    vc.onAnalysisComplete = ^{
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // 链 records 已更新:刷链头(轮次号)+ 轮次链横滚(+1 节点)+ 清暂存 CSV
+            // 🔑 不调 renderLatestAnalysis(会重建 VC + 重跑分析 = 死循环),只刷链头/轮次链
+            [s reloadChainData];
+            [s renderHeaderAndChain];
+            s.pendingNextRoundCSVPath = nil;
+        });
+    };
     self.currentAnalysisVC = vc;
     [vc startAnalysis];
 }
@@ -384,10 +408,145 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-/// 📥 导入下一轮返参(0.4c-2:inline loading → Session sheet 三选一 → 合并原地刷新)
+/// 📥 导入下一轮返参(任务#28 0.4c-2 第3步)
+/// 线性流程:选 BBL → 转出 N Session → 单选一段飞行 → 嵌入 PIDAnalysisVC 分析 →
+/// VC 分析完自动 appendRecord 到【当前链】作第 N+1 轮(无丢弃/另立/合并,一条链=一台机一直拟合)
 - (void)importNextTapped {
-    [self showAlertWithTitle:@"导入下一轮返参"
-                     message:@"(0.4c-2 接:inline loading 不跳页 → Session sheet 丢弃/另立/合并 → 合并后原地刷新到下一轮)"];
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[[UTType typeWithIdentifier:@"public.data"]]
+                                                                     asCopy:YES];
+    picker.delegate = self;
+    picker.modalPresentationStyle = UIModalPresentationPageSheet;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+#pragma mark - 导入下一轮:UIDocumentPickerDelegate
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller
+didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *sourceURL = urls.firstObject;
+    if (!sourceURL) return;
+
+    // 只接受 .bbl(CSV 不走此入口)
+    NSString *ext = [sourceURL.pathExtension lowercaseString];
+    if (![ext isEqualToString:@"bbl"]) {
+        [self showAlertWithTitle:@"文件类型不支持" message:@"只支持导入 .bbl 飞行记录"];
+        return;
+    }
+
+    // security-scoped 复制到沙盒 Documents(与独立分析导入流程一致)
+    [sourceURL startAccessingSecurityScopedResource];
+    NSString *destPath = [[BBLImportService documentsDirectory]
+        stringByAppendingPathComponent:sourceURL.lastPathComponent];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:destPath]) {
+        [fm removeItemAtPath:destPath error:nil];
+    }
+    NSError *copyErr = nil;
+    BOOL ok = [fm copyItemAtPath:sourceURL.path toPath:destPath error:&copyErr];
+    [sourceURL stopAccessingSecurityScopedResource];
+
+    if (!ok) {
+        [self showAlertWithTitle:@"导入失败" message:copyErr.localizedDescription];
+        return;
+    }
+    [self startConvertBBL:destPath];
+}
+
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    // 取消:留在当前轮,无操作
+}
+
+#pragma mark - 导入下一轮:BBL → CSV 转换
+
+/// 后台批量转换所有 Session(带进度);单 Session 直进,多 Session 弹 sheet 单选
+- (void)startConvertBBL:(NSString *)bblPath {
+    [SVProgressHUD showWithStatus:@"转换 Session..."];
+    self.importNextButton.enabled = NO;
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSError *err = nil;
+        NSArray<BBLImportCSVResult *> *results =
+            [[BBLImportService shared] convertAllSessionsForBBL:bblPath
+                                                         motorKV:nil
+                                                        progress:^(NSInteger completed, NSInteger total) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    __strong typeof(weakSelf) s = weakSelf;
+                    if (!s) return;
+                    [SVProgressHUD showWithStatus:[NSString stringWithFormat:@"转换 Session %ld / %ld",
+                                                  (long)completed, (long)total]];
+                });
+            } error:&err];
+
+        // 只保留成功转出 CSV 的 Session
+        NSMutableArray<NSString *> *csvs = [NSMutableArray array];
+        NSMutableArray<NSString *> *descs = [NSMutableArray array];
+        for (BBLImportCSVResult *r in results) {
+            if (r.csvPath) {
+                [csvs addObject:r.csvPath];
+                [descs addObject:r.sessionDescription.length > 0
+                                  ? r.sessionDescription
+                                  : [NSString stringWithFormat:@"Session %ld", (long)r.logIndex + 1]];
+            }
+        }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) s = weakSelf;
+            if (!s) return;
+            [SVProgressHUD dismiss];
+            s.importNextButton.enabled = YES;
+
+            if (csvs.count == 0) {
+                [s showAlertWithTitle:@"转换失败" message:err.localizedDescription ?: @"无可生成的 CSV"];
+                return;
+            }
+            if (csvs.count == 1) {
+                [s reloadAnalysisWithCSV:csvs.firstObject];
+                return;
+            }
+            [s presentSessionSelectionSheetWithCSVs:csvs descriptions:descs];
+        });
+    });
+}
+
+#pragma mark - 导入下一轮:多 Session 单选 sheet
+
+/// 多 Session:弹 actionSheet 单选一段飞行(只选一个;一条链只追加一段飞行作下一轮)
+- (void)presentSessionSelectionSheetWithCSVs:(NSArray<NSString *> *)csvs
+                                descriptions:(NSArray<NSString *> *)descs {
+    UIAlertController *sheet = [UIAlertController
+        alertControllerWithTitle:@"选择本轮飞行的 Session"
+                         message:@"一条链只追加一段飞行作为下一轮"
+                  preferredStyle:UIAlertControllerStyleActionSheet];
+
+    for (NSUInteger i = 0; i < csvs.count; i++) {
+        NSString *title = (i < descs.count) ? descs[i]
+                                            : [NSString stringWithFormat:@"Session %lu", (unsigned long)(i + 1)];
+        NSString *csvPath = csvs[i];
+        [sheet addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [self reloadAnalysisWithCSV:csvPath];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+
+    // iPad popover 锚定到导入按钮
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = self.importNextButton;
+        sheet.popoverPresentationController.sourceRect = self.importNextButton.bounds;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+#pragma mark - 导入下一轮:嵌入新 CSV 分析
+
+/// 把选中 CSV 作为下一轮嵌入 PIDAnalysisVC 分析
+/// 🔑 不手动构造 record:嵌入的 VC(isIter=YES+chainId+craftName)分析完会自动 appendRecord 到当前链
+/// (snapshot.predictedCurve 自动填 → 历史虚线有数据);VC 完成回调里刷新链头/轮次链
+- (void)reloadAnalysisWithCSV:(NSString *)csvPath {
+    if (csvPath.length == 0) return;
+    self.pendingNextRoundCSVPath = csvPath;
+    [self renderLatestAnalysis];
 }
 
 #pragma mark - 辅助

@@ -61,6 +61,13 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @property (nonatomic, assign) BOOL hidesBuiltinImportButton;
 
+/**
+ * 分析完成回调(诊断→推荐→CLI→保存到链 全部完成后调用)
+ * 容器(工作台)据此刷新链头/轮次链;block 内自行切主线程。非迭代模式不触发。
+ * 任务#28 0.4c-2 第3步:导入下一轮后工作台据此即时刷新轮次 +1 / 历史虚线 +1 条
+ */
+@property (nonatomic, copy, nullable) void (^onAnalysisComplete)(void);
+
 @end
 
 NS_ASSUME_NONNULL_END
