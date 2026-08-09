@@ -17,9 +17,6 @@ typedef NS_ENUM(NSInteger, IndepState) {
     IndepStateResult     = 2,  // 结果态:Session chip + 图表
 };
 
-/// 「继续上次」缓存的 NSUserDefaults key(会话级保留最近成功 CSV 路径,不入迭代链)
-static NSString * const kIndepLastCSVKey = @"IndependentAnalysisLastCSV";
-
 @interface IndependentAnalysisViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, assign) IndepState state;
 
@@ -367,8 +364,6 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
                 return;
             }
             s.sessionCSVPaths = [csvs copy];
-            // 缓存最近成功 CSV(「继续上次」用;不入迭代链)
-            [[NSUserDefaults standardUserDefaults] setObject:csvs.firstObject forKey:kIndepLastCSVKey];
             s.lastCSVPath = csvs.firstObject;
             s.state = IndepStateResult;
             [s applyState];
@@ -502,19 +497,15 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 #pragma mark - 「继续上次」缓存
 
 - (void)loadLastCSV {
-    NSString *cached = [[NSUserDefaults standardUserDefaults] stringForKey:kIndepLastCSVKey];
-    // 校验文件仍存在(可能被用户从 ☰ 删除)
-    if (cached.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:cached]) {
-        self.lastCSVPath = cached;
-        self.lastCSVLabel.text = [cached lastPathComponent];
+    // 继续上次 = Documents 最近一条 CSV(兼容 demo 加入与独立分析自转的 CSV)
+    NSString *latest = [BBLImportService latestCSVInDocuments];
+    if (latest) {
+        self.lastCSVPath = latest;
+        self.lastCSVLabel.text = [latest lastPathComponent];
         self.lastCSVCard.hidden = NO;
     } else {
         self.lastCSVPath = nil;
         self.lastCSVCard.hidden = YES;
-        if (cached.length > 0) {
-            // 缓存失效,清掉
-            [[NSUserDefaults standardUserDefaults] removeObjectForKey:kIndepLastCSVKey];
-        }
     }
 }
 

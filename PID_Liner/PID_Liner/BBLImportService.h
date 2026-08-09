@@ -69,6 +69,16 @@ NS_ASSUME_NONNULL_BEGIN
 /// Documents 沙盒目录(转换产物落盘位置;与 ViewController/CSVHistory 一致)
 + (NSString *)documentsDirectory;
 
+/// Documents 是否已有 CSV 记录(空态兜底判断基准)
++ (BOOL)hasAnyCSVRecord;
+
+/// Documents 最近修改的 CSV 路径(无则 nil;空态判断/继续上次/建示例链共用)
++ (nullable NSString *)latestCSVInDocuments;
+
+/// 加入示例 BBL(空态兜底统一入口:copy bundle 001.bbl → 沙盒 → 转 CSV 注入元数据)
+/// @param completion 主线程回调;csvPath 成功生成的 CSV 路径(失败=nil + error)
++ (void)loadDemoBBLWithCompletion:(void(^)(NSString *_Nullable csvPath, NSError *_Nullable error))completion;
+
 @end
 
 NS_ASSUME_NONNULL_END

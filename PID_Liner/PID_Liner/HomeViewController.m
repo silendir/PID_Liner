@@ -9,6 +9,7 @@
 #import "CSVHistoryViewController.h"
 #import "IndependentAnalysisViewController.h"
 #import "IterationWorkbenchViewController.h"
+#import "BBLImportService.h"
 #import "IterationChainManager.h"
 #import "IterationChain.h"
 
@@ -365,34 +366,60 @@
 
 #pragma mark - 三入口 Actions
 
-/// 🛩️ 独立分析 → 独立分析三态状态机(0.4b:替换临时 pushCSVHistory)
+/// 🛩️ 独立分析 → CSV 记录空则弹推荐导入例子,否则进独立分析三态
 - (void)independentEntryTapped {
     NSLog(@"[Home] 独立分析入口");
+    if (![BBLImportService hasAnyCSVRecord]) {
+        [self promptDemoWithTitle:@"还没有飞行记录"
+                          message:@"加入一条示例飞行数据(BF 4.5),体验独立分析?"
+                         onJoined:^{ [self enterIndependentAnalysis]; }];
+    } else {
+        [self enterIndependentAnalysis];
+    }
+}
+
+- (void)enterIndependentAnalysis {
     IndependentAnalysisViewController *vc = [[IndependentAnalysisViewController alloc] init];
     [self.navigationController pushViewController:vc animated:YES];
 }
 
-/// 🎯 方案迭代 → 有链进最近一条工作台;无链提示先建方案(0.4c-1)
+/// 🎯 方案迭代 → 有链进最近工作台;无链弹推荐导入例子(加入=建示例链→进工作台)
 - (void)iterationEntryTapped {
     NSLog(@"[Home] 方案迭代入口");
-    [self openLatestWorkbenchOrPrompt];
+    [self loadSchemes];  // 刷新(按 createdAt 倒序)
+    if (self.schemes.count > 0) {
+        [self pushWorkbenchForChain:self.schemes.firstObject];
+    } else {
+        [self promptDemoWithTitle:@"还没有方案"
+                          message:@"加入一条示例飞行数据作为第一个方案,体验多轮迭代?"
+                         onJoined:^{ [self ensureDemoChainAndEnterWorkbench]; }];
+    }
 }
 
-/// 🎯 入口:有方案 → push 最近一条链的工作台;无方案 → 提示(建方案流程 0.4c-2 接)
-- (void)openLatestWorkbenchOrPrompt {
-    [self loadSchemes];  // 刷新方案列表(按 createdAt 倒序)
-    IterationChain *latest = self.schemes.firstObject;
-    if (latest) {
-        IterationWorkbenchViewController *vc = [[IterationWorkbenchViewController alloc] initWithChainId:latest.chainId];
-        [self.navigationController pushViewController:vc animated:YES];
-    } else {
-        UIAlertController *alert = [UIAlertController
-            alertControllerWithTitle:@"还没有方案"
-                             message:@"方案迭代以「导入 BBL 建方案」为起点。\n(新建方案流程将在下一版接入;当前可在 ☰ 总列表导入 BBL)"
-                      preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
+/// 加入示例 → 用最近 demo CSV 建/复用一条迭代链 → 进工作台
+- (void)ensureDemoChainAndEnterWorkbench {
+    NSString *latestCSV = [BBLImportService latestCSVInDocuments];
+    if (!latestCSV) {
+        [self showSimpleAlertWithTitle:@"加入失败" message:@"未能生成示例数据"];
+        return;
     }
+    IterationChainManager *mgr = [IterationChainManager sharedManager];
+    // 复用同源 demo 链(避免重复加入时建多条)
+    IterationChain *existing = nil;
+    for (IterationChain *c in [mgr allChains]) {
+        if ([c.initialCSVPath.lastPathComponent isEqualToString:latestCSV.lastPathComponent]) {
+            existing = c; break;
+        }
+    }
+    IterationChain *chain = existing ?: [mgr createChainWithCraftName:@"示例飞行"
+                                                                csvPath:latestCSV
+                                                            sessionIndex:0];
+    [self pushWorkbenchForChain:chain];
+}
+
+- (void)pushWorkbenchForChain:(IterationChain *)chain {
+    IterationWorkbenchViewController *vc = [[IterationWorkbenchViewController alloc] initWithChainId:chain.chainId];
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 /// 🩺 炸机诊断 → 0.3 指向现有 CSVHistory(选记录诊断);0.4 独立诊断屏
@@ -410,6 +437,37 @@
 - (void)pushCSVHistory {
     CSVHistoryViewController *vc = [[CSVHistoryViewController alloc] init];
     [self.navigationController pushViewController:vc animated:YES];
+}
+
+#pragma mark - 空态兜底(三入口统一:空 → 弹推荐导入例子 → 加入 → 各走流程)
+
+/// 统一空态弹窗:推荐导入例子 →「加入示例」= loadDemoBBL → onJoined(主线程)
+- (void)promptDemoWithTitle:(NSString *)title message:(NSString *)message onJoined:(void(^)(void))onJoined {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                    message:message
+                                                             preferredStyle:UIAlertControllerStyleAlert];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"加入示例" style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *a) {
+        [BBLImportService loadDemoBBLWithCompletion:^(NSString *csvPath, NSError *error) {
+            __strong typeof(weakSelf) s = weakSelf;
+            if (!s) return;
+            if (!csvPath) {
+                [s showSimpleAlertWithTitle:@"加入失败" message:error.localizedDescription ?: @"未知错误"];
+                return;
+            }
+            if (onJoined) onJoined();
+        }];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"不用了" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)showSimpleAlertWithTitle:(NSString *)title message:(NSString *)message {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message
+                                                             preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 #pragma mark - UITableViewDataSource / UITableViewDelegate

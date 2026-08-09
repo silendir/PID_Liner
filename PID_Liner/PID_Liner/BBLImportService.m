@@ -44,6 +44,69 @@ typedef NS_ENUM(NSInteger, BBLImportErrorCode) {
     return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
 }
 
++ (BOOL)hasAnyCSVRecord {
+    return [self latestCSVInDocuments] != nil;
+}
+
++ (nullable NSString *)latestCSVInDocuments {
+    NSString *docs = [self documentsDirectory];
+    NSArray<NSString *> *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:docs error:nil];
+    NSString *latest = nil;
+    NSDate *latestDate = nil;
+    for (NSString *f in files) {
+        if (![f.pathExtension.lowercaseString isEqualToString:@"csv"]) continue;
+        NSString *p = [docs stringByAppendingPathComponent:f];
+        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:p error:nil];
+        NSDate *mod = attrs[NSFileModificationDate];
+        if (mod && (!latestDate || [mod compare:latestDate] == NSOrderedDescending)) {
+            latestDate = mod;
+            latest = p;
+        }
+    }
+    return latest;
+}
+
+#pragma mark - 示例数据(空态兜底)
+
+/// 加入示例 BBL(空态统一入口):copy bundle 001.bbl → 沙盒 → 转 CSV(注入元数据)
++ (void)loadDemoBBLWithCompletion:(void(^)(NSString *_Nullable csvPath, NSError *_Nullable error))completion {
+    NSString *bundlePath = [[NSBundle mainBundle] pathForResource:@"001" ofType:@"bbl"];
+    if (!bundlePath) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSError errorWithDomain:BBLImportErrorDomain code:0
+                                              userInfo:@{NSLocalizedDescriptionKey: @"bundle 内找不到 001.bbl"}]);
+            });
+        }
+        return;
+    }
+
+    NSString *docs = [self documentsDirectory];
+    NSString *destBBL = [docs stringByAppendingPathComponent:@"001.bbl"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:destBBL]) {
+        [fm removeItemAtPath:destBBL error:nil];
+    }
+    NSError *copyErr = nil;
+    if (![fm copyItemAtPath:bundlePath toPath:destBBL error:&copyErr]) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, copyErr); });
+        }
+        return;
+    }
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSError *convErr = nil;
+        NSString *csvPath = [[BBLImportService shared] convertBBL:destBBL
+                                                          logIndex:0
+                                                           motorKV:nil
+                                                             error:&convErr];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(csvPath, convErr);
+        });
+    });
+}
+
 #pragma mark - 列出 Session
 
 - (nullable NSArray<BBLSessionInfo *> *)listSessionsForBBL:(NSString *)bblPath error:(NSError **)error {

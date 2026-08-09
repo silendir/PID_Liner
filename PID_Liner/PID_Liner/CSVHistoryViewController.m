@@ -192,20 +192,9 @@
 
 #pragma mark - Demo 兜底机制(空列表 → 弹「加入示例」)
 
-/// 会话级去重集合(进程生命周期;记录本会话已弹过 demo 的列表 key)
-static NSMutableSet<NSString *> *kDemoPromptedKeys(void) {
-    static NSMutableSet *set;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{ set = [NSMutableSet set]; });
-    return set;
-}
-
-/// 列表空且本会话未弹过 → 弹 demo 弹窗
+/// 列表空 → 弹 demo 弹窗(🔑 每次空都弹,不去重;用户反馈三入口统一空态引导)
 - (void)checkAndPromptDemoIfEmpty {
-    if (self.recordGroups.count > 0) return;            // 非空(老用户):不触发,零打扰
-    NSString *key = @"CSVHistoryList";
-    if ([kDemoPromptedKeys() containsObject:key]) return;  // 本会话已弹过(含用户取消):不再弹
-    [kDemoPromptedKeys() addObject:key];                // 标记(无论加入/取消,本会话不再弹)
+    if (self.recordGroups.count > 0) return;            // 非空:不触发
 
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"还没有飞行记录"
@@ -219,46 +208,17 @@ static NSMutableSet<NSString *> *kDemoPromptedKeys(void) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-/// 加入示例 = copy bundle 001.bbl → 沙盒 → 转 CSV(经 BBLImportService 统一管线) → reload
+/// 加入示例 = copy bundle 001.bbl → 转 CSV(经 BBLImportService) → reload
 /// 🔑 加入后即普通记录,与用户导入的记录完全一样;bundle 001.bbl 实体永远不动
 - (void)loadDemoBBLAndReload {
-    NSString *bundlePath = [[NSBundle mainBundle] pathForResource:@"001" ofType:@"bbl"];
-    if (!bundlePath) {
-        NSLog(@"❌ [Demo] bundle 内找不到 001.bbl");
-        return;
-    }
-
-    NSString *docs = [self documentsDirectory];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *destBBL = [docs stringByAppendingPathComponent:@"001.bbl"];
-
-    // 沙盒已有 001.bbl 先移除,避免 copy 冲突
-    if ([fm fileExistsAtPath:destBBL]) {
-        [fm removeItemAtPath:destBBL error:nil];
-    }
-    NSError *copyErr = nil;
-    if (![fm copyItemAtPath:bundlePath toPath:destBBL error:&copyErr]) {
-        NSLog(@"❌ [Demo] copy 001.bbl 失败: %@", copyErr.localizedDescription);
-        return;
-    }
-
     __weak typeof(self) weakSelf = self;
-    // 后台转 CSV(经 BBLImportService 统一管线;001.bbl 取第一个 Session,motorKV=nil)
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSError *convErr = nil;
-        NSString *csvPath = [[BBLImportService shared] convertBBL:destBBL
-                                                          logIndex:0
-                                                           motorKV:nil
-                                                             error:&convErr];
+    [BBLImportService loadDemoBBLWithCompletion:^(NSString *csvPath, NSError *error) {
         if (!csvPath) {
-            NSLog(@"❌ [Demo] 001.bbl 转换失败: %@", convErr.localizedDescription);
+            NSLog(@"❌ [Demo] 001.bbl 转换失败: %@", error.localizedDescription);
             return;
         }
-        // 回主线程刷新列表
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [weakSelf loadExistingCSVFiles];
-        });
-    });
+        [weakSelf loadExistingCSVFiles];
+    }];
 }
 
 /// Documents 目录(沙盒)
