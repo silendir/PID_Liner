@@ -43,6 +43,12 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)startAnalysis;
 
+/**
+ * 响应图完全摊开所需的总高度(3轴图 + 控件 + tabBar)
+ * 容器(如工作台)据此设高度,可让内部 scrollView 不滚动,只剩外层一套 scroll (任务#28 0.4c-1.3)
+ */
++ (CGFloat)fullyExpandedRequiredHeight;
+
 @end
 
 NS_ASSUME_NONNULL_END

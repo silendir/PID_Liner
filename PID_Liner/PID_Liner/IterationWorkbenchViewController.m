@@ -204,8 +204,9 @@
         [_chartContainer.topAnchor constraintEqualToAnchor:chartTitle.bottomAnchor constant:6],
         [_chartContainer.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
         [_chartContainer.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
-        // 🔑 图表容器高度 = 屏幕宽 × 1.5(给 PIDAnalysisVC 的 slider/图表/CLI 充足空间,不再被压成 ~100pt)
-        [_chartContainer.heightAnchor constraintEqualToAnchor:contentView.widthAnchor multiplier:1.5],
+        // 🔑 图表容器高度 = PIDAnalysisVC 完全摊开所需高度(3轴图+控件+tabBar≈1985pt)
+        //   给足高度让内部 scrollView 不滚动,只剩外层工作台一套 scroll(消除双 scroll 嵌套)
+        [_chartContainer.heightAnchor constraintEqualToConstant:[PIDAnalysisViewController fullyExpandedRequiredHeight]],
 
         // 推荐区占位
         [_placeholderLabel.topAnchor constraintEqualToAnchor:_chartContainer.bottomAnchor constant:12],

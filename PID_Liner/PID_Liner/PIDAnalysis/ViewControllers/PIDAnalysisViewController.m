@@ -484,6 +484,29 @@
     return vc;
 }
 
+#pragma mark - 容器高度
+
+/// 响应图完全摊开所需总高:与 createResponseViewController 布局常量同步(改那里必改这里)
++ (CGFloat)fullyExpandedRequiredHeight {
+    CGFloat infoBarArea = 5 + 32;        // infoBar: top gap + 高度(hidden 仍占位)
+    CGFloat sliderArea = 5 + 70;         // sliderContainer: top gap + 固定高度
+    CGFloat scrollViewTopGap = 10;       // sliderContainer → scrollView
+    CGFloat chartHeight = 540;           // 与 createResponseViewController 行 356 一致
+    CGFloat spacing = 15;                // 与行 357 一致
+    // contentView 内:top + 3 图(含图间间距) + yaw→toggle + toggle(hidden空) + cli + import + bottom
+    CGFloat contentViewHeight = spacing                              // top
+                              + 3 * chartHeight + 2 * spacing        // 3 图 + 图间 2 间距
+                              + spacing                              // yaw → toggle
+                              + 0                                    // toggleContainer(hidden 空)
+                              + spacing                              // toggle → cli
+                              + 48                                   // cliCopyButton
+                              + 12                                   // cli → import
+                              + 44                                   // importNextButton
+                              + spacing;                             // contentView.bottom
+    CGFloat tabBarHeight = 49;
+    return infoBarArea + sliderArea + scrollViewTopGap + contentViewHeight + tabBarHeight;
+}
+
 - (UIViewController *)createNoiseViewController {
     UIViewController *vc = [[UIViewController alloc] init];
     vc.view.backgroundColor = [UIColor systemBackgroundColor];
