@@ -11,6 +11,7 @@
 #import "CSVRenameView.h"
 #import "CrashDiagnosisEngine.h"
 #import "IterationChainManager.h"
+#import "BlackboxDecoder.h"
 
 #pragma mark - CSVRecord Implementation
 
@@ -188,6 +189,158 @@
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self loadExistingCSVFiles];
+    // 🔑 空列表兜底:列表为空且本会话未弹过 → 弹「加入示例」(任务#28 阶段0.3 Demo 机制)
+    [self checkAndPromptDemoIfEmpty];
+}
+
+#pragma mark - Demo 兜底机制(空列表 → 弹「加入示例」)
+
+/// 会话级去重集合(进程生命周期;记录本会话已弹过 demo 的列表 key)
+static NSMutableSet<NSString *> *kDemoPromptedKeys(void) {
+    static NSMutableSet *set;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ set = [NSMutableSet set]; });
+    return set;
+}
+
+/// 列表空且本会话未弹过 → 弹 demo 弹窗
+- (void)checkAndPromptDemoIfEmpty {
+    if (self.recordGroups.count > 0) return;            // 非空(老用户):不触发,零打扰
+    NSString *key = @"CSVHistoryList";
+    if ([kDemoPromptedKeys() containsObject:key]) return;  // 本会话已弹过(含用户取消):不再弹
+    [kDemoPromptedKeys() addObject:key];                // 标记(无论加入/取消,本会话不再弹)
+
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"还没有飞行记录"
+                         message:@"加入一条示例飞行数据(BF 4.5),体验分析与炸机诊断?"
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"加入示例" style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        [self loadDemoBBLAndReload];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"不用了" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+/// 加入示例 = copy bundle 001.bbl → 沙盒 → 转 CSV(精简) → reload
+/// 🔑 加入后即普通记录,与用户导入的记录完全一样;bundle 001.bbl 实体永远不动
+/// TODO(0.4): 抽 BBLImportService 统一 ViewController 与 demo 的 BBL→CSV 管线(消除重复)
+- (void)loadDemoBBLAndReload {
+    NSString *bundlePath = [[NSBundle mainBundle] pathForResource:@"001" ofType:@"bbl"];
+    if (!bundlePath) {
+        NSLog(@"❌ [Demo] bundle 内找不到 001.bbl");
+        return;
+    }
+
+    NSString *docs = [self documentsDirectory];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *destBBL = [docs stringByAppendingPathComponent:@"001.bbl"];
+
+    // 沙盒已有 001.bbl 先移除,避免 copy 冲突
+    if ([fm fileExistsAtPath:destBBL]) {
+        [fm removeItemAtPath:destBBL error:nil];
+    }
+    NSError *copyErr = nil;
+    if (![fm copyItemAtPath:bundlePath toPath:destBBL error:&copyErr]) {
+        NSLog(@"❌ [Demo] copy 001.bbl 失败: %@", copyErr.localizedDescription);
+        return;
+    }
+
+    __weak typeof(self) weakSelf = self;
+    // 后台转 CSV(001.bbl ≈ 2.1M,避免阻塞 UI)
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        BlackboxDecoder *decoder = [[BlackboxDecoder alloc] init];
+        decoder.outputDirectory = docs;
+        NSArray<BBLSessionInfo *> *sessions = [decoder listLogs:destBBL];
+        if (sessions.count == 0) {
+            NSLog(@"❌ [Demo] 001.bbl 无可解析 Session");
+            return;
+        }
+        BBLSessionInfo *first = sessions[0];
+        int result = [decoder decodeFlightLog:destBBL logIndex:first.logIndex];
+        if (result != 0) {
+            NSLog(@"❌ [Demo] 解码失败: %@", decoder.lastErrorMessage);
+            return;
+        }
+
+        // BlackboxDecoder 生成 {basename}.{logIndex+1}.csv(001.bbl logIndex=0 → 001.01.csv)
+        NSString *origName = [NSString stringWithFormat:@"%@.%02d.csv",
+                              [@"001.bbl" stringByDeletingPathExtension], first.logIndex + 1];
+        NSString *origPath = [docs stringByAppendingPathComponent:origName];
+
+        // 重命名为标准 {源}_{时间戳}_session{N}.csv(与 ViewController 命名一致)
+        NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+        fmt.dateFormat = @"yyyyMMdd_HHmmss";
+        NSString *ts = [fmt stringFromDate:[NSDate date]];
+        NSString *csvName = [NSString stringWithFormat:@"001_%@_session%ld.csv",
+                             ts, (long)(first.logIndex + 1)];
+        NSString *csvPath = [docs stringByAppendingPathComponent:csvName];
+        if ([fm fileExistsAtPath:csvPath]) {
+            [fm removeItemAtPath:csvPath error:nil];
+        }
+        NSError *mvErr = nil;
+        if (![fm moveItemAtPath:origPath toPath:csvPath error:&mvErr]) {
+            NSLog(@"⚠️ [Demo] 重命名失败,保留原名: %@", mvErr.localizedDescription);
+            csvPath = origPath;
+        }
+
+        // 注入元数据注释行(craftName/fw/PID/flightTime),供 PIDCSVParser 解析
+        [weakSelf injectDemoMetadataToCSV:csvPath header:first.header];
+
+        // 回主线程刷新列表
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf loadExistingCSVFiles];
+        });
+    });
+}
+
+/// 向 CSV 头部注入 BBL 元数据注释行(demo 精简版,无 motorKV;与 ViewController.injectCraftNameToCSV 同源)
+- (void)injectDemoMetadataToCSV:(NSString *)csvPath header:(BBLLogHeader *)header {
+    if (!csvPath || !header) return;
+    NSError *err = nil;
+    NSString *content = [NSString stringWithContentsOfFile:csvPath
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:&err];
+    if (err || !content) {
+        NSLog(@"⚠️ [Demo] 读取 CSV 失败: %@", err.localizedDescription);
+        return;
+    }
+
+    NSMutableString *prefix = [NSMutableString string];
+    if (header.craftName.length > 0) {
+        [prefix appendFormat:@"# Craft name:%@\n", header.craftName];
+    }
+    if (header.startDatetimeUs > 0) {
+        [prefix appendFormat:@"# Flight time:%lld\n", header.startDatetimeUs];
+    }
+    NSInteger fw = header.firmwareVersionCode;
+    if (fw > 0) {
+        [prefix appendFormat:@"# Firmware version:%ld\n", (long)fw];
+    }
+    NSDictionary *pidValues = header.currentPIDValues;
+    for (NSString *axis in @[@"roll", @"pitch", @"yaw"]) {
+        NSDictionary *axisPID = pidValues[axis];
+        if (![axisPID isKindOfClass:[NSDictionary class]]) continue;
+        int p = [axisPID[@"p"] intValue];
+        int i = [axisPID[@"i"] intValue];
+        int d = [axisPID[@"d"] intValue];
+        int ff = [axisPID[@"ff"] intValue];
+        if (p > 0 || i > 0 || d > 0 || ff > 0) {
+            [prefix appendFormat:@"# PID %@:%d,%d,%d,%d\n", axis, p, i, d, ff];
+        }
+    }
+
+    if (prefix.length == 0) return;
+    NSString *newContent = [prefix stringByAppendingString:content];
+    NSError *writeErr = nil;
+    if (![newContent writeToFile:csvPath atomically:YES encoding:NSUTF8StringEncoding error:&writeErr]) {
+        NSLog(@"⚠️ [Demo] 注入元数据写入失败: %@", writeErr.localizedDescription);
+    }
+}
+
+/// Documents 目录(沙盒)
+- (NSString *)documentsDirectory {
+    return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
 }
 
 - (void)setupUI {

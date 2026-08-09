@@ -6,7 +6,7 @@
 //
 
 #import "SceneDelegate.h"
-#import "ViewController.h"
+#import "HomeViewController.h"
 
 @interface SceneDelegate ()
 
@@ -20,8 +20,9 @@
     UIWindowScene *windowScene = (UIWindowScene *)scene;
     self.window = [[UIWindow alloc] initWithWindowScene:windowScene];
 
-    // 创建主ViewController并嵌入NavigationController
-    ViewController *mainVC = [[ViewController alloc] init];
+    // 创建首页(HomeViewController,Y型三入口)并嵌入NavigationController
+    // 注:ViewController(BBL 工具页)0.3 保留不动,0.4 迁移其 BBL→CSV 逻辑到 ☰ 导入流程
+    HomeViewController *mainVC = [[HomeViewController alloc] init];
     UINavigationController *navController = [[UINavigationController alloc] initWithRootViewController:mainVC];
 
     self.window.rootViewController = navController;
