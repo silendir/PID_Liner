@@ -30,8 +30,6 @@
 // 导入下一轮按钮
 @property (nonatomic, strong) UIButton *importNextButton;
 
-// 推荐区 / CLI 区占位(0.4c-2 接)
-@property (nonatomic, strong) UILabel *placeholderLabel;
 @end
 
 @implementation IterationWorkbenchViewController
@@ -145,19 +143,6 @@
     [_importNextButton addTarget:self action:@selector(importNextTapped) forControlEvents:UIControlEventTouchUpInside];
     [contentView addSubview:_importNextButton];
 
-    // 推荐区 / CLI 区占位
-    _placeholderLabel = [[UILabel alloc] init];
-    _placeholderLabel.text = @"🔬 推荐区 + 📋 CLI 区\n(0.4c-2 接:PIDRecommendationEngine + BFSliderMapper 滑块/真值 toggle)";
-    _placeholderLabel.font = [UIFont systemFontOfSize:12];
-    _placeholderLabel.textColor = [UIColor tertiaryLabelColor];
-    _placeholderLabel.numberOfLines = 0;
-    _placeholderLabel.textAlignment = NSTextAlignmentCenter;
-    _placeholderLabel.backgroundColor = [UIColor tertiarySystemBackgroundColor];
-    _placeholderLabel.layer.cornerRadius = 8;
-    _placeholderLabel.clipsToBounds = YES;
-    _placeholderLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    [contentView addSubview:_placeholderLabel];
-
     [NSLayoutConstraint activateConstraints:@[
         // scrollView 铺满
         [scrollView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
@@ -208,14 +193,9 @@
         //   给足高度让内部 scrollView 不滚动,只剩外层工作台一套 scroll(消除双 scroll 嵌套)
         [_chartContainer.heightAnchor constraintEqualToConstant:[PIDAnalysisViewController fullyExpandedRequiredHeight]],
 
-        // 推荐区占位
-        [_placeholderLabel.topAnchor constraintEqualToAnchor:_chartContainer.bottomAnchor constant:12],
-        [_placeholderLabel.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
-        [_placeholderLabel.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
-        [_placeholderLabel.heightAnchor constraintEqualToConstant:60],
-
+        // 🔑 0.4c-2:推荐区/CLI 区已进 PIDAnalysisVC 内部(图表下方),工作台不再需要占位
         // 导入按钮(钉 contentView 底,撑开 contentSize)
-        [_importNextButton.topAnchor constraintEqualToAnchor:_placeholderLabel.bottomAnchor constant:14],
+        [_importNextButton.topAnchor constraintEqualToAnchor:_chartContainer.bottomAnchor constant:14],
         [_importNextButton.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
         [_importNextButton.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
         [_importNextButton.heightAnchor constraintEqualToConstant:46],

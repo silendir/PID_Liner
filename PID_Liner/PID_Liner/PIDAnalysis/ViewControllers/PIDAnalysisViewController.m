@@ -13,6 +13,7 @@
 #import "PIDCurveDiagnostic.h"
 #import "PIDRecommendationEngine.h"
 #import "PIDCLIGenerator.h"
+#import "BFSliderMapper.h"
 #import "IterationChainManager.h"
 #import "BlackboxDecoder.h"
 #import <objc/runtime.h>
@@ -49,6 +50,9 @@
 @property (nonatomic, strong) PIDTuningResult *pitchTuningResult;
 @property (nonatomic, strong) PIDTuningResult *yawTuningResult;
 @property (nonatomic, copy) NSString *cliCommands;
+// 🔑 0.4c-2 第2步:CLI 真值/滑块双模式(工作台/独立分析共享)
+@property (nonatomic, copy) NSString *sliderCLICommands;   // BF 滑块模式 CLI(BFSliderMapper 反算,master=100 固定)
+@property (nonatomic, assign) BOOL cliDisplayModeIsSlider; // NO=真值PID命令(默认), YES=滑块命令
 
 // 🔑 迭代闭环调参历史
 @property (nonatomic, copy, nullable) NSString *currentCraftName;
@@ -398,6 +402,76 @@
     [contentView addSubview:toggleContainer];
     objc_setAssociatedObject(vc, "toggleContainer", toggleContainer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
+    // 🔑 0.4c-2 第2步:推荐数值卡 + CLI 区(真值/滑块 toggle + 显示)—— 工作台/独立分析嵌入即共享
+    UIView *recommendationContainer = [[UIView alloc] init];
+    recommendationContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    recommendationContainer.hidden = YES;  // 诊断完成后由 updateRecommendationAndCLIDisplay 显示
+    [contentView addSubview:recommendationContainer];
+    objc_setAssociatedObject(vc, "recommendationContainer", recommendationContainer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    UILabel *recTitleLabel = [[UILabel alloc] init];
+    recTitleLabel.text = @"🔬 推荐调参";
+    recTitleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    recTitleLabel.textColor = [UIColor secondaryLabelColor];
+    recTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [recommendationContainer addSubview:recTitleLabel];
+
+    UILabel *recommendationValuesLabel = [[UILabel alloc] init];
+    recommendationValuesLabel.font = [UIFont fontWithName:@"Menlo" size:12];  // 等宽对齐三轴数值
+    recommendationValuesLabel.numberOfLines = 0;
+    recommendationValuesLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [recommendationContainer addSubview:recommendationValuesLabel];
+    objc_setAssociatedObject(vc, "recommendationValuesLabel", recommendationValuesLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    UISegmentedControl *cliSegmented = [[UISegmentedControl alloc] initWithItems:@[@"PID 真值", @"BF 滑块"]];
+    cliSegmented.selectedSegmentIndex = 0;
+    cliSegmented.translatesAutoresizingMaskIntoConstraints = NO;
+    [cliSegmented addTarget:self action:@selector(cliDisplayModeChanged:) forControlEvents:UIControlEventValueChanged];
+    [recommendationContainer addSubview:cliSegmented];
+
+    UIScrollView *cliDisplayScroll = [[UIScrollView alloc] init];
+    cliDisplayScroll.translatesAutoresizingMaskIntoConstraints = NO;
+    cliDisplayScroll.layer.cornerRadius = 8;
+    cliDisplayScroll.layer.borderWidth = 0.5;
+    cliDisplayScroll.layer.borderColor = [UIColor separatorColor].CGColor;
+    cliDisplayScroll.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    [recommendationContainer addSubview:cliDisplayScroll];
+
+    UILabel *cliDisplayLabel = [[UILabel alloc] init];
+    cliDisplayLabel.font = [UIFont fontWithName:@"Menlo" size:11];
+    cliDisplayLabel.numberOfLines = 0;
+    cliDisplayLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [cliDisplayScroll addSubview:cliDisplayLabel];
+    objc_setAssociatedObject(vc, "cliDisplayLabel", cliDisplayLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    // 推荐区内部约束(标题→数值→toggle→CLI显示区,高度由子视图撑起后顶部/底部钉容器)
+    [NSLayoutConstraint activateConstraints:@[
+        [recTitleLabel.topAnchor constraintEqualToAnchor:recommendationContainer.topAnchor],
+        [recTitleLabel.leadingAnchor constraintEqualToAnchor:recommendationContainer.leadingAnchor],
+        [recTitleLabel.trailingAnchor constraintEqualToAnchor:recommendationContainer.trailingAnchor],
+
+        [recommendationValuesLabel.topAnchor constraintEqualToAnchor:recTitleLabel.bottomAnchor constant:4],
+        [recommendationValuesLabel.leadingAnchor constraintEqualToAnchor:recommendationContainer.leadingAnchor],
+        [recommendationValuesLabel.trailingAnchor constraintEqualToAnchor:recommendationContainer.trailingAnchor],
+
+        [cliSegmented.topAnchor constraintEqualToAnchor:recommendationValuesLabel.bottomAnchor constant:8],
+        [cliSegmented.leadingAnchor constraintEqualToAnchor:recommendationContainer.leadingAnchor],
+        [cliSegmented.trailingAnchor constraintEqualToAnchor:recommendationContainer.trailingAnchor],
+        [cliSegmented.heightAnchor constraintEqualToConstant:32],
+
+        [cliDisplayScroll.topAnchor constraintEqualToAnchor:cliSegmented.bottomAnchor constant:6],
+        [cliDisplayScroll.leadingAnchor constraintEqualToAnchor:recommendationContainer.leadingAnchor],
+        [cliDisplayScroll.trailingAnchor constraintEqualToAnchor:recommendationContainer.trailingAnchor],
+        [cliDisplayScroll.bottomAnchor constraintEqualToAnchor:recommendationContainer.bottomAnchor],
+        [cliDisplayScroll.heightAnchor constraintEqualToConstant:110],
+
+        // 🔑 label 钉 contentLayoutGuide 撑开 contentSize(文本超 110pt 时 scroll 可滚);width 钉 frameLayoutGuide 防无限宽
+        [cliDisplayLabel.topAnchor constraintEqualToAnchor:cliDisplayScroll.contentLayoutGuide.topAnchor constant:8],
+        [cliDisplayLabel.leadingAnchor constraintEqualToAnchor:cliDisplayScroll.contentLayoutGuide.leadingAnchor constant:8],
+        [cliDisplayLabel.widthAnchor constraintEqualToAnchor:cliDisplayScroll.frameLayoutGuide.widthAnchor constant:-16],
+        [cliDisplayLabel.bottomAnchor constraintEqualToAnchor:cliDisplayScroll.contentLayoutGuide.bottomAnchor constant:-8]
+    ]];
+
     // 设置内容视图底部约束（按钮的底部）
     // 🔑 CLI复制按钮放在最下面
     UIButton *cliCopyButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -436,7 +510,11 @@
         [toggleContainer.topAnchor constraintEqualToAnchor:yawChartView.bottomAnchor constant:spacing],
         [toggleContainer.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
         [toggleContainer.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-20],
-        [cliCopyButton.topAnchor constraintEqualToAnchor:toggleContainer.bottomAnchor constant:spacing],
+        // 🔑 0.4c-2:推荐区夹在 toggle 与 cliCopyButton 之间
+        [recommendationContainer.topAnchor constraintEqualToAnchor:toggleContainer.bottomAnchor constant:spacing],
+        [recommendationContainer.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
+        [recommendationContainer.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-20],
+        [cliCopyButton.topAnchor constraintEqualToAnchor:recommendationContainer.bottomAnchor constant:spacing],
         [cliCopyButton.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:20],
         [cliCopyButton.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-20],
         [cliCopyButton.heightAnchor constraintEqualToConstant:48],
@@ -495,12 +573,16 @@
     CGFloat scrollViewTopGap = 10;       // sliderContainer → scrollView
     CGFloat chartHeight = 540;           // 与 createResponseViewController 行 356 一致
     CGFloat spacing = 15;                // 与行 357 一致
-    // contentView 内:top + 3 图(含图间间距) + yaw→toggle + toggle(hidden空) + cli + import + bottom
+    // 🔑 推荐区高度(0.4c-2 第2步):标题16 + gap4 + 三轴数值3行≈45 + gap8 + segmented32 + gap6 + CLI显示区110
+    CGFloat recommendationHeight = 16 + 4 + 45 + 8 + 32 + 6 + 110;
+    // contentView 内:top + 3 图(含图间间距) + yaw→toggle + toggle(hidden空) + 推荐区 + cli + import + bottom
     CGFloat contentViewHeight = spacing                              // top
                               + 3 * chartHeight + 2 * spacing        // 3 图 + 图间 2 间距
                               + spacing                              // yaw → toggle
                               + 0                                    // toggleContainer(hidden 空)
-                              + spacing                              // toggle → cli
+                              + spacing                              // toggle → recommendation
+                              + recommendationHeight                 // recommendationContainer
+                              + spacing                              // recommendation → cli
                               + 48                                   // cliCopyButton
                               + 12                                   // cli → import
                               + 44                                   // importNextButton
@@ -982,6 +1064,9 @@
     if (cliButton && self.cliCommands.length > 0) {
         cliButton.hidden = NO;
     }
+
+    // 🔑 0.4c-2 第2步:刷新推荐数值卡 + CLI 显示区(诊断/推荐数据已就绪)
+    [self updateRecommendationAndCLIDisplay];
 
     // 🔑 显示迭代信息栏（始终显示，让用户可以改名）
     [self updateIterationInfoBar];
@@ -2482,16 +2567,83 @@
     return [js copy];
 }
 
-/// 复制CLI命令到剪贴板
+#pragma mark - 推荐数值卡 + CLI 显示(任务#28 0.4c-2 第2步)
+
+/// 诊断完成后刷新:填推荐数值 + 生成滑块CLI + 显示区按模式刷新 + 显示容器
+- (void)updateRecommendationAndCLIDisplay {
+    UIView *container = objc_getAssociatedObject(_responseViewController, "recommendationContainer");
+    UILabel *valuesLabel = objc_getAssociatedObject(_responseViewController, "recommendationValuesLabel");
+    UILabel *cliLabel = objc_getAssociatedObject(_responseViewController, "cliDisplayLabel");
+    if (!container) return;
+
+    // 无推荐数据:保持隐藏
+    if (!self.rollTuningResult && !self.pitchTuningResult && !self.yawTuningResult) {
+        container.hidden = YES;
+        return;
+    }
+    container.hidden = NO;
+
+    // 1) 推荐数值卡(三轴 P/I/D/FF)
+    NSArray<PIDTuningResult *> *results = @[self.rollTuningResult, self.pitchTuningResult, self.yawTuningResult];
+    NSArray<NSString *> *axisNames = @[@"Roll ", @"Pitch", @"Yaw  "];
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithCapacity:3];
+    for (NSInteger i = 0; i < 3; i++) {
+        PIDTuningResult *r = results[i];
+        PIDValues *rec = r.recommendedPID;
+        if (!rec) continue;
+        [lines addObject:[NSString stringWithFormat:@"%@  P %3.0f  I %3.0f  D %3.0f  FF %3.0f",
+                          axisNames[i], rec.p, rec.i, rec.d, rec.ff]];
+    }
+    valuesLabel.text = [lines componentsJoinedByString:@"\n"];
+
+    // 2) 生成滑块模式 CLI(BFSliderMapper 反算,master=100 固定)
+    //    🔑 v1 简化:D_MAX 固定100、滤波器滑块未输出 —— 反解深化阶段再补(见记忆 bf-slider-principle)
+    self.sliderCLICommands = [self generateSliderCLICommands];
+
+    // 3) 刷新 CLI 显示区(按当前 toggle 模式)
+    [self refreshCLIDisplayLabel:cliLabel];
+}
+
+/// 生成 BF 滑块模式 CLI(三轴推荐 PID 真值 → 滑块倍率)。任一轴缺失返回 nil
+- (nullable NSString *)generateSliderCLICommands {
+    PIDValues *rollRec = self.rollTuningResult.recommendedPID;
+    PIDValues *pitchRec = self.pitchTuningResult.recommendedPID;
+    PIDValues *yawRec = self.yawTuningResult.recommendedPID;
+    if (!rollRec || !pitchRec || !yawRec) return nil;
+    NSInteger fwVersion = self.parsedData.firmwareVersionCode;
+    BFSliderValues *sliders = [BFSliderMapper mapFromRollPID:rollRec
+                                                    pitchPID:pitchRec
+                                                      yawPID:yawRec
+                                             firmwareVersion:fwVersion];
+    return sliders ? [BFSliderMapper generateSliderCLI:sliders firmwareVersion:fwVersion] : nil;
+}
+
+/// CLI 显示区按 toggle 模式刷新文本
+- (void)refreshCLIDisplayLabel:(UILabel *)cliLabel {
+    if (!cliLabel) return;
+    NSString *text = self.cliDisplayModeIsSlider ? self.sliderCLICommands : self.cliCommands;
+    cliLabel.text = text.length > 0 ? text : @"(暂无 CLI 命令)";
+}
+
+/// segmented toggle 切换:PID 真值 ↔ BF 滑块
+- (void)cliDisplayModeChanged:(UISegmentedControl *)seg {
+    self.cliDisplayModeIsSlider = (seg.selectedSegmentIndex == 1);
+    UILabel *cliLabel = objc_getAssociatedObject(_responseViewController, "cliDisplayLabel");
+    [self refreshCLIDisplayLabel:cliLabel];
+}
+
+/// 复制CLI命令到剪贴板(按当前 toggle 模式:真值 or 滑块)
 - (void)copyCLICommands {
-    if (!self.cliCommands || self.cliCommands.length == 0) {
+    NSString *text = self.cliDisplayModeIsSlider ? self.sliderCLICommands : self.cliCommands;
+    if (!text || text.length == 0) {
         [SVProgressHUD showErrorWithStatus:@"暂无CLI命令"];
         return;
     }
 
-    [UIPasteboard generalPasteboard].string = self.cliCommands;
+    [UIPasteboard generalPasteboard].string = text;
     [SVProgressHUD showSuccessWithStatus:@"CLI命令已复制"];
-    NSLog(@"📋 CLI命令已复制到剪贴板 (%lu字符)", (unsigned long)self.cliCommands.length);
+    NSLog(@"📋 CLI命令已复制到剪贴板 (%lu字符, 模式:%@)",
+          (unsigned long)text.length, self.cliDisplayModeIsSlider ? @"滑块" : @"真值");
 }
 
 #pragma mark - 导入新一轮 BBL
