@@ -9,7 +9,7 @@
 #import "PIDAnalysisViewController.h"
 #import "CSVAliasManager.h"
 #import "CSVRenameView.h"
-#import "CrashDiagnosisEngine.h"
+#import "CrashDiagnosisViewController.h"
 #import "IterationChainManager.h"
 #import "BlackboxDecoder.h"
 
@@ -158,9 +158,6 @@
 
 @interface CSVHistoryViewController ()
 @property (nonatomic, strong) UILabel *emptyLabel;
-@property (nonatomic, strong, nullable) UITextView *currentDiagTextView;
-@property (nonatomic, strong, nullable) UIActivityIndicatorView *currentDiagIndicator;
-@property (nonatomic, strong, nullable) CSVRecord *currentDiagRecord;
 @property (nonatomic, strong) NSMutableArray<CSVRecordGroup *> *recordGroups;
 @property (nonatomic, strong) NSMutableArray<CSVDisplayItem *> *displayItems;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *chainInfoCache; // CSV路径 → 链信息
@@ -691,11 +688,13 @@ static NSMutableSet<NSString *> *kDemoPromptedKeys(void) {
         message:@"请选择操作"
         preferredStyle:UIAlertControllerStyleActionSheet];
 
-    // 炸机诊断
+    // 炸机诊断(0.4a → push 独立诊断屏,不再内联建 VC)
     [alert addAction:[UIAlertAction actionWithTitle:@"🩺 炸机诊断"
         style:UIAlertActionStyleDefault
         handler:^(UIAlertAction *action) {
-            [self showCrashDiagnosis:record];
+            CrashDiagnosisViewController *diagVC = [[CrashDiagnosisViewController alloc]
+                initWithCSVPath:record.filePath title:record.displayName];
+            [self.navigationController pushViewController:diagVC animated:YES];
         }]];
 
     // 分析
@@ -1085,154 +1084,6 @@ static NSMutableSet<NSString *> *kDemoPromptedKeys(void) {
 
     // 刷新对应 Cell
     [self loadExistingCSVFiles];
-}
-
-#pragma mark - 炸机诊断
-
-- (void)showCrashDiagnosis:(CSVRecord *)record {
-    // 创建诊断结果页面
-    UIViewController *diagVC = [[UIViewController alloc] init];
-    diagVC.title = @"炸机诊断";
-    diagVC.view.backgroundColor = [UIColor systemBackgroundColor];
-
-    // TextView 显示诊断报告
-    UITextView *textView = [[UITextView alloc] init];
-    textView.editable = NO;
-    textView.font = [UIFont fontWithName:@"Menlo" size:12];
-    textView.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    textView.text = @"⏳ 正在分析飞行数据...";
-    textView.translatesAutoresizingMaskIntoConstraints = NO;
-    [diagVC.view addSubview:textView];
-
-    // 加载指示器
-    UIActivityIndicatorView *indicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-    indicator.translatesAutoresizingMaskIntoConstraints = NO;
-    [indicator startAnimating];
-    [diagVC.view addSubview:indicator];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [textView.topAnchor constraintEqualToAnchor:diagVC.view.safeAreaLayoutGuide.topAnchor constant:10],
-        [textView.leadingAnchor constraintEqualToAnchor:diagVC.view.leadingAnchor constant:10],
-        [textView.trailingAnchor constraintEqualToAnchor:diagVC.view.trailingAnchor constant:-10],
-        [textView.bottomAnchor constraintEqualToAnchor:diagVC.view.safeAreaLayoutGuide.bottomAnchor constant:-10],
-
-        [indicator.centerXAnchor constraintEqualToAnchor:diagVC.view.centerXAnchor],
-        [indicator.centerYAnchor constraintEqualToAnchor:diagVC.view.centerYAnchor]
-    ]];
-
-    // 导航栏按钮：刷新 + 设置 + 取消
-    UIBarButtonItem *refreshBtn = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"arrow.clockwise"]
-        style:UIBarButtonItemStylePlain
-        target:self
-        action:@selector(refreshDiagnosis:)];
-    UIBarButtonItem *settingsBtn = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"gearshape"]
-        style:UIBarButtonItemStylePlain
-        target:self
-        action:@selector(showDiagnosisSettings:)];
-    UIBarButtonItem *stopBtn = [[UIBarButtonItem alloc]
-        initWithBarButtonSystemItem:UIBarButtonSystemItemStop
-        target:self
-        action:@selector(cancelDiagnosis:)];
-    diagVC.navigationItem.rightBarButtonItems = @[stopBtn, settingsBtn, refreshBtn];
-
-    [self.navigationController pushViewController:diagVC animated:YES];
-
-    // 保存引用以便刷新和取消
-    self.currentDiagTextView = textView;
-    self.currentDiagIndicator = indicator;
-    self.currentDiagRecord = record;
-
-    // 启动诊断
-    [self runDiagnosisForRecord:record textView:textView indicator:indicator];
-}
-
-- (void)cancelDiagnosis:(UIBarButtonItem *)sender {
-    [self cleanupDiagnosis];
-    [self.navigationController popViewControllerAnimated:YES];
-}
-
-- (void)refreshDiagnosis:(UIBarButtonItem *)sender {
-    if (!self.currentDiagRecord) return;
-
-    // 重置 UI 状态
-    self.currentDiagTextView.text = @"⏳ 正在重新分析飞行数据...";
-    [self.currentDiagIndicator startAnimating];
-
-    // 先取消上一次请求，再重新启动
-    [[CrashDiagnosisEngine shared] cancelCurrentRequest];
-    [self runDiagnosisForRecord:self.currentDiagRecord
-                       textView:self.currentDiagTextView
-                       indicator:self.currentDiagIndicator];
-}
-
-/// 🔑 统一清理：取消请求 + 断开流式连接 + 清空回调
-- (void)cleanupDiagnosis {
-    CrashDiagnosisEngine *engine = [CrashDiagnosisEngine shared];
-    engine.onStreamingText = nil;
-    [engine cancelCurrentRequest];
-
-    [self.currentDiagIndicator stopAnimating];
-    self.currentDiagTextView = nil;
-    self.currentDiagIndicator = nil;
-    self.currentDiagRecord = nil;
-}
-
-/// 🔑 检测诊断页面被 pop（用户点返回离开）→ 立即断开连接
-- (void)didMoveToParentViewController:(UIViewController *)parent {
-    [super didMoveToParentViewController:parent];
-
-    // parent == nil 表示当前 VC 正在被 pop
-    if (parent == nil && self.currentDiagTextView) {
-        [self cleanupDiagnosis];
-    }
-}
-
-- (void)runDiagnosisForRecord:(CSVRecord *)record
-                     textView:(UITextView *)textView
-                     indicator:(UIActivityIndicatorView *)indicator {
-    CrashDiagnosisEngine *engine = [CrashDiagnosisEngine shared];
-
-    // 🔑 流式输出：每收到一段文本就更新 TextView
-    engine.onStreamingText = ^(NSString *partialText) {
-        textView.text = partialText;
-    };
-
-    [engine diagnoseCSVAtPath:record.filePath
-        completion:^(CrashDiagnosisResult *result) {
-            [indicator stopAnimating];
-            engine.onStreamingText = nil;
-
-            if (result.error && !result.reportText) {
-                textView.text = [NSString stringWithFormat:@"❌ 诊断失败\n\n%@", result.error.localizedDescription];
-            } else {
-                textView.text = result.reportText ?: @"无诊断结果";
-            }
-        }];
-}
-
-- (void)showDiagnosisSettings:(UIBarButtonItem *)sender {
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:@"诊断上下文规则"
-        message:@"输入自定义规则，AI 诊断时会遵守这些规则。\n留空则仅使用默认规则。"
-        preferredStyle:UIAlertControllerStyleAlert];
-
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-        textField.placeholder = @"例如：不要推荐 D 项调整；我的飞机是 5 寸穿越机";
-        textField.text = [CrashDiagnosisEngine shared].userContext ?: @"";
-        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
-    }];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault
-        handler:^(UIAlertAction *action) {
-            UITextField *textField = alert.textFields.firstObject;
-            [CrashDiagnosisEngine shared].userContext = textField.text;
-        }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-
-    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)showCSVPreview:(CSVRecord *)record {
