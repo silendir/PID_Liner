@@ -13,7 +13,6 @@
 #import "PIDCurveDiagnostic.h"
 #import "PIDRecommendationEngine.h"
 #import "PIDCLIGenerator.h"
-#import "PIDTuningHistoryManager.h"
 #import "IterationChainManager.h"
 #import "BlackboxDecoder.h"
 #import <objc/runtime.h>
@@ -2041,11 +2040,8 @@
         }
     }
 
-    // 兼容旧数据：如果 chainId 不存在，从旧的 PIDTuningHistoryManager 加载
-    PIDTuningHistoryManager *mgr = [PIDTuningHistoryManager sharedManager];
-    self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
-    NSLog(@"📂 [调参历史-兼容] %@ 已加载 %lu 轮记录",
-          self.currentCraftName, (unsigned long)self.tuningHistory.count);
+    // 🔑 无 chainId 时不聚合历史（右路独立分析回归干净 1对1，不再按 craftName 兜底聚合）
+    self.tuningHistory = @[];
 }
 
 /// 更新顶部信息栏
@@ -2578,9 +2574,10 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         // 检查是否与上一轮数据完全相同
         BOOL isDuplicateData = NO;
         NSString *duplicateRoundInfo = nil;
-        if (craftName.length) {
-            PIDTuningHistoryManager *mgr = [PIDTuningHistoryManager sharedManager];
-            PIDTuningRecord *latestRecord = [mgr latestRecordForCraft:craftName];
+        // 🔑 指纹比对改用当前迭代链的最后一轮（不再按 craftName 跨飞机聚合）
+        if (self.currentChainId.length) {
+            IterationChain *chain = [[IterationChainManager sharedManager] chainForId:self.currentChainId];
+            PIDTuningRecord *latestRecord = chain.records.lastObject;
             if (latestRecord && latestRecord.csvFingerprint.length && newFingerprint.length) {
                 if ([latestRecord.csvFingerprint isEqualToString:newFingerprint]) {
                     isDuplicateData = YES;
@@ -2838,57 +2835,6 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 }
 
 #pragma mark - 飞行时间排序校验
-
-/// 检查新记录的飞行时间是否比上一轮更早，如果是则弹窗警告
-- (void)checkFlightTimeOrderingAndSave:(PIDTuningRecord *)record
-                                manager:(PIDTuningHistoryManager *)mgr {
-    // 只在有历史记录时检查
-    if (self.tuningHistory.count == 0 || !record.flightTime) {
-        [mgr saveRecord:record];
-        self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
-        return;
-    }
-
-    PIDTuningRecord *lastRecord = self.tuningHistory.lastObject;
-    if (!lastRecord.flightTime) {
-        // 上一轮没有飞行时间，无法对比，直接保存
-        [mgr saveRecord:record];
-        self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
-        return;
-    }
-
-    // 新记录的飞行时间比上一轮更早 → 警告
-    if ([record.flightTime compare:lastRecord.flightTime] == NSOrderedAscending) {
-        NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
-        fmt.dateFormat = @"yyyy-MM-dd HH:mm";
-        NSString *lastTime = [fmt stringFromDate:lastRecord.flightTime];
-        NSString *newTime = [fmt stringFromDate:record.flightTime];
-
-        NSString *msg = [NSString stringWithFormat:
-            @"本轮飞行时间 (%@) 早于上一轮 (%@)。\n\n"
-            @"这通常意味着您导入了一份旧的飞行数据。"
-            @"确定要将其加入调参历史吗？",
-            newTime, lastTime];
-
-        UIAlertController *alert = [UIAlertController
-            alertControllerWithTitle:@"⚠️ 飞行时间异常"
-            message:msg
-            preferredStyle:UIAlertControllerStyleAlert];
-
-        [alert addAction:[UIAlertAction actionWithTitle:@"取消加入" style:UIAlertActionStyleCancel handler:nil]];
-
-        [alert addAction:[UIAlertAction actionWithTitle:@"确定加入" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-            [mgr saveRecord:record];
-            self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
-        }]];
-
-        [self presentViewController:alert animated:YES completion:nil];
-    } else {
-        // 时间正常，直接保存
-        [mgr saveRecord:record];
-        self.tuningHistory = [mgr recordsForCraft:self.currentCraftName];
-    }
-}
 
 /// 🔧 飞行时间排序校验后追加到迭代链
 - (void)checkFlightTimeAndAppendToChain:(NSString *)chainId
