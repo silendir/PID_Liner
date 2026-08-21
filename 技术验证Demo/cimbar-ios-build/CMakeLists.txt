@@ -15,6 +15,7 @@ set(CIMBAR_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libcimbar-src" CACHE PATH "vendor
 
 # ---- 上游编译开关(与上游 WASM 构建对齐) ----
 set(DISABLE_TESTS ON)              # 关掉上游各库的 test 子目录
+add_definitions(-DIOS)                   # wirehair gf256.h 判定 iOS: 跳过 LINUX_ARM 的 elf.h 检测路径(NEON 恒可用)
 add_definitions(-DGF256_TARGET_MOBILE)   # 移动端优化的 GF256 路径(上游 wasm 同款)
 add_definitions(-DLIBCIMBAR_PROJECT_ROOT="${CIMBAR_SRC}")
 
@@ -26,8 +27,12 @@ include_directories(
 )
 
 # ---- OpenCV 静态库(core+imgproc, 由脚本先编好安装到 OPENCV_ROOT) ----
-find_library(OPENCV_CORE opencv_core PATHS ${OPENCV_ROOT}/lib NO_DEFAULT_PATH REQUIRED)
-find_library(OPENCV_IMGPROC opencv_imgproc PATHS ${OPENCV_ROOT}/lib NO_DEFAULT_PATH REQUIRED)
+# 不用 find_library: iOS 工具链的 CMAKE_FIND_ROOT_PATH 会把搜索锁进 sysroot, 直接拼路径断言
+set(OPENCV_CORE "${OPENCV_ROOT}/lib/libopencv_core.a")
+set(OPENCV_IMGPROC "${OPENCV_ROOT}/lib/libopencv_imgproc.a")
+if(NOT EXISTS "${OPENCV_CORE}" OR NOT EXISTS "${OPENCV_IMGPROC}")
+	message(FATAL_ERROR "OpenCV 静态库缺失: ${OPENCV_CORE} / ${OPENCV_IMGPROC} —— 先跑 build-cimbar-ios.sh opencv")
+endif()
 
 # ---- 上游 5 个需要编译的静态库(其余全是 INTERFACE/header-only) ----
 add_subdirectory(${CIMBAR_SRC}/src/lib/cimb_translator build/cimb_translator)
