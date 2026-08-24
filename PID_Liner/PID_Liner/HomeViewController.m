@@ -7,6 +7,7 @@
 
 #import "HomeViewController.h"
 #import "CSVHistoryViewController.h"
+#import "CimbarScanViewController.h"
 #import "IndependentAnalysisViewController.h"
 #import "IterationWorkbenchViewController.h"
 #import "BBLImportService.h"
@@ -50,6 +51,13 @@
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(totalListButtonTapped)];
+
+    // 右上角扫码 → 光学传输接收 BBL(QRCodeTransfer R2)
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithImage:[UIImage systemImageNamed:@"qrcode.viewfinder"]
+                style:UIBarButtonItemStylePlain
+               target:self
+               action:@selector(scanEntryTapped)];
 }
 
 - (void)setupTableView {
@@ -432,6 +440,13 @@
 - (void)totalListButtonTapped {
     NSLog(@"[Home] ☰ 总列表");
     [self pushCSVHistory];
+}
+
+/// 📷 扫码接收 → 光学传输 BBL
+- (void)scanEntryTapped {
+    NSLog(@"[Home] 扫码接收入口");
+    CimbarScanViewController *vc = [[CimbarScanViewController alloc] init];
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 - (void)pushCSVHistory {

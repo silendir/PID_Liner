@@ -26,6 +26,8 @@ static const NSUInteger kCimbarMaxOutputBytes = 64 * 1024 * 1024;
 @property (nonatomic, assign) int fountainBufferSize;
 @property (nonatomic, strong, nullable) CimbarScanResult *result;
 @property (nonatomic, copy) NSString *progressString;
+@property (nonatomic, assign, readwrite) BOOL hasLocked;
+@property (nonatomic, assign, readwrite) double progress;
 @end
 
 @implementation CimbarScanSession
@@ -93,6 +95,7 @@ static const NSUInteger kCimbarMaxOutputBytes = 64 * 1024 * 1024;
 												   (unsigned)self.fountainBufferSize);
 	if (decodedBytes <= 0)
 		return;  // 0=本帧无码 / -3=提取失败——喷泉码设计天然容忍，静默继续
+	self.hasLocked = YES;  // 首帧解出 = 发送端锁定,链路建立
 
 	int64_t fileId = cimbard_fountain_decode(self.fountainBuffer.bytes, (unsigned)decodedBytes);
 	self.progressString = [self currentReport];
@@ -122,6 +125,7 @@ static const NSUInteger kCimbarMaxOutputBytes = 64 * 1024 * 1024;
 	result.filename = name.length ? name : @"received.bbl";
 	result.data = [output subdataWithRange:NSMakeRange(0, (NSUInteger)got)];
 	self.result = result;
+	self.progress = 1.0;
 	self.progressString = [NSString stringWithFormat:@"完成: %@ (%.1f MB)",
 		result.filename, (double)got / 1024.0 / 1024.0];
 }
@@ -132,7 +136,15 @@ static const NSUInteger kCimbarMaxOutputBytes = 64 * 1024 * 1024;
 	unsigned len = cimbard_get_report(report, sizeof(report) - 1);
 	if (len == 0)
 		return self.progressString;
-	return [NSString stringWithFormat:@"%s", (const char *)report];
+	NSString *raw = [NSString stringWithFormat:@"%s", (const char *)report];
+
+	// C 库原始格式 "[ 0.0071 ]"(接收完成度小数) → UI 显示百分比
+	NSRange digit = [raw rangeOfCharacterFromSet:[NSCharacterSet decimalDigitCharacterSet]];
+	if (digit.location == NSNotFound)
+		return raw;  // 非进度类诊断文本,原样透传
+	double fraction = [[raw substringFromIndex:digit.location] doubleValue];
+	self.progress = MIN(MAX(fraction, 0.0), 1.0);  // 顺带更新数值进度(进度条数据源)
+	return [NSString stringWithFormat:@"📡 接收中 %.1f%%", self.progress * 100.0];
 }
 
 #pragma mark - 状态
@@ -150,6 +162,8 @@ static const NSUInteger kCimbarMaxOutputBytes = 64 * 1024 * 1024;
 	cimbard_configure_decode((int)self.mode);
 	self.result = nil;
 	self.progressString = @"";
+	self.hasLocked = NO;
+	self.progress = 0.0;
 }
 
 @end

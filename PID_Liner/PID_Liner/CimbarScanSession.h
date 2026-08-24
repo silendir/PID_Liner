@@ -38,8 +38,14 @@ typedef NS_ENUM(NSUInteger, CimbarScanMode) {
 /** 喂 RGBA8 原始像素（w*h*4 字节；单测/golden 路径） */
 - (void)feedRGBA:(const unsigned char *)pixels width:(unsigned)width height:(unsigned)height;
 
-/** 进度/诊断文本（喷泉码进度 [a,b,c] 等），可直接渲染 UI */
+/** 进度/诊断文本（"📡 接收中 35.2%" 等），可直接渲染 UI */
 @property (nonatomic, copy, readonly) NSString *progressString;
+
+/** 已解出首帧（发送端已锁定，链路建立）——三态 UI 的"传输中"判定 */
+@property (nonatomic, readonly) BOOL hasLocked;
+
+/** 接收完成度 0.0-1.0（未锁定为 0；到 1.0 即 done）——进度条数据源 */
+@property (nonatomic, readonly) double progress;
 
 /** 文件已接收完成（YES 后 result 可用，后续 feed 帧无意义） */
 @property (nonatomic, readonly, getter=isDone) BOOL done;

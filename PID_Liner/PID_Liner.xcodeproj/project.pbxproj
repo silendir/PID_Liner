@@ -8,8 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		3F8298935FFC04CF75CB3C85 /* Pods_PID_Liner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 17EEBD9B5EDD8F1DE2DB3B57 /* Pods_PID_Liner.framework */; };
-		98C4FB1845524089BFBA073F /* IterationChain.m in Sources */ = {isa = PBXBuildFile; fileRef = 4DAE7E8A62C7454BB6F7E45D /* IterationChain.m */; };
-		C15D2FD31BAD40B280C5BFC1 /* IterationChainManager.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1BF9FCA26244CA9ED849C0 /* IterationChainManager.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
