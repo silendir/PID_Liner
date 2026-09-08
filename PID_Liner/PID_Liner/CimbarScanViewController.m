@@ -247,9 +247,9 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
         [self showErrorAlert:@"接收失败,数据不完整"];
         return;
     }
-    _statusLabel.text = @"接收完成,正在导入…";
+    _statusLabel.text = @"✅ 接收完成";
 
-    // 文件名只留最后一段防路径注入;重名追加时间戳
+    // 文件名只留最后一段防路径注入;空名兜底
     NSString *name = result.filename.lastPathComponent;
     if (name.length == 0)
         name = @"received.bbl";
@@ -260,6 +260,35 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
         return;
     }
 
+    // 先弹系统分享窗,让用户自选用途(存"文件"/AirDrop/相册等);分享完再问是否当 BBL 导入
+    NSURL *fileURL = [NSURL fileURLWithPath:path];
+    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[fileURL]
+                                                                        applicationActivities:nil];
+    __weak typeof(self) weakSelf = self;
+    share.completionWithItemsHandler = ^(NSString *activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s) return;
+        // ponytail: 分享失败/取消不阻塞导入询问,文件本体已在沙盒
+        [s askImportAsBBL:path fileName:name];
+    };
+    [self presentViewController:share animated:YES completion:nil];
+}
+
+/// 分享完成后询问:是否作为 BBL 导入分析管线
+- (void)askImportAsBBL:(NSString *)path fileName:(NSString *)name {
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"作为 BBL 导入?"
+                         message:[NSString stringWithFormat:@"%@ 已接收保存。\n现在导入解码为飞行记录吗?", name]
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"导入" style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *a) { [self importAsBBL:path fileName:name]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"暂不" style:UIAlertActionStyleCancel
+                                           handler:^(UIAlertAction *a) { [self.navigationController popViewControllerAnimated:YES]; }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)importAsBBL:(NSString *)path fileName:(NSString *)name {
+    _statusLabel.text = @"正在导入解码…";
     NSError *convertError = nil;
     NSArray<BBLImportCSVResult *> *results = [[BBLImportService shared] convertAllSessionsForBBL:path
                                                                                           motorKV:nil
@@ -270,7 +299,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
     NSString *title = ok > 0 ? @"导入成功" : @"导入失败";
     NSString *msg = ok > 0
         ? [NSString stringWithFormat:@"%@ · 已解码 %lu 个 Session,可在「☰ 总列表」查看", name.lastPathComponent, (unsigned long)ok]
-        : (results.firstObject.errorMessage ?: @"BBL 解码失败");
+        : (results.firstObject.errorMessage ?: convertError.localizedDescription ?: @"BBL 解码失败");
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:msg
                                                              preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault

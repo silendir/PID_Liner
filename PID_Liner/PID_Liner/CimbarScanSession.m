@@ -9,8 +9,10 @@
 #import "CimbarScanSession.h"
 #import "CimbarDecoder.h"
 
-/** 解压输出缓冲上限（ponytail: 单次全量读，BBL 场景 64MB 足够；更大文件再改流式分块） */
+/** 解压输出缓冲上限（ponytail: BBL 场景 64MB 足够；更大文件再改流式分块） */
 static const NSUInteger kCimbarMaxOutputBytes = 64 * 1024 * 1024;
+/** 单次 decompress_read 的 chunk 大小（流式 API，循环到返回 0） */
+static const NSUInteger kCimbarDecompressChunkBytes = 1024 * 1024;
 
 @interface CimbarScanResult ()
 @property (nonatomic, copy, readwrite) NSString *filename;
@@ -114,20 +116,36 @@ static const NSUInteger kCimbarMaxOutputBytes = 64 * 1024 * 1024;
 		? [NSString stringWithFormat:@"%s", filename]
 		: [NSString stringWithFormat:@"received_%u.bbl", fileId];
 
-	NSMutableData *output = [NSMutableData dataWithLength:kCimbarMaxOutputBytes];
-	int got = cimbard_decompress_read(fileId, output.mutableBytes, (unsigned)kCimbarMaxOutputBytes);
-	if (got <= 0) {
-		self.progressString = [NSString stringWithFormat:@"解压失败(%d)", got];
+	// cimbard_decompress_read 是流式 API:循环读直到返回 0(单次只给一个 chunk,
+	// 只调一次会拿到截断文件——图片只显示前段像素的根因)
+	NSMutableData *output = [NSMutableData data];
+	NSMutableData *chunk = [NSMutableData dataWithLength:kCimbarDecompressChunkBytes];
+	while (YES) {
+		int got = cimbard_decompress_read(fileId, chunk.mutableBytes, (unsigned)kCimbarDecompressChunkBytes);
+		if (got < 0) {
+			self.progressString = [NSString stringWithFormat:@"解压失败(%d)", got];
+			return;
+		}
+		if (got == 0)
+			break;  // 全部读完
+		[output appendBytes:chunk.bytes length:(NSUInteger)got];
+		if (output.length > kCimbarMaxOutputBytes) {
+			self.progressString = @"文件超出 64MB 上限";
+			return;
+		}
+	}
+	if (output.length == 0) {
+		self.progressString = @"解压结果为空";
 		return;
 	}
 
 	CimbarScanResult *result = [[CimbarScanResult alloc] init];
 	result.filename = name.length ? name : @"received.bbl";
-	result.data = [output subdataWithRange:NSMakeRange(0, (NSUInteger)got)];
+	result.data = [output copy];
 	self.result = result;
 	self.progress = 1.0;
 	self.progressString = [NSString stringWithFormat:@"完成: %@ (%.1f MB)",
-		result.filename, (double)got / 1024.0 / 1024.0];
+		result.filename, (double)output.length / 1024.0 / 1024.0];
 }
 
 - (NSString *)currentReport
