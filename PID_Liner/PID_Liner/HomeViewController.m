@@ -8,6 +8,7 @@
 #import "HomeViewController.h"
 #import "CSVHistoryViewController.h"
 #import "CimbarScanViewController.h"
+#import "MassStorageImportViewController.h"
 #import "IndependentAnalysisViewController.h"
 #import "IterationWorkbenchViewController.h"
 #import "BBLImportService.h"
@@ -52,12 +53,18 @@
                target:self
                action:@selector(totalListButtonTapped)];
 
-    // 右上角扫码 → 光学传输接收 BBL(QRCodeTransfer R2)
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+    // 右上角双按钮:蓝牙取数(BLE→大容量存储) + 扫码(光学传输接收 BBL)
+    UIBarButtonItem *bleButton = [[UIBarButtonItem alloc]
+        initWithImage:[UIImage systemImageNamed:@"antenna.radiowaves.left.and.right"]
+                style:UIBarButtonItemStylePlain
+               target:self
+               action:@selector(bleImportEntryTapped)];
+    UIBarButtonItem *scanButton = [[UIBarButtonItem alloc]
         initWithImage:[UIImage systemImageNamed:@"qrcode.viewfinder"]
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(scanEntryTapped)];
+    self.navigationItem.rightBarButtonItems = @[scanButton, bleButton];
 }
 
 - (void)setupTableView {
@@ -446,6 +453,13 @@
 - (void)scanEntryTapped {
     NSLog(@"[Home] 扫码接收入口");
     CimbarScanViewController *vc = [[CimbarScanViewController alloc] init];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
+/// 📡 蓝牙取数 → BLE 激活大容量存储 → USB 文件导入
+- (void)bleImportEntryTapped {
+    NSLog(@"[Home] 蓝牙取数入口");
+    MassStorageImportViewController *vc = [[MassStorageImportViewController alloc] init];
     [self.navigationController pushViewController:vc animated:YES];
 }
 

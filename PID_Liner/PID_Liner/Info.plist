@@ -4,6 +4,8 @@
 <dict>
 	<key>NSCameraUsageDescription</key>
 	<string>用于扫描屏幕闪烁二维码,接收飞行记录(BBL)文件</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>用于连接飞控,激活大容量存储模式以无线取回飞行记录(BBL)文件</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
