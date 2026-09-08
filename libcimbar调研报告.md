@@ -3,20 +3,19 @@
 > 调研日期：2026-08-20
 > 用途：评估将 libcimbar 用于「屏幕 ↔ 摄像头」光学数据传输 App（iOS 优先）的可行性
 > 仓库：<https://github.com/sz3/libcimbar>
-
----
+> 在线测试站（发送端体验）：<https://cimbar.org>
 
 ## 1. 项目概要
 
-| 项 | 内容 |
-|---|---|
-| 名称 | libcimbar (Color Icon Matrix Barcodes，彩色图标矩阵条码) |
-| 作者 | sz3 |
-| 语言 | C++17 |
-| License | **MPL 2.0**（⚠️ 不是 MIT，见 §5 商用分析） |
-| Stars | ~6.3k+（HN/Reddit 病毒式传播后，长期是该领域第一） |
-| 维护状态 | ✅ 活跃维护 |
-| 定位 | 气隙（air-gapped）环境下，用「一块屏幕 + 一个摄像头」单向传文件的生产级库 |
+| 项       | 内容                                                                      |
+| -------- | ------------------------------------------------------------------------- |
+| 名称     | libcimbar (Color Icon Matrix Barcodes，彩色图标矩阵条码)                  |
+| 作者     | sz3                                                                       |
+| 语言     | C++17                                                                     |
+| License  | **MPL 2.0**（⚠️ 不是 MIT，见 §5 商用分析）                       |
+| Stars    | ~6.3k+（HN/Reddit 病毒式传播后，长期是该领域第一）                        |
+| 维护状态 | ✅ 活跃维护                                                               |
+| 定位     | 气隙（air-gapped）环境下，用「一块屏幕 + 一个摄像头」单向传文件的生产级库 |
 
 **一句话**：不依赖 WiFi/蓝牙/USB/网络，屏幕循环播放彩色条码动画，另一设备的摄像头拍摄解码，实测维持 **~850 kbit/s（约 106 KB/s）**，支持 **100+ MB** 文件。是这个赛道速度最快、星最多、维护最好的开源实现。
 
@@ -53,12 +52,12 @@
 
 ## 3. 性能
 
-| 指标 | 数值 |
-|---|---|
-| 持续速度 | ~850 kbit/s ≈ **106 KB/s**（电脑显示器 + 手机摄像头） |
-| 文件大小 | 100+ MB |
-| 对比：动态二维码方案（txqr 等） | ~10 KB/s 级别，**慢 10 倍以上** |
-| 对比：纯原生 QR（CIFilter 生成 + AVFoundation 扫码） | ~2-5 KB/s，仅够传文本/密钥 |
+| 指标                                                 | 数值                                                        |
+| ---------------------------------------------------- | ----------------------------------------------------------- |
+| 持续速度                                             | ~850 kbit/s ≈**106 KB/s**（电脑显示器 + 手机摄像头） |
+| 文件大小                                             | 100+ MB                                                     |
+| 对比：动态二维码方案（txqr 等）                      | ~10 KB/s 级别，**慢 10 倍以上**                       |
+| 对比：纯原生 QR（CIFilter 生成 + AVFoundation 扫码） | ~2-5 KB/s，仅够传文本/密钥                                  |
 
 速度假设：摄像头稳定采集（30fps 可跑，60fps 更佳），帧率不稳会直接打折。
 
@@ -66,11 +65,11 @@
 
 ## 4. 生态
 
-| 仓库 | 说明 | License |
-|---|---|---|
-| [sz3/cimbar](https://github.com/sz3/cimbar) | 最初的概念验证（PoC），格式设计文档在此 | — |
-| [sz3/libcimbar](https://github.com/sz3/libcimbar) | **优化后的正式实现**，编码器+解码器+协议 | MPL 2.0 |
-| [sz3/cfc](https://github.com/sz3/cfc) | "Copy File Camera" —— Android 演示 App（摄像头接收端），是移植其他平台的**最佳参考实现** | MIT |
+| 仓库                                             | 说明                                                                                             | License |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ------- |
+| [sz3/cimbar](https://github.com/sz3/cimbar)       | 最初的概念验证（PoC），格式设计文档在此                                                          | —      |
+| [sz3/libcimbar](https://github.com/sz3/libcimbar) | **优化后的正式实现**，编码器+解码器+协议                                                   | MPL 2.0 |
+| [sz3/cfc](https://github.com/sz3/cfc)             | "Copy File Camera" —— Android 演示 App（摄像头接收端），是移植其他平台的**最佳参考实现** | MIT     |
 
 - cfc 是原生 Android（Kotlin UI + JNI 调 C++ 核心），验证了「移动端集成」这条路是通的
 - **官方没有 iOS 版**，需自行移植（见 §6）
@@ -108,13 +107,13 @@
 
 ### 6.2 移植工作分解
 
-| 任务 | 工作量 | 要点 |
-|---|---|---|
-| CMake 交叉编译 → `.xcframework` | 2-3 天 | arm64 device + simulator 双 slice |
-| 集成 OpenCV iOS framework | 1 天 | 官方预编译 opencv2.xcframework；⚠️ 完整包 ~200MB，上架前需裁剪（imgproc/core） |
-| 接收端：AVFoundation 采集 | 2-3 天 | 参照 cfc 的 Camera2 参数逐项翻译（见 6.3） |
-| 发送端：帧动画刷新 | 1-2 天 | `CADisplayLink` + `CAMetalLayer` 防撕裂（优于 UIImageView） |
-| UI + 文件导入导出 | 2-3 天 | Files App、进度、配对引导 |
+| 任务                              | 工作量 | 要点                                                                             |
+| --------------------------------- | ------ | -------------------------------------------------------------------------------- |
+| CMake 交叉编译 →`.xcframework` | 2-3 天 | arm64 device + simulator 双 slice                                                |
+| 集成 OpenCV iOS framework         | 1 天   | 官方预编译 opencv2.xcframework；⚠️ 完整包 ~200MB，上架前需裁剪（imgproc/core） |
+| 接收端：AVFoundation 采集         | 2-3 天 | 参照 cfc 的 Camera2 参数逐项翻译（见 6.3）                                       |
+| 发送端：帧动画刷新                | 1-2 天 | `CADisplayLink` + `CAMetalLayer` 防撕裂（优于 UIImageView）                  |
+| UI + 文件导入导出                 | 2-3 天 | Files App、进度、配对引导                                                        |
 
 ### 6.3 iOS 关键坑位 ⚠️
 
@@ -134,10 +133,10 @@
 
 两条技术路线：
 
-| 路线 | 做法 | 速度 | 工作量 |
-|------|------|------|--------|
-| **A. 标准 QR 动画** | 纯 JS：JS QR 库生成 + `BarcodeDetector` API 解码，零 WASM | ~2-10 KB/s | **1-2 天**，参考 [QRSync](https://github.com/huiihao/QRSync) / AirScan-QR（已是现成网页版） |
-| **B. cimbar WASM 移植** | libcimbar 用 Emscripten 编成 WASM + OpenCV.js 解码 | 理论 ~50-100 KB/s | **2-4 周**，有硬坑 |
+| 路线                          | 做法                                                       | 速度              | 工作量                                                                                           |
+| ----------------------------- | ---------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
+| **A. 标准 QR 动画**     | 纯 JS：JS QR 库生成 +`BarcodeDetector` API 解码，零 WASM | ~2-10 KB/s        | **1-2 天**，参考 [QRSync](https://github.com/huiihao/QRSync) / AirScan-QR（已是现成网页版） |
+| **B. cimbar WASM 移植** | libcimbar 用 Emscripten 编成 WASM + OpenCV.js 解码         | 理论 ~50-100 KB/s | **2-4 周**，有硬坑                                                                         |
 
 B 路线的三个硬坑：
 
@@ -157,13 +156,13 @@ B 路线的三个硬坑：
 
 ## 7. 竞品对比（为什么选它）
 
-| 项目 | Stars | 维护 | 速度 | 平台 | 结论 |
-|---|---|---|---|---|---|
-| **libcimbar** | ~6.3k+ | ✅ 活跃 | **106 KB/s** | C++ 全平台+Android 参考实现 | ✅ 首选 |
-| [divan/txqr](https://github.com/divan/txqr) | ~2k | ❌ 停更 | ~10 KB/s | Go | 格式老、慢 10 倍 |
-| [huiihao/QRSync](https://github.com/huiihao/QRSync) | 小 | ✅ 新 | 慢 | 纯浏览器 | 只适合 Web 玩具 |
-| smyrgeorge/qrt | 小 | ⚠️ 实验性 | 中 | — | 学术探索 |
-| ScreenFlicker / FlickerCam / FlickerModem | <150 | ❌ 停更 | 玩具级 | — | 不可用于生产 |
+| 项目                                               | Stars  | 维护        | 速度               | 平台                        | 结论             |
+| -------------------------------------------------- | ------ | ----------- | ------------------ | --------------------------- | ---------------- |
+| **libcimbar**                                | ~6.3k+ | ✅ 活跃     | **106 KB/s** | C++ 全平台+Android 参考实现 | ✅ 首选          |
+| [divan/txqr](https://github.com/divan/txqr)         | ~2k    | ❌ 停更     | ~10 KB/s           | Go                          | 格式老、慢 10 倍 |
+| [huiihao/QRSync](https://github.com/huiihao/QRSync) | 小     | ✅ 新       | 慢                 | 纯浏览器                    | 只适合 Web 玩具  |
+| smyrgeorge/qrt                                     | 小     | ⚠️ 实验性 | 中                 | —                          | 学术探索         |
+| ScreenFlicker / FlickerCam / FlickerModem          | <150   | ❌ 停更     | 玩具级             | —                          | 不可用于生产     |
 
 ---
 
@@ -186,8 +185,8 @@ B 路线的三个硬坑：
 
 ## 参考链接
 
-- 主仓库：<https://github.com/sz3/libcimbar>
-- 格式设计说明（PoC 仓库）：<https://github.com/sz3/cimbar>（`ABOUT.md`）
-- Android 参考实现：<https://github.com/sz3/cfc>
-- 演示视频：<https://www.youtube.com/watch?v=bR7L9DnxhEI>
-- 第三方介绍博客：<https://gwliang.com/en/posts/cimbar-introduction/>
+- 主仓库：[https://github.com/sz3/libcimbar](https://github.com/sz3/libcimbar)
+- 格式设计说明（PoC 仓库）：[https://github.com/sz3/cimbar](https://github.com/sz3/cimbar)（`ABOUT.md`）
+- Android 参考实现：[https://github.com/sz3/cfc](https://github.com/sz3/cfc)
+- 演示视频：[https://www.youtube.com/watch?v=bR7L9DnxhEI](https://www.youtube.com/watch?v=bR7L9DnxhEI)
+- 第三方介绍博客：[https://gwliang.com/en/posts/cimbar-introduction/](https://gwliang.com/en/posts/cimbar-introduction/)
