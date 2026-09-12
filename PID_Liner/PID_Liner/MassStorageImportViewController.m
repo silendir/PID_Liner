@@ -9,6 +9,7 @@
 #import "MassStorageImportViewController.h"
 #import "FCBluetoothService.h"
 #import "BBLImportService.h"
+#import "DataflashDownloader.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 typedef NS_ENUM(NSUInteger, MscStage) {
@@ -22,7 +23,10 @@ typedef NS_ENUM(NSUInteger, MscStage) {
 @interface MassStorageImportViewController () <UITableViewDataSource, UITableViewDelegate, UIDocumentPickerDelegate>
 @property (nonatomic, strong) UILabel *stageLabel;
 @property (nonatomic, strong) UITableView *deviceTable;
-@property (nonatomic, strong) UIButton *actionButton;   // 态3 激活 / 态4 选文件
+@property (nonatomic, strong) UIButton *actionButton;     // 态3 激活 / 态4 选文件
+@property (nonatomic, strong) UIButton *downloadButton;   // 态3 蓝牙直下 / 下载中变取消
+@property (nonatomic, strong) UIProgressView *progressView;
+@property (nonatomic, strong) DataflashDownloader *downloader;
 @property (nonatomic, strong) NSMutableArray<FCBleDevice *> *devices;
 @property (nonatomic, strong) FCBleDevice *selectedDevice;
 @property (nonatomic, assign) MscStage stage;
@@ -49,9 +53,11 @@ typedef NS_ENUM(NSUInteger, MscStage) {
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
     FCBluetoothService *ble = [FCBluetoothService shared];
+    [self.downloader cancel];  // 下载中离开页面 = 中止
     [ble stopScan];
     ble.onDevicesChanged = nil;
     ble.onDisconnected = nil;
+    ble.onStateChanged = nil;
     // 离开页面断连(激活成功后飞控已自行重启,这里兜底)
     [ble disconnect];
 }
@@ -83,6 +89,22 @@ typedef NS_ENUM(NSUInteger, MscStage) {
     [_actionButton addTarget:self action:@selector(actionButtonTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_actionButton];
 
+    _downloadButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    _downloadButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    _downloadButton.layer.cornerRadius = 12;
+    _downloadButton.layer.borderWidth = 1.5;
+    _downloadButton.layer.borderColor = [UIColor systemBlueColor].CGColor;
+    [_downloadButton setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    _downloadButton.contentEdgeInsets = UIEdgeInsetsMake(14, 24, 14, 24);
+    _downloadButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [_downloadButton addTarget:self action:@selector(downloadButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_downloadButton];
+
+    _progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    _progressView.hidden = YES;
+    _progressView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:_progressView];
+
     [NSLayoutConstraint activateConstraints:@[
         [_stageLabel.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:20],
         [_stageLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:24],
@@ -94,7 +116,14 @@ typedef NS_ENUM(NSUInteger, MscStage) {
         [_deviceTable.bottomAnchor constraintEqualToAnchor:_actionButton.topAnchor constant:-12],
 
         [_actionButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [_actionButton.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-24]
+        [_actionButton.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-24],
+
+        [_downloadButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [_downloadButton.bottomAnchor constraintEqualToAnchor:_actionButton.topAnchor constant:-12],
+
+        [_progressView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:24],
+        [_progressView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-24],
+        [_progressView.bottomAnchor constraintEqualToAnchor:_downloadButton.topAnchor constant:-16]
     ]];
 }
 
@@ -122,6 +151,17 @@ typedef NS_ENUM(NSUInteger, MscStage) {
             [s enterStage:MscStageScanning];
         }
     };
+    // 蓝牙从"启动中"变就绪时唤醒扫描(首次进场权限弹窗未点,进场检查必然落空)
+    ble.onStateChanged = ^(BOOL ready, NSString *stateText) {
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s) return;
+        if (s.stage != MscStageScanning) return;
+        if (ready) {
+            [s enterStage:MscStageScanning];
+        } else {
+            s.stageLabel.text = stateText;  // 权限被拒/关蓝牙时同步提示
+        }
+    };
 }
 
 #pragma mark - 状态机
@@ -132,6 +172,8 @@ typedef NS_ENUM(NSUInteger, MscStage) {
     switch (stage) {
         case MscStageScanning: {
             _actionButton.hidden = YES;
+            _downloadButton.hidden = YES;
+            _progressView.hidden = YES;
             _deviceTable.hidden = NO;
             if (ble.bluetoothReady) {
                 _stageLabel.text = @"正在扫描附近飞控…(确认飞控通电、蓝牙模块指示灯亮)";
@@ -147,6 +189,7 @@ typedef NS_ENUM(NSUInteger, MscStage) {
             [ble stopScan];
             _deviceTable.hidden = YES;
             _actionButton.hidden = YES;
+            _downloadButton.hidden = YES;
             _stageLabel.text = [NSString stringWithFormat:@"正在连接 %@…", self.selectedDevice.name ?: @"设备"];
             [ble connectDevice:self.selectedDevice completion:^(NSString *errorMessage) {
                 if (errorMessage) {
@@ -162,14 +205,33 @@ typedef NS_ENUM(NSUInteger, MscStage) {
         case MscStageConnected: {
             _deviceTable.hidden = YES;
             _actionButton.hidden = NO;
+            _progressView.hidden = YES;
+            _downloadButton.hidden = NO;
+            [_downloadButton setTitle:@"📡 蓝牙直接下载 .BBL(免插线)" forState:UIControlStateNormal];
             [_actionButton setTitle:@"⚡ 激活大容量存储" forState:UIControlStateNormal];
-            _stageLabel.text = @"已连接飞控。\n激活后飞控将重启为 U 盘模式(需 BF 4.4+,激活前确认电机已断电)";
+            _stageLabel.text = @"已连接,正在探测 MSP 链路…";
+
+            // 链路探测:API 版本是 BF 必答命令,秒回。能分清"链路不通"和"MSC 命令不支持"
+            __weak typeof(self) weakSelf = self;
+            [ble sendCommand:MSPCommandApiVersion payload:[NSData data] reply:^(NSData *replyPayload, NSString *errorMessage) {
+                if (!weakSelf || weakSelf.stage != MscStageConnected) return;
+                if (errorMessage) {
+                    weakSelf.stageLabel.text = [NSString stringWithFormat:
+                        @"⚠️ 已连接但 MSP 链路不通:%@\n试重启飞控后重连;若仍不通请截图反馈", errorMessage];
+                    return;
+                }
+                const uint8_t *b = replyPayload.length >= 3 ? replyPayload.bytes : NULL;
+                weakSelf.stageLabel.text = b
+                    ? [NSString stringWithFormat:@"✅ 链路正常(MSP 协议 %u / API %u.%u)。\n激活后飞控将重启为 U 盘模式(需 BF 4.4+,激活前确认电机已断电)", b[0], b[1], b[2]]
+                    : @"✅ 链路正常。\n激活后飞控将重启为 U 盘模式(需 BF 4.4+,激活前确认电机已断电)";
+            }];
             break;
         }
 
         case MscStageActivated: {
             _deviceTable.hidden = YES;
             _actionButton.hidden = NO;
+            _downloadButton.hidden = YES;
             [_actionButton setTitle:@"📂 选择 .BBL 文件" forState:UIControlStateNormal];
             _stageLabel.text = @"✅ 飞控已激活为 U 盘模式,蓝牙已断开(正常现象)。\n用 USB 线将飞控连接 iPhone,然后点下方按钮选文件。";
             break;
@@ -192,6 +254,39 @@ typedef NS_ENUM(NSUInteger, MscStage) {
     }
 }
 
+/// 蓝牙直下:下载中再点 = 取消;失败后按钮变"重新下载"
+- (void)downloadButtonTapped {
+    if (self.downloader.running) {
+        [self.downloader cancel];
+        return;
+    }
+    _actionButton.hidden = YES;
+    _progressView.hidden = NO;
+    _progressView.progress = 0;
+    [_downloadButton setTitle:@"⏹ 取消下载" forState:UIControlStateNormal];
+    _stageLabel.text = @"正在查询闪存数据量…";
+
+    __weak typeof(self) weakSelf = self;
+    self.downloader = [[DataflashDownloader alloc] initWithService:[FCBluetoothService shared]];
+    [self.downloader startWithProgress:^(double fraction, NSString *text) {
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s) return;
+        s.progressView.progress = fraction;
+        s.stageLabel.text = text;
+    } completion:^(NSURL *fileURL, NSString *errorMessage) {
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s) return;
+        s.progressView.hidden = YES;
+        if (errorMessage) {
+            // 失败不跳态:按钮变重试,提示留在状态栏(重连场景直接重扫更稳)
+            [s.downloadButton setTitle:@"🔁 重新下载" forState:UIControlStateNormal];
+            s.stageLabel.text = [NSString stringWithFormat:@"❌ %@", errorMessage];
+            return;
+        }
+        [s convertAndAlertBBL:fileURL];
+    }];
+}
+
 /// 发 MSP_SET_REBOOT(rebootType=MSC),响应 payload[0]=1 表示存储就绪
 - (void)activateMassStorage {
     _actionButton.enabled = NO;
@@ -204,9 +299,13 @@ typedef NS_ENUM(NSUInteger, MscStage) {
             self.stageLabel.text = [NSString stringWithFormat:@"激活失败:%@", errorMessage];
             return;
         }
-        // 响应首字节 ready 标志(0 = 存储设备未就绪,同 BF 原版报错)
-        uint8_t ready = replyPayload.length > 0 ? ((const uint8_t *)replyPayload.bytes)[0] : 0;
-        if (ready == 1) {
+        // 响应布局(照 BF 配置器 MSPHelper.js:812-821):payload[0]=rebootType,payload[1]=ready
+        // MSC 激活时 ready==0 才是"存储未就绪";不足 2 字节视为接受(同 BF 对老固件的宽容)
+        BOOL ready = YES;
+        if (replyPayload.length >= 2) {
+            ready = (((const uint8_t *)replyPayload.bytes)[1] == 1);
+        }
+        if (ready) {
             [self enterStage:MscStageActivated];
         } else {
             self.stageLabel.text = @"存储设备未就绪(飞控未挂载 dataflash 或无黑盒数据)";
@@ -243,8 +342,14 @@ typedef NS_ENUM(NSUInteger, MscStage) {
         return;
     }
 
+    [self convertAndAlertBBL:destURL];
+}
+
+/// BBL 转码 + 结果弹窗(文件选择器路径与蓝牙直下路径共用;成功后退出本页)
+- (void)convertAndAlertBBL:(NSURL *)url {
+    NSString *name = url.lastPathComponent;
     NSError *convertError = nil;
-    NSArray<BBLImportCSVResult *> *results = [[BBLImportService shared] convertAllSessionsForBBL:dest
+    NSArray<BBLImportCSVResult *> *results = [[BBLImportService shared] convertAllSessionsForBBL:url.path
                                                                                           motorKV:nil
                                                                                          progress:nil
                                                                                            error:&convertError];

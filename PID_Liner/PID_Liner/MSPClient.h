@@ -15,7 +15,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// MSP 命令码(仅本功能用到的)
 typedef NS_ENUM(uint8_t, MSPCommand) {
-    MSPCommandSetReboot = 68,   // MSP_SET_REBOOT,payload[0]=rebootType
+    MSPCommandApiVersion      = 1,   // MSP_API_VERSION,响应[协议版本,API主,API次],链路探测用
+    MSPCommandSetReboot       = 68,  // MSP_SET_REBOOT,payload[0]=rebootType
+    MSPCommandDataflashSummary = 70, // 响应[flags,扇区u32,总容量u32,已用u32],13字节
+    MSPCommandDataflashRead    = 71, // 蓝牙直下黑盒:4KB块必须走 v2 帧(v1 长度字段1字节装不下)
 };
 
 /// MSP_SET_REBOOT 的 rebootType
@@ -32,6 +35,9 @@ typedef void (^MSPFrameHandler)(uint8_t cmd, NSData *payload);
 
 /// 构造 MSP v1 请求帧(方向 '<')
 + (NSData *)v1RequestWithCmd:(uint8_t)cmd payload:(NSData *)payload;
+
+/// 构造 MSP v2 请求帧(方向 '<',大 payload 用;格式照 BF 配置器 msp.js encode_message_v2)
++ (NSData *)v2RequestWithCmd:(uint16_t)cmd payload:(NSData *)payload;
 
 /// 流式喂字节(蓝牙 notify 到多少喂多少,帧跨包自动缓冲重组)
 /// 解析出完整 v1 响应帧时调用 onFrame;非 v1 帧头($X...)按帧长跳过

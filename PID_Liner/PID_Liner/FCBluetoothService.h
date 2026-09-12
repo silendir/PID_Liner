@@ -51,11 +51,18 @@ NS_ASSUME_NONNULL_BEGIN
             payload:(NSData *)payload
               reply:(void(^)(NSData *_Nullable payload, NSString *_Nullable errorMessage))reply;
 
+/// 同上,但以 MSP v2 帧发送(大 payload 场景,如 dataflash 分块读)
+- (void)sendV2Command:(uint16_t)cmd
+              payload:(NSData *)payload
+                reply:(void(^)(NSData *_Nullable payload, NSString *_Nullable errorMessage))reply;
+
 #pragma mark 事件回调(主线程)
 /** 扫描结果变化(新设备发现/列表刷新) */
 @property (nonatomic, copy, nullable) void (^onDevicesChanged)(NSArray<FCBleDevice *> *devices);
 /** 连接被对端断开(如激活 MSC 后飞控重启,属预期) */
 @property (nonatomic, copy, nullable) void (^onDisconnected)(void);
+/** 蓝牙电源/权限状态变化(ready=可用;页面靠它从"蓝牙启动中"唤醒开始扫描) */
+@property (nonatomic, copy, nullable) void (^onStateChanged)(BOOL ready, NSString *stateText);
 
 @end
 
