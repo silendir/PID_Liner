@@ -13,6 +13,7 @@
 @property (nonatomic, strong) UIView *containerView;
 @property (nonatomic, strong) UILabel *indicatorLabel;
 @property (nonatomic, strong) UITextField *textField;
+@property (nonatomic, strong) UILabel *originalFileNameLabel;  // 🔑 升为属性:setRecord 后才填文本(见 setRecord:)
 @property (nonatomic, strong) UIButton *cancelButton;
 @property (nonatomic, strong) UIButton *confirmButton;
 @property (nonatomic, strong) CSVRecord *record;
@@ -67,6 +68,27 @@
     return self;
 }
 
+/// 🔑 record 赋值后回填 UI(showWithRecord 里 initWithFrame 先跑、record 后赋值,
+/// setupUI 里读 _record 必为 nil → 文件名(null)+别名不回填)
+- (void)setRecord:(CSVRecord *)record {
+    _record = record;
+
+    // 已有别名回填输入框
+    if (_record.hasCustomName) {
+        _textField.text = [_record.displayName stringByDeletingPathExtension];
+    }
+
+    // 当前文件名(超 40 字符保留尾部截断)
+    NSString *displayFileName = _record.fileName ?: @"(未知)";
+    if (displayFileName.length > 40) {
+        displayFileName = [NSString stringWithFormat:@"...%@",
+            [displayFileName substringFromIndex:displayFileName.length - 37]];
+    }
+    _originalFileNameLabel.text = [NSString stringWithFormat:@"当前文件名：%@", displayFileName];
+
+    [self updateIndicator];
+}
+
 - (void)setupUI {
     // 半透明背景
     self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.4];
@@ -107,31 +129,22 @@
     _textField.placeholder = @"输入别名";
     _textField.delegate = self;
 
-    // 获取当前别名
-    if (_record.hasCustomName) {
-        NSString *aliasWithExt = _record.displayName;
-        _textField.text = [aliasWithExt stringByDeletingPathExtension];
-    }
+    // 🔑 record 相关回填(别名预填/当前文件名)全部移入 setRecord: ——
+    // setupUI 跑在 initWithFrame 时 _record 还没赋值,在这里读必为 nil
+    // → "当前文件名：(null)"+别名不回填(稳定版同病,真机已踩)
 
     // 添加输入变化监听
     [_textField addTarget:self action:@selector(textFieldDidChange:) forControlEvents:UIControlEventEditingChanged];
     [_containerView addSubview:_textField];
 
-    // 当前文件名标签
-    UILabel *originalFileNameLabel = [[UILabel alloc] init];
-    originalFileNameLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    originalFileNameLabel.font = [UIFont systemFontOfSize:13];
-    originalFileNameLabel.textColor = [UIColor secondaryLabelColor];
-    originalFileNameLabel.textAlignment = NSTextAlignmentCenter;
-    originalFileNameLabel.numberOfLines = 0;
-
-    // 截断过长的文件名
-    NSString *displayFileName = _record.fileName;
-    if (displayFileName.length > 40) {
-        displayFileName = [NSString stringWithFormat:@"...%@", [displayFileName substringFromIndex:displayFileName.length - 37]];
-    }
-    originalFileNameLabel.text = [NSString stringWithFormat:@"当前文件名：%@", displayFileName];
-    [_containerView addSubview:originalFileNameLabel];
+    // 当前文件名标签(文本由 setRecord: 填)
+    _originalFileNameLabel = [[UILabel alloc] init];
+    _originalFileNameLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _originalFileNameLabel.font = [UIFont systemFontOfSize:13];
+    _originalFileNameLabel.textColor = [UIColor secondaryLabelColor];
+    _originalFileNameLabel.textAlignment = NSTextAlignmentCenter;
+    _originalFileNameLabel.numberOfLines = 0;
+    [_containerView addSubview:_originalFileNameLabel];
 
     // 分隔线
     UIView *separatorLine = [[UIView alloc] init];
@@ -198,12 +211,12 @@
         [_textField.heightAnchor constraintEqualToConstant:40],
 
         // 当前文件名
-        [originalFileNameLabel.topAnchor constraintEqualToAnchor:_textField.bottomAnchor constant:8],
-        [originalFileNameLabel.leadingAnchor constraintEqualToAnchor:_containerView.leadingAnchor constant:20],
-        [originalFileNameLabel.trailingAnchor constraintEqualToAnchor:_containerView.trailingAnchor constant:-20],
+        [_originalFileNameLabel.topAnchor constraintEqualToAnchor:_textField.bottomAnchor constant:8],
+        [_originalFileNameLabel.leadingAnchor constraintEqualToAnchor:_containerView.leadingAnchor constant:20],
+        [_originalFileNameLabel.trailingAnchor constraintEqualToAnchor:_containerView.trailingAnchor constant:-20],
 
         // 分隔线
-        [separatorLine.topAnchor constraintEqualToAnchor:originalFileNameLabel.bottomAnchor constant:16],
+        [separatorLine.topAnchor constraintEqualToAnchor:_originalFileNameLabel.bottomAnchor constant:16],
         [separatorLine.leadingAnchor constraintEqualToAnchor:_containerView.leadingAnchor],
         [separatorLine.trailingAnchor constraintEqualToAnchor:_containerView.trailingAnchor],
         [separatorLine.heightAnchor constraintEqualToConstant:0.5],

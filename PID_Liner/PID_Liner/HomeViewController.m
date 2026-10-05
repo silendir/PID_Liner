@@ -57,7 +57,8 @@
                target:self
                action:@selector(totalListButtonTapped)];
 
-    // 右上角三按钮:新建方案(导入BBL建链) + 蓝牙取数 + 扫码
+    // 右上角双按钮:蓝牙取数 + 扫码(➕新建方案已删——意义不明且职责与
+    // 🎯空态/独立分析右上/☰转换记录「创建迭代方案」重叠)
     UIBarButtonItem *bleButton = [[UIBarButtonItem alloc]
         initWithImage:[UIImage systemImageNamed:@"antenna.radiowaves.left.and.right"]
                 style:UIBarButtonItemStylePlain
@@ -68,12 +69,7 @@
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(scanEntryTapped)];
-    UIBarButtonItem *addSchemeButton = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"plus"]
-                style:UIBarButtonItemStylePlain
-               target:self
-               action:@selector(addSchemeButtonTapped)];
-    self.navigationItem.rightBarButtonItems = @[scanButton, bleButton, addSchemeButton];
+    self.navigationItem.rightBarButtonItems = @[scanButton, bleButton];
 }
 
 - (void)setupTableView {
@@ -629,9 +625,18 @@
     NSString *name = chain.craftName.length > 0 ? chain.craftName
                                                 : [NSString stringWithFormat:@"方案 %@", [chain.chainId substringToIndex:MIN(8, chain.chainId.length)]];
     // 副标题:轮次 + 状态
-    NSString *status = chain.isConverged ? @"已收敛 ✓"
-                                         : [NSString stringWithFormat:@"进行中 · 第 %ld 轮", (long)chain.currentIteration];
-    NSString *detail = [NSString stringWithFormat:@"%ld 轮 · %@", (long)chain.records.count, status];
+    // 🔑 显示"最新已存在轮"的轮号(records.lastObject.iteration);
+    // 旧用 currentIteration(=count+1,"下一轮"语义) → 1 轮的链显示"进行中·第2轮"(真机已踩)
+    NSString *detail;
+    if (chain.records.count == 0) {
+        detail = @"尚未飞行 · 等待第 1 轮";
+    } else {
+        NSInteger latestRound = chain.records.lastObject.iteration;
+        if (latestRound < 1) latestRound = (NSInteger)chain.records.count;
+        NSString *status = chain.isConverged ? @"已收敛 ✓"
+                                             : [NSString stringWithFormat:@"进行中 · 第 %ld 轮", (long)latestRound];
+        detail = [NSString stringWithFormat:@"%ld 轮 · %@", (long)chain.records.count, status];
+    }
 
     NSMutableAttributedString *attr = [[NSMutableAttributedString alloc] init];
     [attr appendAttributedString:[[NSAttributedString alloc] initWithString:name
@@ -647,7 +652,8 @@
 
     cell.textLabel.attributedText = attr;
     cell.textLabel.numberOfLines = 0;
-    cell.textLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    // 🔑 不动 textLabel 的 translatesAutoresizingMask:默认 cell 的 textLabel 靠系统约束布局,
+    // 关掉又不安自己的约束=首帧零帧贴左边缘(点击重排才"恢复",真机已踩)
     return cell;
 }
 
@@ -657,11 +663,6 @@
     IterationChain *chain = self.schemes[indexPath.row];
     IterationWorkbenchViewController *vc = [[IterationWorkbenchViewController alloc] initWithChainId:chain.chainId];
     [self.navigationController pushViewController:vc animated:YES];
-}
-
-/// ➕ 新建方案(常驻入口,与方案数无关——有方案时 🎯 卡片直达最新链,这里负责"另起一个方案")
-- (void)addSchemeButtonTapped {
-    [self presentSchemeBBLPicker];
 }
 
 /// 方案列表左滑删除(整链硬删,含全部轮次)

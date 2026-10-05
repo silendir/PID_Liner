@@ -116,6 +116,7 @@
 
     _schemeNameLabel = [[UILabel alloc] init];
     _schemeNameLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    _schemeNameLabel.numberOfLines = 0;  // 🔑 长文件名折行,不和右侧按钮重叠(真机已踩)
     _schemeNameLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [header addSubview:_schemeNameLabel];
 
@@ -188,21 +189,22 @@
         [contentView.bottomAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.bottomAnchor],
         [contentView.widthAnchor constraintEqualToAnchor:scrollView.frameLayoutGuide.widthAnchor],
 
-        // 链头
+        // 链头(两行:方案名折行独占首行;chip+撤销在第二行——名字长不再压撤销按钮)
         [header.topAnchor constraintEqualToAnchor:contentView.topAnchor constant:12],
         [header.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
         [header.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
-        [header.heightAnchor constraintEqualToConstant:34],
 
+        [_schemeNameLabel.topAnchor constraintEqualToAnchor:header.topAnchor],
         [_schemeNameLabel.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
-        [_schemeNameLabel.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [_schemeNameLabel.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
 
-        [_iterationChipLabel.leadingAnchor constraintEqualToAnchor:_schemeNameLabel.trailingAnchor constant:10],
-        [_iterationChipLabel.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [_iterationChipLabel.topAnchor constraintEqualToAnchor:_schemeNameLabel.bottomAnchor constant:6],
+        [_iterationChipLabel.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
         [_iterationChipLabel.heightAnchor constraintEqualToConstant:22],
 
         [_undoButton.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
-        [_undoButton.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+        [_undoButton.centerYAnchor constraintEqualToAnchor:_iterationChipLabel.centerYAnchor],
+        [header.bottomAnchor constraintEqualToAnchor:_iterationChipLabel.bottomAnchor],
 
         // 轮次链
         [chainTitle.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:16],
@@ -262,7 +264,12 @@
         ? self.chain.craftName
         : [NSString stringWithFormat:@"方案 %@", [self.chain.chainId substringToIndex:MIN(8, self.chain.chainId.length)]];
     self.schemeNameLabel.text = name;
-    self.iterationChipLabel.text = [NSString stringWithFormat:@"  第 %ld 轮  ", (long)self.chain.currentIteration];
+    // 🔑 chip 显示"最新已存在轮"的轮号;旧用 currentIteration(=count+1,"下一轮"语义)
+    // → 1 轮的链 chip 也显示"第 2 轮",与信息栏同族错位(真机已踩)
+    NSInteger latestRound = self.chain.records.count > 0 ? self.chain.records.lastObject.iteration : 0;
+    self.iterationChipLabel.text = latestRound > 0
+        ? [NSString stringWithFormat:@"  第 %ld 轮  ", (long)latestRound]
+        : @"  未开始  ";
     self.undoButton.enabled = self.chain.records.count > 0;
 
     [self buildIterationNodes];

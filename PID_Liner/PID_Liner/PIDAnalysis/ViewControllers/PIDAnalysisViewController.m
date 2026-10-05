@@ -2383,17 +2383,23 @@ static NSString *_sCachedKey = nil;
     }
     infoLabel.hidden = NO;
 
-    NSInteger iteration = self.tuningHistory.count + 1;  // 本轮 = 已有轮数 + 1
+    // 🔑 轮号判定:当前 CSV 已作为最新一轮入链(收养路径瞬间完成/分析完成存档后刷新)
+    // → 显示该轮真实轮号;否则(正在分析下一轮) = 已有轮数 + 1。
+    // 旧公式无脑 count+1,入链后再刷新会把刚存的这轮多算一轮 → "第2轮调参"错显(真机已踩)
+    PIDTuningRecord *last = self.tuningHistory.lastObject;
+    BOOL currentSaved = (last != nil && self.csvFilePath.length > 0
+                         && last.csvFileName.length > 0
+                         && [last.csvFileName isEqualToString:self.csvFilePath.lastPathComponent]);
+    NSInteger iteration = currentSaved ? last.iteration : self.tuningHistory.count + 1;
+    if (iteration < 1) iteration = self.tuningHistory.count + 1;
     NSString *craftName = self.currentCraftName ?: @"未知飞机";
 
-    if (self.tuningHistory.count == 0) {
-        infoLabel.text = [NSString stringWithFormat:@"🔄 第1轮调参 · %@", craftName];
-    } else {
-        // 计算准确度（基于上一轮的预测 vs 本轮的实际）
-        PIDTuningRecord *lastRecord = self.tuningHistory.lastObject;
-        double accuracy = lastRecord.accuracy * 100;
+    if (currentSaved && last.accuracy > 0.01) {
         infoLabel.text = [NSString stringWithFormat:@"🔄 第%ld轮调参 · %@ · 预测准确度 %.0f%%",
-                          (long)iteration, craftName, accuracy];
+                          (long)iteration, craftName, last.accuracy * 100];
+    } else {
+        // 第1轮无上轮预测可比,不显示准确度(旧逻辑第1轮会显示"预测准确度 0%"误导)
+        infoLabel.text = [NSString stringWithFormat:@"🔄 第%ld轮调参 · %@", (long)iteration, craftName];
     }
 }
 
@@ -2644,8 +2650,16 @@ static NSString *_sCachedKey = nil;
     record.pitchSnapshot = [self buildSnapshotForAxis:1 currentPID:currentPID];
     record.yawSnapshot = [self buildSnapshotForAxis:2 currentPID:currentPID];
 
-    // 🔑 飞行时间排序校验后追加到迭代链
-    [self checkFlightTimeAndAppendToChain:chainId record:record chainMgr:chainMgr];
+    // 🔑 指纹后台算:全文读入+按行拆分对 30MB CSV 是秒级阻塞,主线程算会把
+    // push 工作台/分析收尾卡死(真机已踩);算完回主线程走原校验+入链(UI 逻辑不离开主线程)
+    NSString *csvPath = [self.csvFilePath copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *fp = [self csvFingerprintForFile:csvPath];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            record.csvFingerprint = fp;
+            [self checkFlightTimeAndAppendToChain:chainId record:record chainMgr:chainMgr];
+        });
+    });
 }
 
 /// 🔧 计算修正系数和准确度

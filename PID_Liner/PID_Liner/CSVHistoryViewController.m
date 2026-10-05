@@ -6,7 +6,6 @@
 //
 
 #import "CSVHistoryViewController.h"
-#import "PIDAnalysisViewController.h"
 #import "IndependentAnalysisViewController.h"
 #import "IterationWorkbenchViewController.h"
 #import "CSVAliasManager.h"
@@ -576,9 +575,9 @@
         message:@"请选择操作"
         preferredStyle:UIAlertControllerStyleActionSheet];
 
-    // 📈 独立分析(新单屏三态页):蓝牙下载等 App 内 CSV 的主分析入口(预载直进结果态;
+    // 📈 独立分析PID(新单屏三态页):蓝牙下载等 App 内 CSV 的主分析入口(预载直进结果态;
     // 结果缓存命中则免重分析秒出曲线)
-    [alert addAction:[UIAlertAction actionWithTitle:@"📈 独立分析"
+    [alert addAction:[UIAlertAction actionWithTitle:@"📈 独立分析PID"
         style:UIAlertActionStyleDefault
         handler:^(UIAlertAction *action) {
             IndependentAnalysisViewController *vc = [[IndependentAnalysisViewController alloc] init];
@@ -586,8 +585,8 @@
             [self.navigationController pushViewController:vc animated:YES];
         }]];
 
-    // 🔄 创建迭代方案:以此 CSV 为首飞轮建链进工作台(多轮闭环从这里起步)
-    [alert addAction:[UIAlertAction actionWithTitle:@"🔄 创建迭代方案"
+    // 🔄 创建迭代PID方案:以此 CSV 为首飞轮建链进工作台(多轮闭环从这里起步)
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔄 创建迭代PID方案"
         style:UIAlertActionStyleDefault
         handler:^(UIAlertAction *action) {
             [IterationWorkbenchViewController presentNewChainForCSVPath:record.filePath
@@ -601,13 +600,6 @@
             CrashDiagnosisViewController *diagVC = [[CrashDiagnosisViewController alloc]
                 initWithCSVPath:record.filePath title:record.displayName];
             [self.navigationController pushViewController:diagVC animated:YES];
-        }]];
-
-    // 分析
-    [alert addAction:[UIAlertAction actionWithTitle:@"📊 PID分析"
-        style:UIAlertActionStyleDefault
-        handler:^(UIAlertAction *action) {
-            [self analyzeCSV:record];
         }]];
 
     // 取消
@@ -1103,14 +1095,4 @@
 /**
  * 分析CSV文件
  */
-- (void)analyzeCSV:(CSVRecord *)record {
-    NSLog(@"📊 开始分析CSV: %@", record.fileName);
-
-    // 创建分析视图控制器
-    PIDAnalysisViewController *analysisVC = [[PIDAnalysisViewController alloc]
-        initWithCSVFilePath:record.filePath];
-
-    [self.navigationController pushViewController:analysisVC animated:YES];
-}
-
 @end
