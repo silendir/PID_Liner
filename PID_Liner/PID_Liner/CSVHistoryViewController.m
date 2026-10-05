@@ -7,6 +7,8 @@
 
 #import "CSVHistoryViewController.h"
 #import "PIDAnalysisViewController.h"
+#import "IndependentAnalysisViewController.h"
+#import "IterationWorkbenchViewController.h"
 #import "CSVAliasManager.h"
 #import "CSVRenameView.h"
 #import "CrashDiagnosisViewController.h"
@@ -573,6 +575,24 @@
         alertControllerWithTitle:record.fileName
         message:@"请选择操作"
         preferredStyle:UIAlertControllerStyleActionSheet];
+
+    // 📈 独立分析(新单屏三态页):蓝牙下载等 App 内 CSV 的主分析入口(预载直进结果态;
+    // 结果缓存命中则免重分析秒出曲线)
+    [alert addAction:[UIAlertAction actionWithTitle:@"📈 独立分析"
+        style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) {
+            IndependentAnalysisViewController *vc = [[IndependentAnalysisViewController alloc] init];
+            vc.preloadedCSVPath = record.filePath;
+            [self.navigationController pushViewController:vc animated:YES];
+        }]];
+
+    // 🔄 创建迭代方案:以此 CSV 为首飞轮建链进工作台(多轮闭环从这里起步)
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔄 创建迭代方案"
+        style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) {
+            [IterationWorkbenchViewController presentNewChainForCSVPath:record.filePath
+                                                     fromViewController:self];
+        }]];
 
     // 炸机诊断(0.4a → push 独立诊断屏,不再内联建 VC)
     [alert addAction:[UIAlertAction actionWithTitle:@"🩺 炸机诊断"

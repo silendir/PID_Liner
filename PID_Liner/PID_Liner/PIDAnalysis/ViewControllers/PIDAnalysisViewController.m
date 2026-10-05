@@ -38,6 +38,10 @@
 @property (nonatomic, strong) PIDCSVData *parsedData;
 @property (nonatomic, assign) BOOL parseInProgress;    // 🔑 CSV 后台解析进行中(防重入+竞态判定)
 @property (nonatomic, assign) BOOL analysisCancelled;  // 🔑 容器 pop 时置位:后台分析在各检查点静默中止
+// 🔖 结果缓存(传递曲线model)配套状态
+@property (nonatomic, assign) BOOL chartsRendered;                  // 当前数据已配完图(防布局回调重复整轮重画)
+@property (nonatomic, copy, nullable) NSString *renderedChainId;    // 已画进图表的迭代链id(收养时判断是否需重画历史虚线)
+@property (nonatomic, assign) BOOL renderedWithHistory;             // 已画的图里含迭代历史虚线
 @property (nonatomic, strong) PIDResponseResult *rollResponse;
 @property (nonatomic, strong) PIDResponseResult *pitchResponse;
 @property (nonatomic, strong) PIDResponseResult *yawResponse;
@@ -140,8 +144,11 @@
 }
 
 - (void)updateChartsIfNeeded {
-    // 只有在Tab视图可见且有数据时才更新图表
-    if (!_chartPageContainer.hidden && (_rollResponse || _rollSpectrum || _parsedData)) {
+    // 只有在图表可见、有数据、且当前数据尚未配过图时才更新
+    // 🔑 chartsRendered 守卫:①收养嵌入后首个布局回调不再触发整轮重画(10s 级主线程活)
+    //   ②顺带修"每次旋转屏幕/布局都全量重画"的隐性卡顿;滑块/改名走显式调用不受影响
+    if (!_chartPageContainer.hidden && !self.chartsRendered
+        && (_rollResponse || _rollSpectrum || _parsedData)) {
         [self updateCharts];
     }
 }
@@ -620,6 +627,123 @@
     [self loadTuningHistory];
 }
 
+#pragma mark - 结果缓存与收养(传递曲线model)
+
+/// 单槽:只留最近一次分析完成的实例(结果数组几十 MB 级,多槽内存不可控;
+/// 新分析完成自然替换,收养后仍在槽内=返回原页面也能秒恢复)
+static PIDAnalysisViewController *_sCachedAnalysis = nil;
+static NSString *_sCachedKey = nil;
+
+/// 缓存键:路径+文件大小+修改时间(毫秒级,免全文 md5)
++ (nullable NSString *)analysisCacheKeyForPath:(NSString *)path
+{
+    if (path.length == 0) return nil;
+    NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if (!attr) return nil;
+    return [NSString stringWithFormat:@"%@|%llu|%.0f", path,
+            (unsigned long long)attr.fileSize, attr.fileModificationDate.timeIntervalSince1970];
+}
+
++ (void)registerAnalysisCache:(PIDAnalysisViewController *)vc
+{
+    NSString *key = [self analysisCacheKeyForPath:vc.csvFilePath];
+    if (!key) return;
+    _sCachedAnalysis = vc;
+    _sCachedKey = key;
+}
+
++ (nullable instancetype)cachedAnalysisForCSVPath:(NSString *)csvPath
+{
+    if (csvPath.length == 0 || !_sCachedAnalysis || _sCachedKey.length == 0) return nil;
+    return [_sCachedKey isEqualToString:[self analysisCacheKeyForPath:csvPath]] ? _sCachedAnalysis : nil;
+}
+
+- (void)moveToParent:(UIViewController *)parent containerView:(UIView *)container
+{
+    if (self.parentViewController == parent) return;  // 已在此容器(重复收养/返回恢复),幂等
+
+    // 移除旧父(独立分析⇄工作台互搬的标准 containment 流程)
+    if (self.parentViewController) {
+        [self willMoveToParentViewController:nil];
+        [self.view removeFromSuperview];
+        [self removeFromParentViewController];
+    }
+    [parent addChildViewController:self];
+    self.view.translatesAutoresizingMaskIntoConstraints = NO;
+    [container addSubview:self.view];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.view.topAnchor constraintEqualToAnchor:container.topAnchor],
+        [self.view.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+        [self.view.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+        [self.view.bottomAnchor constraintEqualToAnchor:container.bottomAnchor]
+    ]];
+    [self didMoveToParentViewController:parent];
+}
+
+/// 内置导入按钮显隐随容器意图重设(创建时的初值不适用于被收养的实例)
+- (void)applyImportButtonVisibility
+{
+    UIButton *importBtn = objc_getAssociatedObject(_responseViewController, "importNextButton");
+    importBtn.hidden = self.hidesBuiltinImportButton;
+}
+
+- (void)adoptForChainId:(NSString *)chainId
+{
+    _analysisCancelled = NO;  // 🔑 复位上个容器 pop 时置位的取消标记(含同容器重复收养场景),否则重画被守卫拦截
+    _isIterationMode = YES;
+    _currentChainId = [chainId copy];
+    self.hidesBuiltinImportButton = YES;
+    [self applyImportButtonVisibility];
+
+    [self loadTuningHistory];
+
+    // 分析已完成的收养,自动存档钩子(showAnalysisComplete→save)不会再触发——手动入链;
+    // 指纹守卫幂等:反复收养/重进不堆假轮次
+    PIDValues *pid = [self currentPIDFromParsedData];
+    if (pid && (_rollResponse || _pitchResponse || _yawResponse)) {
+        [self saveCurrentTuningRecord:pid];
+    }
+
+    // 刷新迭代 UI(信息栏/收敛提示/虚线开关)
+    UILabel *infoLabel = objc_getAssociatedObject(_responseViewController, "iterationInfoLabel");
+    [infoLabel.superview setHidden:NO];
+    [self updateIterationInfoBar];
+    [self updateToggleControls];
+
+    // 🔑 历史虚线只在与已画内容不符时重画:
+    //   独立分析→创建方案(首轮,无历史) → 零重画秒开;
+    //   重进已有 N 轮的链且该链虚线已画过 → 跳过重画,同样秒开
+    BOOL sameChainDrawn = self.renderedWithHistory
+        && [chainId isEqualToString:self.renderedChainId ?: @""];
+    if (self.tuningHistory.count > 0 && !sameChainDrawn) {
+        [self configureResponseCharts];  // 尾部会更新 rendered 状态
+        return;
+    }
+    if (self.tuningHistory.count == 0) self.renderedWithHistory = NO;
+    self.renderedChainId = chainId;
+}
+
+- (void)adoptForIndependent
+{
+    _analysisCancelled = NO;  // 🔑 同上:复位取消标记
+    _isIterationMode = NO;
+    _currentChainId = nil;
+    _tuningHistory = @[];
+    self.hidesBuiltinImportButton = YES;
+    [self applyImportButtonVisibility];
+
+    UILabel *infoLabel = objc_getAssociatedObject(_responseViewController, "iterationInfoLabel");
+    infoLabel.hidden = YES;
+    [self updateToggleControls];  // 非迭代模式内部会隐藏
+
+    // 仅当图里真的画过迭代历史虚线才重画为纯独立视图(首轮建方案回程=零重画)
+    if (self.renderedWithHistory) {
+        [self configureResponseCharts];
+    }
+    self.renderedChainId = nil;
+    self.renderedWithHistory = NO;
+}
+
 - (UIViewController *)createNoiseViewController {
     UIViewController *vc = [[UIViewController alloc] init];
     vc.view.backgroundColor = [UIColor systemBackgroundColor];
@@ -726,6 +850,7 @@
  * 开始分析
  */
 - (void)startAnalysis {
+    self.chartsRendered = NO;  // 🔖 新一轮分析=旧图作废,布局回调恢复配图资格
     if (!_parsedData || _parsedData.timeSeconds.count == 0) {
         // 🔑 竞态修复:容器(工作台/独立分析)嵌完 VC 立刻调本方法时,CSV 往往还在后台解析
         // ——此刻报"没有可分析的数据"是假失败(解析完成后内部会再调本方法并成功出曲线)。
@@ -1129,6 +1254,11 @@
 
     // 🔑 更新虚线显隐勾选控件
     [self updateToggleControls];
+
+    // 🔖 记录渲染状态:布局回调据此跳过重复重画;收养时据此判断是否需重画历史虚线
+    self.chartsRendered = YES;
+    self.renderedChainId = _isIterationMode ? _currentChainId : nil;
+    self.renderedWithHistory = _isIterationMode && self.tuningHistory.count > 0;
 }
 
 /**
@@ -1887,6 +2017,9 @@
 
     // 🔑 分析完成信号无条件触发(容器据此解禁/刷新;存档与否不影响本信号)
     if (self.onAnalysisComplete) self.onAnalysisComplete();
+
+    // 🔖 进结果缓存单槽:同文件任何容器(工作台/独立分析)随后嵌入=直接收养秒开
+    [[self class] registerAnalysisCache:self];
 
     NSLog(@"✅ PID分析完成");
 }

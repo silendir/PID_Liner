@@ -25,6 +25,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// 用迭代链 ID 初始化
 - (instancetype)initWithChainId:(NSString *)chainId;
 
+/// 🔖 以指定 CSV 为首飞轮建链并推入工作台(☰ CSV转换记录「🔄 创建迭代方案」等外部桥接共用;
+/// 结果缓存命中则工作台收养现成分析,免 40s 重分析)
++ (void)presentNewChainForCSVPath:(NSString *)csvPath fromViewController:(UIViewController *)host;
+
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;
 

@@ -19,6 +19,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface IndependentAnalysisViewController : UIViewController
 
+/// 🔖 外部预载一条 CSV 直接进结果态(☰ CSV转换记录「📈 独立分析」入口);push 前设置
+@property (nonatomic, copy, nullable) NSString *preloadedCSVPath;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -80,6 +80,33 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)cancelAnalysis;
 
+#pragma mark 结果缓存与收养(传递曲线model)
+
+/**
+ * 🔖 最近一次分析完成的实例按 (路径+大小+修改时间) 全局单槽暂存。
+ * 容器(工作台/独立分析)嵌入同一 CSV 时先查此缓存——命中直接收养,
+ * 免 40s 重解析+重分析;曲线/特征/推荐/CLI 原样可用(精度滑块照常,显示时抽点)。
+ */
++ (nullable instancetype)cachedAnalysisForCSVPath:(NSString *)csvPath;
+
+/**
+ * 把本 VC(连同已画好的图表)移入新容器——收养路径用,替代"new VC + startAnalysis"。
+ * 已在新容器时为幂等 no-op(重复收养/返回恢复)。
+ */
+- (void)moveToParent:(UIViewController *)parent containerView:(UIView *)container;
+
+/**
+ * 收养为迭代模式(工作台):绑链+入链(指纹幂等,不堆假轮次)+刷新迭代 UI。
+ * 历史虚线与已画内容不符时才重画(独立来源建方案=首轮无历史 → 零重画秒开)。
+ */
+- (void)adoptForChainId:(NSString *)chainId;
+
+/**
+ * 收养为独立模式(独立分析页):复位迭代标记;
+ * 仅当曾画过迭代历史虚线时才重画为纯独立视图。
+ */
+- (void)adoptForIndependent;
+
 @end
 
 NS_ASSUME_NONNULL_END

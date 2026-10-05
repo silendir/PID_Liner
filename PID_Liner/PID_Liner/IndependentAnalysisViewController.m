@@ -45,6 +45,7 @@ typedef NS_ENUM(NSInteger, IndepState) {
 
 // 结果态
 @property (nonatomic, assign) BOOL pageLeft;              // 🔑 pop 置位:转换完成回调不再落地 UI
+@property (nonatomic, assign) BOOL curvesReady;           // 🔑 嵌入VC曲线已就绪(「创建迭代方案」解禁条件,防分析中跳走双跑)
 @property (nonatomic, strong) UIScrollView *sessionChipScroll;
 @property (nonatomic, strong) UIView *chartContainer;     // 嵌入 PIDAnalysisViewController
 @property (nonatomic, copy) NSArray<NSString *> *sessionCSVPaths;  // 各 Session 的 CSV 路径
@@ -73,6 +74,32 @@ typedef NS_ENUM(NSInteger, IndepState) {
                action:@selector(includeInIterationTapped)];
     self.state = IndepStateEmpty;
     [self applyState];
+
+    // 🔖 外部预载(☰ CSV转换记录「📈 独立分析」):push 前设路径,进页直接结果态加载该 CSV
+    if (self.preloadedCSVPath.length > 0) {
+        NSString *p = self.preloadedCSVPath;
+        self.preloadedCSVPath = nil;
+        self.sessionDurationSecs = nil;  // 单文件无时长信息,清残留防碎片段守卫误伤
+        self.sessionCSVPaths = @[p];
+        self.state = IndepStateResult;
+        [self applyState];
+        [self buildSessionChips];
+        [self showAnalysisForSessionIndex:0];
+    }
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    // 🔖 从工作台返回恢复:图表 VC 已被「创建迭代方案」收养带走(parent 变成工作台),
+    // 容器空了——按缓存原地领回,命中=秒恢复曲线(未命中走正常重分析兜底)
+    BOOL chartTaken = (self.currentAnalysisVC == nil)
+        || (self.currentAnalysisVC.parentViewController != self);
+    if (self.state == IndepStateResult && chartTaken
+        && self.sessionCSVPaths.count > 0
+        && self.selectedSessionIndex >= 0
+        && self.selectedSessionIndex < (NSInteger)self.sessionCSVPaths.count) {
+        [self showAnalysisForSessionIndex:self.selectedSessionIndex];
+    }
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -305,7 +332,9 @@ typedef NS_ENUM(NSInteger, IndepState) {
     self.processingView.hidden = (self.state != IndepStateProcessing);
     self.resultView.hidden = (self.state != IndepStateResult);
     // 「纳入迭代」仅结果态可用(空态/处理中无可建链的数据)
-    self.navigationItem.rightBarButtonItem.enabled = (self.state == IndepStateResult);
+    // 🔑 「创建迭代方案」=曲线就绪才可点:进结果态≠分析完(转换完即结果态,曲线还要~40s),
+    // 分析中跳走会让工作台缓存MISS再起一个分析=同文件双跑(真机已推演)
+    self.navigationItem.rightBarButtonItem.enabled = (self.state == IndepStateResult) && self.curvesReady;
 }
 
 #pragma mark - 空态:导入
@@ -589,12 +618,30 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         }
     }
 
-    // 移除旧子 VC
-    if (self.currentAnalysisVC) {
+    // 🔑 换 Session = 曲线未就绪,先收掉「创建迭代方案」(防分析中跳走双跑)
+    self.curvesReady = NO;
+    [self applyState];
+
+    // 移除旧子 VC(仅当还是自己的 child——已被工作台收养走的实例不归本页管,不能在此撕)
+    if (self.currentAnalysisVC && self.currentAnalysisVC.parentViewController == self) {
         [self.currentAnalysisVC willMoveToParentViewController:nil];
         [self.currentAnalysisVC.view removeFromSuperview];
         [self.currentAnalysisVC removeFromParentViewController];
-        self.currentAnalysisVC = nil;
+    }
+    self.currentAnalysisVC = nil;
+
+    // 🔖 结果缓存命中 → 收养现成分析(传递曲线model):免 40s 重解析+重分析
+    PIDAnalysisViewController *cached = [PIDAnalysisViewController cachedAnalysisForCSVPath:self.sessionCSVPaths[idx]];
+    if (cached) {
+        [cached moveToParent:self containerView:self.chartContainer];
+        [cached adoptForIndependent];  // 复位迭代标记;曾画过迭代虚线才重画
+        self.currentAnalysisVC = cached;
+        self.selectedSessionIndex = idx;
+        [self highlightSessionChipAtIndex:idx];
+        self.curvesReady = YES;  // 收养=曲线现成,立即可建方案
+        [self applyState];
+        NSLog(@"🔖 [独立分析] 收养缓存分析,免重分析: %@", self.sessionCSVPaths[idx].lastPathComponent);
+        return;
     }
 
     PIDAnalysisViewController *vc =
@@ -603,6 +650,16 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     // PIDAnalysisViewController 默认 isIterationMode=NO,此处不显式置位以保持默认
     // 🔑 0.4c-2:隐藏内置「导入下一轮」按钮,独立分析保持纯分析入口(不入方案),避免误触发建链
     vc.hidesBuiltinImportButton = YES;
+    // 🔑 曲线就绪回调:此刻才解禁「创建迭代方案」(分析完成VC才会进缓存,跳工作台才能命中收养)
+    __weak typeof(self) weakSelf = self;
+    vc.onAnalysisComplete = ^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) s = weakSelf;
+            if (!s || s.currentAnalysisVC != vc) return;  // 已切走/换Session,不属本回调管
+            s.curvesReady = YES;
+            if (s.state == IndepStateResult) [s applyState];
+        });
+    };
 
     [self addChildViewController:vc];
     vc.view.translatesAutoresizingMaskIntoConstraints = NO;
@@ -654,6 +711,11 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 /// 把当前独立分析(选中 Session)建成迭代链首飞轮,推入工作台继续多轮迭代
 - (void)includeInIterationTapped {
     if (self.state != IndepStateResult) return;
+    // 🔑 双保险:曲线没出来不允许建方案(此刻跳工作台=缓存MISS→同文件双跑浪费40s)
+    if (!self.curvesReady) {
+        [self showAlertWithTitle:@"分析进行中" message:@"请等曲线显示完成后再创建迭代方案"];
+        return;
+    }
     if (self.selectedSessionIndex < 0
         || self.selectedSessionIndex >= (NSInteger)self.sessionCSVPaths.count) {
         [self showAlertWithTitle:@"无法纳入" message:@"请先选择一个 Session"];

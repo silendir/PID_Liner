@@ -51,6 +51,21 @@
     return self;
 }
 
+/// 🔖 外部桥接:以 CSV 为首飞轮建链 → 推工作台(craftName 从 CSV 头解析,空则工作台兜底"方案 xxx")
++ (void)presentNewChainForCSVPath:(NSString *)csvPath fromViewController:(UIViewController *)host {
+    if (csvPath.length == 0 || host.navigationController == nil) return;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:csvPath]) return;
+
+    NSString *craftName = [[PIDCSVParser parser] extractCraftNameFromCSV:csvPath] ?: @"";
+    IterationChain *chain = [[IterationChainManager sharedManager]
+        createChainWithCraftName:craftName
+                         csvPath:csvPath
+                    sessionIndex:0];
+    IterationWorkbenchViewController *wb = [[self alloc] initWithChainId:chain.chainId];
+    wb.hidesBottomBarWhenPushed = YES;
+    [host.navigationController pushViewController:wb animated:YES];
+}
+
 #pragma mark - Lifecycle
 
 - (void)viewDidLoad {
@@ -350,6 +365,20 @@
     // 清空占位 hint
     for (UIView *v in self.chartContainer.subviews) {
         if (v.tag == 9999) [v removeFromSuperview];
+    }
+
+    // 🔖 结果缓存命中 → 收养现成分析(传递曲线model):免 40s 重解析+重分析,
+    // 曲线/特征/推荐/CLI 原样可用;首轮无历史虚线=零重画,瞬间显示
+    PIDAnalysisViewController *cached = [PIDAnalysisViewController cachedAnalysisForCSVPath:csvPath];
+    if (cached) {
+        [cached moveToParent:self containerView:self.chartContainer];
+        [cached adoptForChainId:self.chainId];   // 绑链+入链(指纹幂等)+刷新迭代UI
+        self.currentAnalysisVC = cached;
+        _importNextButton.enabled = YES;
+        [self reloadChainData];
+        [self renderHeaderAndChain];
+        NSLog(@"🔖 [工作台] 收养缓存分析,免重分析: %@", csvPath.lastPathComponent);
+        return;
     }
 
     // 🔑 0.4c-1 嵌入单 CSV(isIter=NO 简化);0.4c-2 改 isIter=YES + chainId 画历史虚线
