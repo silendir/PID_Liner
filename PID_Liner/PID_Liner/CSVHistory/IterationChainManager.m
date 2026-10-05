@@ -8,6 +8,16 @@
 #import "IterationChainManager.h"
 #import <math.h>
 
+NSString * const IterationChainDidUpdateNotification = @"IterationChainDidUpdateNotification";
+
+/// 链记录落盘后广播(主线程调用):工作台据此即时刷新 chip/轮次链
+static void PostChainDidUpdate(NSString *chainId) {
+    if (!chainId.length) return;
+    [[NSNotificationCenter defaultCenter] postNotificationName:IterationChainDidUpdateNotification
+                                                        object:nil
+                                                      userInfo:@{@"chainId": chainId}];
+}
+
 /// 🔬 递归清洗 JSON 不安全数值:NaN/Infinity 的 NSNumber → @0(计数入 *cleaned)
 /// NSJSONSerialization 遇单个非法数即整体失败,链文件将写不进磁盘
 static id MakeJSONSafe(id value, NSUInteger *cleaned) {
@@ -193,6 +203,7 @@ static NSString *const kChainDirectoryName = @"IterationChains";
 
     NSLog(@"💾 [迭代链] 追加第%ld轮到链%@ (%@)",
           (long)record.iteration, chainId, chain.craftName);
+    PostChainDidUpdate(chainId);
 }
 
 #pragma mark - 撤销(Q7)
@@ -209,6 +220,7 @@ static NSString *const kChainDirectoryName = @"IterationChains";
     [chain removeLastRecord];
     [self saveChain:chain];
     NSLog(@"↩ [迭代链] 已撤销链%@最新轮 (剩余%lu轮)", chainId, (unsigned long)chain.records.count);
+    PostChainDidUpdate(chainId);
 }
 
 /// 重命名方案(改链 craftName 并持久化;首页方案列表/工作台链头随之更新)
@@ -222,6 +234,7 @@ static NSString *const kChainDirectoryName = @"IterationChains";
     chain.craftName = craftName;
     [self saveChain:chain];
     NSLog(@"✏️ [迭代链] 方案改名: %@ → %@", chainId, craftName);
+    PostChainDidUpdate(chainId);
 }
 
 #pragma mark - 删除

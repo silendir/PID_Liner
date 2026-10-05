@@ -42,6 +42,7 @@
 @property (nonatomic, assign) BOOL chartsRendered;                  // 当前数据已配完图(防布局回调重复整轮重画)
 @property (nonatomic, copy, nullable) NSString *renderedChainId;    // 已画进图表的迭代链id(收养时判断是否需重画历史虚线)
 @property (nonatomic, assign) BOOL renderedWithHistory;             // 已画的图里含迭代历史虚线
+@property (nonatomic, copy, nullable) NSString *precomputedFingerprint;  // 🔑 分析完成即后台算好的CSV指纹(入链时同步取用,第1轮当场入账)
 @property (nonatomic, strong) PIDResponseResult *rollResponse;
 @property (nonatomic, strong) PIDResponseResult *pitchResponse;
 @property (nonatomic, strong) PIDResponseResult *yawResponse;
@@ -2021,6 +2022,20 @@ static NSString *_sCachedKey = nil;
     // 🔖 进结果缓存单槽:同文件任何容器(工作台/独立分析)随后嵌入=直接收养秒开
     [[self class] registerAnalysisCache:self];
 
+    // 🔑 指纹预计算:入链防重用的指纹(30MB 读+md5)提前在后台算好,
+    // 创建/收养方案时同步取用 → 第1轮当场入账,chip 首渲染即"第1轮"
+    if (self.precomputedFingerprint.length == 0 && self.csvFilePath.length > 0) {
+        NSString *path = [self.csvFilePath copy];
+        __weak typeof(self) weakSelf = self;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            NSString *fp = [weakSelf csvFingerprintForFile:path];
+            if (!fp.length) return;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                weakSelf.precomputedFingerprint = fp;
+            });
+        });
+    }
+
     NSLog(@"✅ PID分析完成");
 }
 
@@ -2650,8 +2665,13 @@ static NSString *_sCachedKey = nil;
     record.pitchSnapshot = [self buildSnapshotForAxis:1 currentPID:currentPID];
     record.yawSnapshot = [self buildSnapshotForAxis:2 currentPID:currentPID];
 
-    // 🔑 指纹后台算:全文读入+按行拆分对 30MB CSV 是秒级阻塞,主线程算会把
-    // push 工作台/分析收尾卡死(真机已踩);算完回主线程走原校验+入链(UI 逻辑不离开主线程)
+    // 🔑 指纹优先用预计算结果:同步入账,创建方案后 chip 首渲染即"第1轮"(零等待窗口);
+    // 分析刚完成指纹还没算完的窄窗才走后台兜底(算完入链,配合链更新通知刷新UI)
+    if (self.precomputedFingerprint.length > 0) {
+        record.csvFingerprint = self.precomputedFingerprint;
+        [self checkFlightTimeAndAppendToChain:chainId record:record chainMgr:chainMgr];
+        return;
+    }
     NSString *csvPath = [self.csvFilePath copy];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSString *fp = [self csvFingerprintForFile:csvPath];

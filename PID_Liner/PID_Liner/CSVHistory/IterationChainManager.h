@@ -11,6 +11,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// 🔑 链记录变更通知(append/撤销/改名后广播,userInfo 带 chainId)——
+/// 工作台订阅后 chip/轮次链即时刷新,无需退出重进
+FOUNDATION_EXPORT NSString * const IterationChainDidUpdateNotification;
+
 /// 迭代链管理器（单例）
 @interface IterationChainManager : NSObject
 

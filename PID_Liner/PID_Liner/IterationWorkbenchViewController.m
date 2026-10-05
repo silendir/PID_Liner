@@ -75,6 +75,26 @@
     [self setupNav];
     [self setupUI];
     [self reloadAll];
+
+    // 🔑 链变更即时刷新:入链/撤销/改名落盘后广播,chip/轮次链当场更新
+    //(否则异步入链后页面停在旧状态,须退出重进——真机已踩"创建后1~3秒未开始")
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(chainDidUpdate:)
+                                                 name:IterationChainDidUpdateNotification
+                                               object:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:IterationChainDidUpdateNotification
+                                                  object:nil];
+}
+
+/// 本链有记录变更 → 重读数据刷新链头/轮次链(不动嵌入的分析VC,零重分析)
+- (void)chainDidUpdate:(NSNotification *)note {
+    if (![note.userInfo[@"chainId"] isEqualToString:self.chainId]) return;
+    [self reloadChainData];
+    [self renderHeaderAndChain];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
