@@ -298,7 +298,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 
     NSString *title = ok > 0 ? @"导入成功" : @"导入失败";
     NSString *msg = ok > 0
-        ? [NSString stringWithFormat:@"%@ · 已解码 %lu 个 Session,可在「☰ 总列表」查看", name.lastPathComponent, (unsigned long)ok]
+        ? [NSString stringWithFormat:@"%@ · 已解码 %lu 个 Session,已在「☰ → CSV转换记录」生成记录", name.lastPathComponent, (unsigned long)ok]
         : (results.firstObject.errorMessage ?: convertError.localizedDescription ?: @"BBL 解码失败");
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:msg
                                                              preferredStyle:UIAlertControllerStyleAlert];

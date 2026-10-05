@@ -155,6 +155,17 @@ static NSArray<CBUUID *> *KnownServiceUUIDs(void) {
     [self.msp reset];
 }
 
+/// 🔑 以错误收尾在飞请求(断连等链路死亡场景)。
+/// 必须在 clearConnection 之前调:clearConnection 置 waitingReply=NO 后,
+/// 在飞请求的超时定时器会因 "!waitingReply" 静默作废,pendingReply 永不触发
+- (void)failPendingReply:(NSString *)message
+{
+    self.waitingReply = NO;
+    void (^block)(NSData *, NSString *) = self.pendingReply;
+    self.pendingReply = nil;
+    if (block) block(nil, message);
+}
+
 #pragma mark - 发命令
 
 - (void)sendCommand:(uint8_t)cmd
@@ -187,7 +198,7 @@ static NSArray<CBUUID *> *KnownServiceUUIDs(void) {
     self.pendingReply = reply;
     self.expectedCmd = cmd;
     NSUInteger generation = ++self.requestGeneration;
-    NSLog(@"[BLE] → cmd=%u frame=%@", cmd, frame);
+    NSLog(@"[BLE] → cmd=%u gen=%lu frame=%@", cmd, (unsigned long)generation, frame);
     // 写入类型自适应(同 BF 插件):特征只支持无响应写时,带响应写会被 iOS 拒发=链路全哑
     CBCharacteristicWriteType type =
         (self.writeChar.properties & CBCharacteristicPropertyWrite)
@@ -203,8 +214,16 @@ static NSArray<CBUUID *> *KnownServiceUUIDs(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         __strong typeof(weakSelf) s = weakSelf;
-        if (!s || generation != s.requestGeneration || !s.waitingReply) return;
-        NSLog(@"[BLE] ⏱ cmd=%u 5s 无响应", cmd);
+        if (!s) return;
+        // 🔑 僵尸超时修复的观察口:旧代定时器引爆时新代已在跑 → 打一条"作废"证据
+        // (修复前正是这些旧定时器在误杀在飞的新请求,复测时此条出现≠失败,是修复在生效)
+        if (generation != s.requestGeneration) {
+            NSLog(@"[BLE] ⏾ 旧代超时作废 gen=%lu (当前 gen=%lu) — 未误杀在飞请求",
+                  (unsigned long)generation, (unsigned long)s.requestGeneration);
+            return;
+        }
+        if (!s.waitingReply) return;  // 本代回包已到,定时器空转丢弃(每块必发,不打印防刷屏)
+        NSLog(@"[BLE] ⏱ cmd=%u 5s 无响应 gen=%lu", cmd, (unsigned long)generation);
         s.waitingReply = NO;
         [s.msp reset];
         void (^block)(NSData *, NSString *) = s.pendingReply;
@@ -278,6 +297,9 @@ didDisconnectPeripheral:(CBPeripheral *)peripheral
                  error:(NSError *)error
 {
     NSLog(@"[BLE] 断连 error=%@", error);
+    // 🔑 断连必须先以错误收尾在飞请求,再清链路——只清不回调的话请求成孤儿,
+    // 下载器永远等回包(真机已踩:下载 74% 链路超时断连后无任何完成/失败提示)
+    [self failPendingReply:@"蓝牙断连"];
     [self clearConnection];
     if (self.onDisconnected) self.onDisconnected();
 }
