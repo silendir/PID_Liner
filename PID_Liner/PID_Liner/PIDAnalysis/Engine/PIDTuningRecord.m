@@ -18,6 +18,7 @@
     if (self.actualFeatures) d[@"actualFeatures"] = [self featuresToDict:self.actualFeatures];
     if (self.predictedFeatures) d[@"predictedFeatures"] = [self featuresToDict:self.predictedFeatures];
     if (self.predictedCurve) d[@"predictedCurve"] = self.predictedCurve;
+    if (self.measuredCurve) d[@"measuredCurve"] = self.measuredCurve;
     return [d copy];
 }
 
@@ -38,6 +39,9 @@
     }
     if (dict[@"predictedCurve"]) {
         s.predictedCurve = dict[@"predictedCurve"];
+    }
+    if (dict[@"measuredCurve"]) {
+        s.measuredCurve = dict[@"measuredCurve"];
     }
     return s;
 }

@@ -43,6 +43,10 @@
 @property (nonatomic, copy, nullable) NSString *renderedChainId;    // 已画进图表的迭代链id(收养时判断是否需重画历史虚线)
 @property (nonatomic, assign) BOOL renderedWithHistory;             // 已画的图里含迭代历史虚线
 @property (nonatomic, copy, nullable) NSString *precomputedFingerprint;  // 🔑 分析完成即后台算好的CSV指纹(入链时同步取用,第1轮当场入账)
+// 🔖 本轮实测曲线(低输入,显示级降采样~百点)——入链保存,下一轮画"第N轮实测"对比线
+@property (nonatomic, copy, nullable) NSArray<NSNumber *> *rollMeasuredCurve;
+@property (nonatomic, copy, nullable) NSArray<NSNumber *> *pitchMeasuredCurve;
+@property (nonatomic, copy, nullable) NSArray<NSNumber *> *yawMeasuredCurve;
 @property (nonatomic, strong) PIDResponseResult *rollResponse;
 @property (nonatomic, strong) PIDResponseResult *pitchResponse;
 @property (nonatomic, strong) PIDResponseResult *yawResponse;
@@ -1582,6 +1586,13 @@ static NSString *_sCachedKey = nil;
         }
     }
 
+    // 🔖 存下本轮实测(显示级)——buildSnapshotForAxis 入链,下一轮画"第N轮实测"对比线
+    switch (axisIndex) {
+        case 0: self.rollMeasuredCurve = [displayLowData copy]; break;
+        case 1: self.pitchMeasuredCurve = [displayLowData copy]; break;
+        case 2: self.yawMeasuredCurve = [displayLowData copy]; break;
+    }
+
     // 6. 配置图表显示两条曲线 - 使用 AAOptions 以支持 tooltip 样式
     AAOptions *aaOptions = [[AAOptions alloc] init];
 
@@ -1722,6 +1733,29 @@ static NSString *_sCachedKey = nil;
         // 🔑 应用隐藏状态（toggle按钮控制的显隐）
         histSeries.visible = ![self.hiddenIterationIndexes containsObject:@(h)];
         [series addObject:histSeries];
+
+        // ⬜ 历史轮实测曲线(灰细实线):当年真实飞出来的样子,与当前蓝线直接对比;
+        // 旧记录无此字段自动跳过(降级只看预测虚线)
+        if (snapshot.measuredCurve.count > 10) {
+            NSArray<NSNumber *> *mCurve = snapshot.measuredCurve;
+            NSInteger mLen = (NSInteger)mCurve.count;
+            NSMutableArray<NSNumber *> *mDisplay = [NSMutableArray arrayWithCapacity:displayPoints];
+            for (NSInteger j = 0; j < displayPoints; j++) {
+                NSInteger mi = (NSInteger)round((double)j / MAX(displayPoints - 1, 1) * (mLen - 1));
+                [mDisplay addObject:mCurve[MIN(MAX(mi, 0), mLen - 1)]];
+            }
+            AASeriesElement *mSeries = [[AASeriesElement alloc] init];
+            mSeries.name = [NSString stringWithFormat:@"第%ld轮实测", (long)record.iteration];
+            mSeries.data = mDisplay;
+            mSeries.color = @"#8E8E93";  // 灰:历史实测,不与当前轮蓝线混淆
+            mSeries.lineWidth = @1.5;
+            mSeries.enableMouseTracking = @NO;
+            AAMarker *mMarker = [[AAMarker alloc] init];
+            mMarker.radius = @0;
+            mSeries.marker = mMarker;
+            mSeries.visible = histSeries.visible;  // 与同轮预测同进退
+            [series addObject:mSeries];
+        }
     }
 
     // 🔑 预测虚线曲线（绿色虚线）
@@ -2779,6 +2813,13 @@ static NSString *_sCachedKey = nil;
         case 2: actualFeatures = self.yawFeatures; tuningResult = self.yawTuningResult; break;
     }
     snapshot.actualFeatures = actualFeatures;
+
+    // 🔖 本轮实测曲线(显示级)入快照——下一轮叠加为"第N轮实测"灰线对比
+    switch (axisIndex) {
+        case 0: snapshot.measuredCurve = self.rollMeasuredCurve; break;
+        case 1: snapshot.measuredCurve = self.pitchMeasuredCurve; break;
+        case 2: snapshot.measuredCurve = self.yawMeasuredCurve; break;
+    }
 
     if (tuningResult) {
         snapshot.recommendedPID = tuningResult.recommendedPID;

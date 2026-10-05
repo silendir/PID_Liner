@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong, nullable) PIDResponseFeatures *actualFeatures;    // 实际曲线特征
 @property (nonatomic, strong, nullable) PIDResponseFeatures *predictedFeatures; // 预测曲线特征
 @property (nonatomic, strong, nullable) NSArray<NSNumber *> *predictedCurve;    // 预测曲线数据
+@property (nonatomic, strong, nullable) NSArray<NSNumber *> *measuredCurve;     // 本轮实测曲线(低输入,显示级降采样~百点,供下一轮叠加对比;旧记录无此字段自动降级)
 
 - (NSDictionary *)toDictionary;
 + (instancetype)fromDictionary:(NSDictionary *)dict;
