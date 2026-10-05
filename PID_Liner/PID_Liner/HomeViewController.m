@@ -118,13 +118,13 @@
 
     // ===== 「选一条路」标题区 =====
     UILabel *title = [[UILabel alloc] init];
-    title.text = @"选一条路";
+    title.text = @"选一条嗨路";
     title.font = [UIFont systemFontOfSize:27 weight:UIFontWeightBold];
     title.translatesAutoresizingMaskIntoConstraints = NO;
     [container addSubview:title];
 
     UILabel *subtitle = [[UILabel alloc] init];
-    subtitle.text = @"看一眼,还是调到底";
+    subtitle.text = @"调一下, 还是深度喂屎";
     subtitle.font = [UIFont systemFontOfSize:13];
     subtitle.textColor = [UIColor secondaryLabelColor];
     subtitle.translatesAutoresizingMaskIntoConstraints = NO;

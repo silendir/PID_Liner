@@ -64,7 +64,7 @@
 @property (nonatomic, copy) NSString *cliCommands;
 // 🔑 0.4c-2 第2步:CLI 真值/滑块双模式(工作台/独立分析共享)
 @property (nonatomic, copy) NSString *sliderCLICommands;   // BF 滑块模式 CLI(BFSliderMapper 反算,master=100 固定)
-@property (nonatomic, assign) BOOL cliDisplayModeIsSlider; // NO=真值PID命令(默认), YES=滑块命令
+@property (nonatomic, assign) BOOL cliDisplayModeIsSlider; // NO=真值PID命令, YES=滑块命令(默认,随 segmented 初始选中设置)
 
 // 🔑 迭代闭环调参历史
 @property (nonatomic, copy, nullable) NSString *currentCraftName;
@@ -453,7 +453,9 @@
     objc_setAssociatedObject(vc, "recommendationValuesLabel", recommendationValuesLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     UISegmentedControl *cliSegmented = [[UISegmentedControl alloc] initWithItems:@[@"PID 真值", @"BF 滑块"]];
-    cliSegmented.selectedSegmentIndex = 0;
+    // 🔑 默认选中 BF 滑块(飞手操作单位),状态位与 UI 同源设置
+    cliSegmented.selectedSegmentIndex = 1;
+    self.cliDisplayModeIsSlider = YES;
     cliSegmented.translatesAutoresizingMaskIntoConstraints = NO;
     [cliSegmented addTarget:self action:@selector(cliDisplayModeChanged:) forControlEvents:UIControlEventValueChanged];
     [recommendationContainer addSubview:cliSegmented];
@@ -2942,7 +2944,8 @@ static NSString *_sCachedKey = nil;
 /// CLI 显示区按 toggle 模式刷新文本
 - (void)refreshCLIDisplayLabel:(UILabel *)cliLabel {
     if (!cliLabel) return;
-    NSString *text = self.cliDisplayModeIsSlider ? self.sliderCLICommands : self.cliCommands;
+    // 🔑 复用 currentRecommendationCLI 的回退:滑块版缺失时显示真值版,与复制按钮行为一致
+    NSString *text = [self currentRecommendationCLI];
     cliLabel.text = text.length > 0 ? text : @"(暂无 CLI 命令)";
 }
 
