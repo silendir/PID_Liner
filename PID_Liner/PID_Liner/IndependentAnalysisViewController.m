@@ -729,8 +729,11 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         return;
     }
 
-    // craftName 从 CSV 头解析(链头显示用;空则工作台兜底显示"方案 xxx")
-    NSString *craftName = [[PIDCSVParser parser] extractCraftNameFromCSV:csvPath] ?: @"";
+    // craftName 从 CSV 头解析;空则用文件名(BBL 没起名的飞机不再产生无名单,如 MAMBAF722)
+    NSString *craftName = [[PIDCSVParser parser] extractCraftNameFromCSV:csvPath];
+    if (craftName.length == 0) {
+        craftName = [csvPath.lastPathComponent stringByDeletingPathExtension];
+    }
 
     // 建链(只建壳,首轮 record 由工作台嵌入 VC 分析完自动 appendRecord)
     IterationChain *chain = [[IterationChainManager sharedManager]

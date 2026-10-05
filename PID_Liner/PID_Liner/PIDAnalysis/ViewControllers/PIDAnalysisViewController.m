@@ -2367,8 +2367,14 @@ static NSString *_sCachedKey = nil;
     }
 
     if (!self.currentCraftName.length) {
-        NSLog(@"ℹ️ [迭代链] craftName为空，无历史记录");
-        return;
+        // 🔑 craftName 空不再整体 return——BBL 没起飞机名(如 MAMBAF722 吴机)时
+        // 链加载被跳过 → 历史虚线/入链全断。兜底取链方案名,再兜底"未命名飞机"
+        if (self.currentChainId.length) {
+            IterationChain *chain = [[IterationChainManager sharedManager] chainForId:self.currentChainId];
+            if (chain.craftName.length) self.currentCraftName = chain.craftName;
+        }
+        if (!self.currentCraftName.length) self.currentCraftName = @"未命名飞机";
+        NSLog(@"ℹ️ [迭代链] CSV缺飞机名,兜底: %@", self.currentCraftName);
     }
 
     // 🔑 从迭代链加载历史记录
@@ -2596,8 +2602,9 @@ static NSString *_sCachedKey = nil;
     }
 
     if (!self.currentCraftName.length) {
-        NSLog(@"⚠️ [迭代链] craftName为空，跳过保存");
-        return;
+        // 🔑 兜底而非拒收:BBL 没起名的飞机整轮不入链=链永远0轮(真机MAMBAF722已踩)
+        self.currentCraftName = @"未命名飞机";
+        NSLog(@"⚠️ [迭代链] craftName为空,兜底\"未命名飞机\"继续入链(工作台可改名)");
     }
 
     if (!self.currentChainId.length) {

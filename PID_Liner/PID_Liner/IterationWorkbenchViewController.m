@@ -56,7 +56,11 @@
     if (csvPath.length == 0 || host.navigationController == nil) return;
     if (![[NSFileManager defaultManager] fileExistsAtPath:csvPath]) return;
 
-    NSString *craftName = [[PIDCSVParser parser] extractCraftNameFromCSV:csvPath] ?: @"";
+    NSString *craftName = [[PIDCSVParser parser] extractCraftNameFromCSV:csvPath];
+    if (craftName.length == 0) {
+        // 🔑 BBL 没起飞机名(如 MAMBAF722 吴机)→ 用文件名当方案名,不再产生无名单
+        craftName = [csvPath.lastPathComponent stringByDeletingPathExtension];
+    }
     IterationChain *chain = [[IterationChainManager sharedManager]
         createChainWithCraftName:craftName
                          csvPath:csvPath
