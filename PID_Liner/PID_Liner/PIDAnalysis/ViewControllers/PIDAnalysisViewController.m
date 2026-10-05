@@ -697,6 +697,10 @@ static NSString *_sCachedKey = nil;
     [self applyImportButtonVisibility];
 
     [self loadTuningHistory];
+    // 🔑 记录"入链前"历史数:下面 save 会把当前轮追加进链(reloadChainHistory 后 count+1),
+    // 用追加后的数判定重画会把"刚创建(历史0)"误判成"有历史"→整轮重画→主线程冻结6-10秒,
+    // 且重画出的"第1轮预测"与当前预测完全相同,纯属白画(真机已踩,日志实锤)
+    NSUInteger historyBeforeSave = self.tuningHistory.count;
 
     // 分析已完成的收养,自动存档钩子(showAnalysisComplete→save)不会再触发——手动入链;
     // 指纹守卫幂等:反复收养/重进不堆假轮次
@@ -711,12 +715,12 @@ static NSString *_sCachedKey = nil;
     [self updateIterationInfoBar];
     [self updateToggleControls];
 
-    // 🔑 历史虚线只在与已画内容不符时重画:
-    //   独立分析→创建方案(首轮,无历史) → 零重画秒开;
+    // 🔑 历史虚线只在与已画内容不符时重画(判定用"入链前"历史数):
+    //   独立分析→创建方案(入链前历史0) → 零重画秒开;
     //   重进已有 N 轮的链且该链虚线已画过 → 跳过重画,同样秒开
     BOOL sameChainDrawn = self.renderedWithHistory
         && [chainId isEqualToString:self.renderedChainId ?: @""];
-    if (self.tuningHistory.count > 0 && !sameChainDrawn) {
+    if (historyBeforeSave > 0 && !sameChainDrawn) {
         [self configureResponseCharts];  // 尾部会更新 rendered 状态
         return;
     }
