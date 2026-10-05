@@ -27,6 +27,7 @@ typedef NS_ENUM(NSUInteger, MscStage) {
 @property (nonatomic, strong) UIButton *downloadButton;   // 态3 蓝牙直下 / 下载中变取消
 @property (nonatomic, strong) UIProgressView *progressView;
 @property (nonatomic, strong) DataflashDownloader *downloader;
+@property (nonatomic, assign) double lastDownloadFraction;  // 最近下载进度(断连提示"中断于 N%"用)
 @property (nonatomic, strong) NSMutableArray<FCBleDevice *> *devices;
 @property (nonatomic, strong) FCBleDevice *selectedDevice;
 @property (nonatomic, assign) MscStage stage;
@@ -146,6 +147,15 @@ typedef NS_ENUM(NSUInteger, MscStage) {
     ble.onDisconnected = ^{
         __strong typeof(weakSelf) s = weakSelf;
         if (!s) return;
+        // 下载中断连:回扫描态(重连要重扫),但标签必须交代"断在哪"——
+        // 否则页面无声跳回扫描,用户以为下载完成了却找不到文件(真机已踩)
+        if (s.downloader.running) {
+            double pct = s.lastDownloadFraction * 100.0;
+            [s enterStage:MscStageScanning];
+            s.stageLabel.text = [NSString stringWithFormat:
+                @"❌ 蓝牙断连,下载中断于 %.0f%%(数据未保存)\n重连后重新下载,从头开始", pct];
+            return;
+        }
         // 激活 MSC 后飞控重启断连 = 预期,进入插线引导;其他时机断连回扫描态
         if (s.stage != MscStageActivated) {
             [s enterStage:MscStageScanning];
@@ -271,6 +281,7 @@ typedef NS_ENUM(NSUInteger, MscStage) {
     [self.downloader startWithProgress:^(double fraction, NSString *text) {
         __strong typeof(weakSelf) s = weakSelf;
         if (!s) return;
+        s.lastDownloadFraction = fraction;
         s.progressView.progress = fraction;
         s.stageLabel.text = text;
     } completion:^(NSURL *fileURL, NSString *errorMessage) {
@@ -358,7 +369,7 @@ typedef NS_ENUM(NSUInteger, MscStage) {
 
     NSString *title = ok > 0 ? @"导入成功" : @"导入失败";
     NSString *msg = ok > 0
-        ? [NSString stringWithFormat:@"%@ · 已解码 %lu 个 Session,可在「☰ 总列表」查看", name, (unsigned long)ok]
+        ? [NSString stringWithFormat:@"%@ · 已解码 %lu 个 Session,已在「☰ → CSV转换记录」生成记录", name, (unsigned long)ok]
         : (results.firstObject.errorMessage ?: convertError.localizedDescription ?: @"BBL 解码失败");
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:msg
                                                              preferredStyle:UIAlertControllerStyleAlert];

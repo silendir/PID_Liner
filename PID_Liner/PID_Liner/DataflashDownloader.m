@@ -29,6 +29,11 @@ static uint16_t ReadLE16(const uint8_t *b)
 @property (nonatomic, assign) uint32_t usedSize;    // 闪存已用字节(下载总量)
 @property (nonatomic, strong) NSMutableData *acc;
 @property (nonatomic, assign) NSUInteger retriesLeft;
+// 📊 复测观察用统计(全部打进 NSLog,后台 Console 可抓)
+@property (nonatomic, assign) NSUInteger chunkCount;         // 已成功块数
+@property (nonatomic, assign) NSUInteger retryCount;         // 累计重试次数
+@property (nonatomic, assign) CFAbsoluteTime downloadStart;  // 整体开始时刻(均速)
+@property (nonatomic, assign) CFAbsoluteTime chunkSentAt;    // 当前块发出时刻(单块耗时)
 @property (nonatomic, copy) void(^progressBlock)(double, NSString *);
 @property (nonatomic, copy) void(^completionBlock)(NSURL *, NSString *);
 @end
@@ -69,7 +74,13 @@ static uint16_t ReadLE16(const uint8_t *b)
 
         s.usedSize = usedSize;
         s.address = 0;
+        s.chunkCount = 0;
+        s.retryCount = 0;
+        s.downloadStart = CFAbsoluteTimeGetCurrent();
+        NSLog(@"[BLE] 📥 开始直下: 闪存已用 %lu 字节 ≈ %lu 块×%uB",
+              (unsigned long)usedSize, (unsigned long)((usedSize + kChunkSize - 1) / kChunkSize), kChunkSize);
         s.acc = [NSMutableData dataWithCapacity:usedSize];
+        s.retriesLeft = kChunkRetries;  // 🔑 配额只在"推进到新块"时重置(见 fetchNextChunk 注释)
         [s fetchNextChunk];
     }];
 }
@@ -103,7 +114,9 @@ static uint16_t ReadLE16(const uint8_t *b)
         (uint8_t)(self.address >> 16), (uint8_t)(self.address >> 24),
         (uint8_t)(kChunkSize & 0xff), (uint8_t)(kChunkSize >> 8), 0
     };
-    self.retriesLeft = kChunkRetries;
+    // 🔑 retriesLeft 不在此重置:重试路径也走本方法,顶部重置会把配额重新填满——
+    // 断连后 send 同步失败("未连接飞控")时会变成 无限递归重试→主线程死循环(真机已踩前兆)
+    self.chunkSentAt = CFAbsoluteTimeGetCurrent();
 
     __weak typeof(self) weakSelf = self;
     [self.service sendV2Command:MSPCommandDataflashRead payload:[NSData dataWithBytes:req length:7]
@@ -114,11 +127,13 @@ static uint16_t ReadLE16(const uint8_t *b)
             // 蓝牙桥偶发丢包:当前块重试一次再放弃
             if (s.retriesLeft > 0) {
                 s.retriesLeft--;
-                NSLog(@"[BLE] 块 @%u 失败(%@),重试", s.address, err);
+                s.retryCount++;
+                NSLog(@"[BLE] 🔁 块#%lu @%u 失败(%@),重试(第 %lu 次)",
+                      (unsigned long)(s.chunkCount + 1), s.address, err, (unsigned long)s.retryCount);
                 [s fetchNextChunk];
                 return;
             }
-            return [self fail:[NSString stringWithFormat:@"下载中断:%@", err]];
+            return [self fail:[NSString stringWithFormat:@"下载中断:%@ (已完成 %lu 块)", err, (unsigned long)s.chunkCount]];
         }
         // 响应:[地址回显u32][数据量u16][压缩类型u8][数据…]
         if (p.length < 7) return [self fail:@"数据块帧异常"];
@@ -132,7 +147,10 @@ static uint16_t ReadLE16(const uint8_t *b)
             (dataSize == 0 && s.address < s.usedSize)) {
             if (s.retriesLeft > 0) {
                 s.retriesLeft--;
-                NSLog(@"[BLE] 块 @%u 异常回包(地址/压缩/长度),重试", s.address);
+                s.retryCount++;
+                NSLog(@"[BLE] 🔁 块#%lu @%u 异常回包(回显@%u dataSize=%u 压缩=%u),重试(第 %lu 次)",
+                      (unsigned long)(s.chunkCount + 1), s.address, echoAddr, dataSize, compression,
+                      (unsigned long)s.retryCount);
                 [s fetchNextChunk];
                 return;
             }
@@ -141,6 +159,15 @@ static uint16_t ReadLE16(const uint8_t *b)
 
         [s.acc appendBytes:b + 7 length:dataSize];
         s.address += dataSize;
+        s.chunkCount++;
+        // 📊 每块一行进度(后台日志可观察下载推进/单块耗时/均速——复测"零失败到底"的判读依据)
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        double chunkMs = (now - s.chunkSentAt) * 1000.0;
+        double avgKBs = s.address / 1024.0 / MAX(now - s.downloadStart, 0.001);
+        NSLog(@"[BLE] ✅ 块#%lu @%u +%uB | %.0f%% | 本块 %.0fms | 均 %.1fKB/s",
+              (unsigned long)s.chunkCount, echoAddr, dataSize,
+              (double)s.address / s.usedSize * 100.0, chunkMs, avgKBs);
+        s.retriesLeft = kChunkRetries;  // 地址已推进=新块,重置配额
         [s fetchNextChunk];
     }];
 }
@@ -148,6 +175,12 @@ static uint16_t ReadLE16(const uint8_t *b)
 /// 全部块到位 → 落盘 Documents
 - (void)finishDownload
 {
+    // 📊 汇总统计:复测判读(块数/重试/总耗时/均速)——零重试跑完即僵尸超时修复验证通过
+    double totalSec = CFAbsoluteTimeGetCurrent() - self.downloadStart;
+    NSLog(@"[BLE] 📊 下载统计: %lu 块 / 重试 %lu 次 / 总 %.0fs / 均 %.1fKB/s / %lu 字节",
+          (unsigned long)self.chunkCount, (unsigned long)self.retryCount, totalSec,
+          self.acc.length / 1024.0 / MAX(totalSec, 0.001), (unsigned long)self.acc.length);
+
     NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
     fmt.dateFormat = @"yyyyMMdd_HHmmss";
     NSString *fileName = [NSString stringWithFormat:@"ble_%@.bbl", [fmt stringFromDate:[NSDate date]]];
