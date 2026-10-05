@@ -1678,10 +1678,12 @@ static NSString *_sCachedKey = nil;
     [series addObject:highSeries];  // 🔑 始终添加到图例中
 
     // 🔑 历史轮次虚线叠加（最多5轮，各色+各线型）
+    // 排除"已在链里的当前轮"——它的预测就是绿线"本轮预测"本身,不排除会同数据画两条(真机已踩)
     NSArray<NSString *> *historyColors = @[@"#AF52DE", @"#FF2D55", @"#00C7BE", @"#FFCC00", @"#A2845E"];
     NSArray<NSString *> *historyDashStyles = @[@"Dot", @"ShortDash", @"LongDash", @"DashDot", @"ShortDashDot"];
+    NSInteger histDisplayCount = (NSInteger)self.tuningHistory.count - ([self currentRoundAlreadyInChain] ? 1 : 0);
 
-    for (NSInteger h = 0; h < (NSInteger)self.tuningHistory.count && h < 5; h++) {
+    for (NSInteger h = 0; h < histDisplayCount && h < 5; h++) {
         PIDTuningRecord *record = self.tuningHistory[h];
         PIDAxisTuningSnapshot *snapshot = [record snapshotForAxis:axisIndex];
         if (!snapshot || !snapshot.predictedCurve || snapshot.predictedCurve.count < 10) continue;
@@ -2412,9 +2414,7 @@ static NSString *_sCachedKey = nil;
     // → 显示该轮真实轮号;否则(正在分析下一轮) = 已有轮数 + 1。
     // 旧公式无脑 count+1,入链后再刷新会把刚存的这轮多算一轮 → "第2轮调参"错显(真机已踩)
     PIDTuningRecord *last = self.tuningHistory.lastObject;
-    BOOL currentSaved = (last != nil && self.csvFilePath.length > 0
-                         && last.csvFileName.length > 0
-                         && [last.csvFileName isEqualToString:self.csvFilePath.lastPathComponent]);
+    BOOL currentSaved = [self currentRoundAlreadyInChain];
     NSInteger iteration = currentSaved ? last.iteration : self.tuningHistory.count + 1;
     if (iteration < 1) iteration = self.tuningHistory.count + 1;
     NSString *craftName = self.currentCraftName ?: @"未知飞机";
@@ -2491,8 +2491,9 @@ static NSString *_sCachedKey = nil;
         hasAnyToggle = YES;
     }
 
-    // 历史轮次开关
-    for (NSInteger h = 0; h < (NSInteger)self.tuningHistory.count && h < 5; h++) {
+    // 历史轮次开关(同样排除已在链里的当前轮,与图上虚线一一对应,不多出"第N轮"按钮)
+    NSInteger histDisplayCount = (NSInteger)self.tuningHistory.count - ([self currentRoundAlreadyInChain] ? 1 : 0);
+    for (NSInteger h = 0; h < histDisplayCount && h < 5; h++) {
         PIDTuningRecord *record = self.tuningHistory[h];
         NSString *colorHex = colors[h % 5];
         NSString *title = [NSString stringWithFormat:@"● 第%ld轮预测 (%.0f%%)",
@@ -2630,6 +2631,16 @@ static NSString *_sCachedKey = nil;
 }
 
 /// 取消分析:置位标记,后台/主线程各检查点自行中止
+/// 🔑 当前分析的CSV是否已作为链里最新一轮入链(分析完成存档后/收养后=YES)。
+/// 此时历史虚线/勾选列表必须排除该最后一条——它就是"本轮预测"绿线本身,
+/// 不排除会画出同数据两条线+两个按钮("第N轮预测"与"本轮"重复,真机已踩)
+- (BOOL)currentRoundAlreadyInChain {
+    PIDTuningRecord *last = self.tuningHistory.lastObject;
+    return (last != nil && self.csvFilePath.length > 0
+            && last.csvFileName.length > 0
+            && [last.csvFileName isEqualToString:self.csvFilePath.lastPathComponent]);
+}
+
 - (void)cancelAnalysis {
     _analysisCancelled = YES;
     [_activityIndicator stopAnimating];
