@@ -6,6 +6,33 @@
 //
 
 #import "IterationChainManager.h"
+#import <math.h>
+
+/// 🔬 递归清洗 JSON 不安全数值:NaN/Infinity 的 NSNumber → @0(计数入 *cleaned)
+/// NSJSONSerialization 遇单个非法数即整体失败,链文件将写不进磁盘
+static id MakeJSONSafe(id value, NSUInteger *cleaned) {
+    if ([value isKindOfClass:[NSNumber class]]) {
+        double d = ((NSNumber *)value).doubleValue;
+        if (isnan(d) || isinf(d)) {
+            if (cleaned) (*cleaned)++;
+            return @0;
+        }
+        return value;
+    }
+    if ([value isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *out = [NSMutableDictionary dictionaryWithCapacity:[(NSDictionary *)value count]];
+        [(NSDictionary *)value enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
+            out[k] = MakeJSONSafe(v, cleaned);
+        }];
+        return out;
+    }
+    if ([value isKindOfClass:[NSArray class]]) {
+        NSMutableArray *out = [NSMutableArray arrayWithCapacity:[(NSArray *)value count]];
+        for (id v in (NSArray *)value) [out addObject:MakeJSONSafe(v, cleaned)];
+        return out;
+    }
+    return value;
+}
 
 /// 最大保留轮数
 static const NSInteger kMaxIterations = 5;
@@ -260,16 +287,26 @@ static NSString *const kChainDirectoryName = @"IterationChains";
 
     NSDictionary *json = [chain toDictionary];
     NSError *error = nil;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:json
+    // 🔬 序列化边界统一清洗:特征数字可合法产生 NaN/∞(如 稳态=0 时 超调=∞),
+    // NSJSONSerialization 遇之整体失败 → 链文件永远写不进磁盘
+    // → 数据齐全的方案定格"尚未飞行 0 轮"(真机已踩,144704 数字干净成功/151324 中毒失败)
+    NSUInteger cleaned = 0;
+    id safeJson = MakeJSONSafe(json, &cleaned);
+    NSData *data = [NSJSONSerialization dataWithJSONObject:safeJson
                                                   options:NSJSONWritingPrettyPrinted
                                                     error:&error];
     if (error || !data) {
         NSLog(@"⚠️ [迭代链] 序列化失败: %@", error.localizedDescription);
         return;
     }
+    if (cleaned > 0) {
+        NSLog(@"🧹 [迭代链] 清洗 %lu 个非法数值(NaN/∞→0)后成功序列化", (unsigned long)cleaned);
+    }
 
     NSString *filePath = [self filePathForChainId:chain.chainId];
-    [data writeToFile:filePath atomically:YES];
+    if (![data writeToFile:filePath atomically:YES]) {
+        NSLog(@"⚠️ [迭代链] 链文件写盘失败: %@", filePath);
+    }
 }
 
 /// 确保目录存在
