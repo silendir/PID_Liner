@@ -189,7 +189,7 @@ static NSString *const kChainDirectoryName = @"IterationChains";
     }
 
     // 设置 iteration 为链的当前轮次
-    record.iteration = chain.currentIteration;
+    record.iteration = chain.nextIterationNumber;
 
     [chain appendRecord:record];
 

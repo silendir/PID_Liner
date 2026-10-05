@@ -21,7 +21,7 @@
     return self;
 }
 
-- (NSInteger)currentIteration {
+- (NSInteger)nextIterationNumber {
     return (NSInteger)self.records.count + 1;
 }
 

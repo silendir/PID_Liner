@@ -3149,7 +3149,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     // 🔑 注入迭代链标记（如果当前有链ID）
     if (self.currentChainId.length) {
         IterationChain *chain = [[IterationChainManager sharedManager] chainForId:self.currentChainId];
-        NSInteger iteration = chain ? chain.currentIteration : 1;
+        NSInteger iteration = chain ? chain.nextIterationNumber : 1;
         [header appendFormat:@"# Chain ID:%@\n", self.currentChainId];
         [header appendFormat:@"# Chain Iteration:%ld\n", (long)iteration];
     }
@@ -3171,7 +3171,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     if ([content containsString:@"# Chain ID:"]) return;
 
     IterationChain *chain = [[IterationChainManager sharedManager] chainForId:self.currentChainId];
-    NSInteger iteration = chain ? chain.currentIteration : 1;
+    NSInteger iteration = chain ? chain.nextIterationNumber : 1;
 
     NSString *chainMarkers = [NSString stringWithFormat:@"# Chain ID:%@\n# Chain Iteration:%ld\n",
         self.currentChainId, (long)iteration];

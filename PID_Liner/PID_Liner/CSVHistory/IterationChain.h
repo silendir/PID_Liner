@@ -37,7 +37,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL isConverged;
 
 /// 当前轮次号 = records.count + 1
-@property (nonatomic, readonly) NSInteger currentIteration;
+/// 🔑 下一轮轮号(=已有轮数+1)。仅供 appendRecord 给新记录编号、新CSV写链标记使用;
+/// 显示"当前第几轮"请读 records.lastObject.iteration(真机已踩:旧名 currentIteration 被当当前轮显示)
+@property (nonatomic, readonly) NSInteger nextIterationNumber;
 
 /// 序列化
 - (NSDictionary *)toDictionary;
