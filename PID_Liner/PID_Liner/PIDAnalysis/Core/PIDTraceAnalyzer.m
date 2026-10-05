@@ -12,6 +12,11 @@
 #import "PIDInterpolation.h"
 #import <mach/mach_time.h>
 
+/// 🔬 Python对齐调试日志开关(默认关——67条洪水日志真机拖慢分析数秒)。
+/// 需要对照Python验证时在 lldb 里 `(long)PIDTraceVerboseLog=1` 或临时改 NO→YES。
+BOOL PIDTraceVerboseLog = NO;
+#define PIDVLog(...) do { if (PIDTraceVerboseLog) NSLog(__VA_ARGS__); } while (0)
+
 // Betaflight P缩放因子
 static const double kP_SCALE_FACTOR = 0.032029;
 
@@ -181,7 +186,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
                 double v = [num doubleValue];
                 if (v < gMin) gMin = v; if (v > gMax) gMax = v;
             }
-            NSLog(@"🔍 [原始数据窗口0] axisP范围: [%.1f, %.1f], gyro范围: [%.1f, %.1f], pGain=%.1f", pMin, pMax, gMin, gMax, pGain);
+            PIDVLog(@"🔍 [原始数据窗口0] axisP范围: [%.1f, %.1f], gyro范围: [%.1f, %.1f], pGain=%.1f", pMin, pMax, gMin, gMax, pGain);
         }
 
         for (NSInteger j = 0; j < gyroWindow.count; j++) {
@@ -213,7 +218,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
     stack.throttle = throttleStack;
     stack.time = timeStack;
 
-    NSLog(@"✅ 堆叠数据创建完成: %ld窗口, P增益=%.1f", (long)windowCount, pGain);
+    PIDVLog(@"✅ 堆叠数据创建完成: %ld窗口, P增益=%.1f", (long)windowCount, pGain);
 
     return stack;
 }
@@ -264,7 +269,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
         _wienerDeconvolution.dt = _dt;
         _fftProcessor = [[PIDFFTProcessor alloc] init];
 
-        NSLog(@"🔍 [PIDTraceAnalyzer初始化] sampleRate=%.2fHz, dt=%.6f秒, responseLen=%ld (固定值)",
+        PIDVLog(@"🔍 [PIDTraceAnalyzer初始化] sampleRate=%.2fHz, dt=%.6f秒, responseLen=%ld (固定值)",
               _sampleRate, _dt, (long)_responseLen);
     }
     return self;
@@ -351,11 +356,11 @@ static const double kP_SCALE_FACTOR = 0.032029;
             if (v > outMax) outMax = v;
         }
 
-        NSLog(@"🔍 [原始数据窗口0] input范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
+        PIDVLog(@"🔍 [原始数据窗口0] input范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
               inMin, inMax,
               [rawIn[0] doubleValue], [rawIn[1] doubleValue], [rawIn[2] doubleValue],
               [rawIn[3] doubleValue], [rawIn[4] doubleValue]);
-        NSLog(@"🔍 [原始数据窗口0] gyro(output)范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
+        PIDVLog(@"🔍 [原始数据窗口0] gyro(output)范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
               outMin, outMax,
               [rawOut[0] doubleValue], [rawOut[1] doubleValue], [rawOut[2] doubleValue],
               [rawOut[3] doubleValue], [rawOut[4] doubleValue]);
@@ -365,7 +370,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
         for (NSInteger i = 0; i < 5; i++) {
             [winStr appendFormat:@"%.6f ", [win[i] doubleValue]];
         }
-        NSLog(@"🔍 [Hanning窗] 前5个值: %@", winStr);
+        PIDVLog(@"🔍 [Hanning窗] 前5个值: %@", winStr);
     }
 
     // 应用窗函数
@@ -398,11 +403,11 @@ static const double kP_SCALE_FACTOR = 0.032029;
             if (v > winOutMax) winOutMax = v;
         }
 
-        NSLog(@"🔍 [加窗后窗口0] input范围: [%.6f, %.6f], 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
+        PIDVLog(@"🔍 [加窗后窗口0] input范围: [%.6f, %.6f], 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
               winInMin, winInMax,
               [winIn[0] doubleValue], [winIn[1] doubleValue], [winIn[2] doubleValue],
               [winIn[3] doubleValue], [winIn[4] doubleValue]);
-        NSLog(@"🔍 [加窗后窗口0] gyro范围: [%.6f, %.6f], 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
+        PIDVLog(@"🔍 [加窗后窗口0] gyro范围: [%.6f, %.6f], 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
               winOutMin, winOutMax,
               [winOut[0] doubleValue], [winOut[1] doubleValue], [winOut[2] doubleValue],
               [winOut[3] doubleValue], [winOut[4] doubleValue]);
@@ -414,7 +419,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
                                                                        cutFreq:self.cutFreq];
 
     // 🔍 调试：检查反卷积结果
-    NSLog(@"🔍 反卷积结果: rowCount=%lu, columnCount=%ld",
+    PIDVLog(@"🔍 反卷积结果: rowCount=%lu, columnCount=%ld",
           (unsigned long)deconvResult.data.count, (long)deconvResult.columnCount);
     if (deconvResult.data.count > 0 && deconvResult.data[0].count > 0) {
         NSArray<NSNumber *> *firstRow = deconvResult.data[0];
@@ -423,7 +428,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
         for (NSInteger i = 0; i < n; i++) {
             [values appendFormat:@"%.4f ", [firstRow[i] doubleValue]];
         }
-        NSLog(@"🔍 反卷积data[0]前%ld个值: %@", (long)n, values);
+        PIDVLog(@"🔍 反卷积data[0]前%ld个值: %@", (long)n, values);
 
         // 计算反卷积结果的范围
         double minVal = [firstRow[0] doubleValue];
@@ -433,7 +438,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
             if (v < minVal) minVal = v;
             if (v > maxVal) maxVal = v;
         }
-        NSLog(@"🔍 反卷积data[0]范围: min=%.4f, max=%.4f", minVal, maxVal);
+        PIDVLog(@"🔍 反卷积data[0]范围: min=%.4f, max=%.4f", minVal, maxVal);
     }
 
     // 截取指定长度
@@ -459,7 +464,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
             if (v < minVal) minVal = v;
             if (v > maxVal) maxVal = v;
         }
-        NSLog(@"🔍 [cumsum之前] 反卷积结果范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
+        PIDVLog(@"🔍 [cumsum之前] 反卷积结果范围: [%.3f, %.3f], 前5个值: %.3f, %.3f, %.3f, %.3f, %.3f",
               minVal, maxVal,
               [firstRow[0] doubleValue], [firstRow[1] doubleValue], [firstRow[2] doubleValue],
               [firstRow[3] doubleValue], [firstRow[4] doubleValue]);
@@ -485,8 +490,8 @@ static const double kP_SCALE_FACTOR = 0.032029;
             for (NSInteger i = 0; i < n; i++) {
                 [s appendFormat:@"%.3f ", [cumsum[i] doubleValue]];
             }
-            NSLog(@"🔍 [cumsum结果] 窗口0前%ld个值: %@", (long)n, s);
-            NSLog(@"🔍 [cumsum结果] 起点=%.3f, 终点=%.3f, 跨度=%.3f",
+            PIDVLog(@"🔍 [cumsum结果] 窗口0前%ld个值: %@", (long)n, s);
+            PIDVLog(@"🔍 [cumsum结果] 起点=%.3f, 终点=%.3f, 跨度=%.3f",
                   [cumsum[0] doubleValue],
                   [cumsum[cumsum.count-1] doubleValue],
                   [cumsum[cumsum.count-1] doubleValue] - [cumsum[0] doubleValue]);
@@ -501,7 +506,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
         for (NSInteger i = 0; i < n; i++) {
             [values appendFormat:@"%.3f ", [firstStep[i] doubleValue]];
         }
-        NSLog(@"🔍 阶跃响应stepResponse[0]前%ld个值: %@", (long)n, values);
+        PIDVLog(@"🔍 阶跃响应stepResponse[0]前%ld个值: %@", (long)n, values);
 
         // 计算阶跃响应的最大最小值
         double minVal = [firstStep[0] doubleValue];
@@ -511,11 +516,11 @@ static const double kP_SCALE_FACTOR = 0.032029;
             if (v < minVal) minVal = v;
             if (v > maxVal) maxVal = v;
         }
-        NSLog(@"🔍 阶跃响应stepResponse[0]范围: min=%.3f, max=%.3f", minVal, maxVal);
+        PIDVLog(@"🔍 阶跃响应stepResponse[0]范围: min=%.3f, max=%.3f", minVal, maxVal);
 
         // 🔍 新增：检查最后一个点的值
         if (firstStep.count > 1) {
-            NSLog(@"🔍 阶跃响应stepResponse[0]起点=%.3f, 终点=%.3f",
+            PIDVLog(@"🔍 阶跃响应stepResponse[0]起点=%.3f, 终点=%.3f",
                   [firstStep[0] doubleValue],
                   [firstStep[firstStep.count-1] doubleValue]);
         }
@@ -536,7 +541,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
         if (count > 0) {
             startAvg /= count;
             endAvg /= count;
-            NSLog(@"🔍 所有窗口平均: 起点=%.3f, 终点=%.3f", startAvg, endAvg);
+            PIDVLog(@"🔍 所有窗口平均: 起点=%.3f, 终点=%.3f", startAvg, endAvg);
         }
     }
 
@@ -576,7 +581,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
             if (v < minVal) minVal = v;
             if (v > maxVal) maxVal = v;
         }
-        NSLog(@"🔍 [关键] maxInput范围: [%.2f, %.2f]，阈值500将分类: low≤500, high>500", minVal, maxVal);
+        PIDVLog(@"🔍 [关键] maxInput范围: [%.2f, %.2f]，阈值500将分类: low≤500, high>500", minVal, maxVal);
 
         // 统计有多少窗口超过500
         NSInteger highCount = 0;
@@ -585,10 +590,10 @@ static const double kP_SCALE_FACTOR = 0.032029;
                 highCount++;
             }
         }
-        NSLog(@"🔍 [关键] maxInput > 500 的窗口数: %ld / %lu", (long)highCount, (unsigned long)maxIn.count);
+        PIDVLog(@"🔍 [关键] maxInput > 500 的窗口数: %ld / %lu", (long)highCount, (unsigned long)maxIn.count);
     }
 
-    NSLog(@"✅ 响应分析完成: %ld窗口", (long)windowCount);
+    PIDVLog(@"✅ 响应分析完成: %ld窗口", (long)windowCount);
 
     return result;
 }
@@ -645,7 +650,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
     result.frequencies = halfFreqs;
     result.spectrum = spectrum;
 
-    NSLog(@"✅ 频谱分析完成: %lu追踪, %lu频率点",
+    PIDVLog(@"✅ 频谱分析完成: %lu追踪, %lu频率点",
           (unsigned long)spectrum.count, (unsigned long)halfFreqs.count);
 
     return result;
@@ -817,7 +822,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
     PIDResponseFeatures *features = [[PIDResponseFeatures alloc] init];
 
     if (!stepResponse || stepResponse.count < 10) {
-        NSLog(@"⚠️ [特征提取] 数据点不足: %lu", (unsigned long)stepResponse.count);
+        PIDVLog(@"⚠️ [特征提取] 数据点不足: %lu", (unsigned long)stepResponse.count);
         return features;
     }
 
@@ -912,7 +917,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
     // 震荡次数 = 穿越次数 / 2（一个完整震荡包含上穿+下穿）
     features.oscillationCount = crossings / 2;
 
-    NSLog(@"📊 [特征提取] 稳态=%.3f, 峰值=%.3f, 超调=%.1f%%, 上升时间=%.1fms, 建立时间=%.1fms, 震荡=%ld次",
+    PIDVLog(@"📊 [特征提取] 稳态=%.3f, 峰值=%.3f, 超调=%.1f%%, 上升时间=%.1fms, 建立时间=%.1fms, 震荡=%ld次",
           steadyState, peakVal,
           features.overshoot * 100.0,
           features.riseTime,
@@ -987,7 +992,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
         [interpolatedData addObject:@(value)];
     }
 
-    NSLog(@"✅ equalize_data: %ld点 -> %ld点 (时间轴 %.3f ~ %.3fs)",
+    PIDVLog(@"✅ equalize_data: %ld点 -> %ld点 (时间轴 %.3f ~ %.3fs)",
           (long)n, (long)targetLength, tStart, tEnd);
 
     return [interpolatedData copy];
@@ -1018,7 +1023,7 @@ static const double kP_SCALE_FACTOR = 0.032029;
     if (maxInArray.count > 10) {
         [valuesStr appendString:@"..."];
     }
-    NSLog(@"🔍 low_high_mask(threshold=%.0f): maxInArray值 = [%@]", threshold, valuesStr);
+    PIDVLog(@"🔍 low_high_mask(threshold=%.0f): maxInArray值 = [%@]", threshold, valuesStr);
 
     NSMutableArray<NSNumber *> *lowMask = [NSMutableArray arrayWithCapacity:maxInArray.count];
     NSMutableArray<NSNumber *> *highMask = [NSMutableArray arrayWithCapacity:maxInArray.count];
@@ -1046,9 +1051,9 @@ static const double kP_SCALE_FACTOR = 0.032029;
         for (NSInteger i = 0; i < highMask.count; i++) {
             highMask[i] = @0.0;
         }
-        NSLog(@"⚠️ low_high_mask: 高输入窗口数(%ld) < 10，忽略高输入数据", (long)highCount);
+        PIDVLog(@"⚠️ low_high_mask: 高输入窗口数(%ld) < 10，忽略高输入数据", (long)highCount);
     } else {
-        NSLog(@"✅ low_high_mask(threshold=%.0f): 低输入=%ld窗口, 高输入=%ld窗口",
+        PIDVLog(@"✅ low_high_mask(threshold=%.0f): 低输入=%ld窗口, 高输入=%ld窗口",
               threshold, (long)(maxInArray.count - highCount), (long)highCount);
     }
 
@@ -1112,15 +1117,15 @@ static double getMachFrequency(void) {
     double yMax = [vertRange[1] doubleValue];
 
     // 🔍 新增：打印输入参数
-    NSLog(@"🔍 [输入参数] stepResponse: windowCount=%ld, responseLen=%ld",
+    PIDVLog(@"🔍 [输入参数] stepResponse: windowCount=%ld, responseLen=%ld",
           (long)windowCount, (long)responseLen);
-    NSLog(@"🔍 [输入参数] vertRange: [%.2f, %.2f], vertBins=%ld",
+    PIDVLog(@"🔍 [输入参数] vertRange: [%.2f, %.2f], vertBins=%ld",
           yMin, yMax, (long)vertBins);
-    NSLog(@"🔍 [输入参数] dataMask: count=%lu",
+    PIDVLog(@"🔍 [输入参数] dataMask: count=%lu",
           dataMask ? (unsigned long)dataMask.count : 0);
 
     // 🔍 新增：检查输入数据的范围（前几个窗口）
-    NSLog(@"🔍 [输入数据检查] 检查前3个窗口的stepResponse范围:");
+    PIDVLog(@"🔍 [输入数据检查] 检查前3个窗口的stepResponse范围:");
     for (NSInteger w = 0; w < MIN(3, windowCount); w++) {
         NSArray<NSNumber *> *windowResp = stepResponse[w];
         if (windowResp && windowResp.count > 0) {
@@ -1131,7 +1136,7 @@ static double getMachFrequency(void) {
                 if (v < minVal) minVal = v;
                 if (v > maxVal) maxVal = v;
             }
-            NSLog(@"  窗口[%ld]: 范围=[%.6f, %.6f], 起点=%.6f, 终点=%.6f",
+            PIDVLog(@"  窗口[%ld]: 范围=[%.6f, %.6f], 起点=%.6f, 终点=%.6f",
                   (long)w, minVal, maxVal, [windowResp[0] doubleValue],
                   [windowResp[windowResp.count-1] doubleValue]);
         }
@@ -1162,7 +1167,7 @@ static double getMachFrequency(void) {
     double timeMin = [timeResp[0] doubleValue];      // 0.0
     double timeMax = [timeResp[responseLen - 1] doubleValue];  // 0.5（精确）
 
-    NSLog(@"🔍 [Python对齐] time_resp: 起点=%.6f, 终点=%.6f, 长度=%ld",
+    PIDVLog(@"🔍 [Python对齐] time_resp: 起点=%.6f, 终点=%.6f, 长度=%ld",
           timeMin, timeMax, (long)timeResp.count);
 
     // ========== 4. 展平数据（匹配Python的flatten） ==========
@@ -1207,7 +1212,7 @@ static double getMachFrequency(void) {
         }
     }
 
-    NSLog(@"🔍 [Python对齐] 展平后数据点数: %lu (windowCount=%ld, responseLen=%ld)",
+    PIDVLog(@"🔍 [Python对齐] 展平后数据点数: %lu (windowCount=%ld, responseLen=%ld)",
           (unsigned long)flatTimes.count, (long)windowCount, (long)responseLen);
 
     // 🔍 新增：检查展平后的数据范围
@@ -1219,9 +1224,9 @@ static double getMachFrequency(void) {
             if (v < flatMin) flatMin = v;
             if (v > flatMax) flatMax = v;
         }
-        NSLog(@"🔍 [展平数据] flatValues范围: [%.6f, %.6f], 点数=%lu",
+        PIDVLog(@"🔍 [展平数据] flatValues范围: [%.6f, %.6f], 点数=%lu",
               flatMin, flatMax, (unsigned long)flatValues.count);
-        NSLog(@"🔍 [展平数据] 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
+        PIDVLog(@"🔍 [展平数据] 前5个值: %.6f, %.6f, %.6f, %.6f, %.6f",
               [flatValues[0] doubleValue], [flatValues[1] doubleValue],
               [flatValues[2] doubleValue], [flatValues[3] doubleValue],
               [flatValues[4] doubleValue]);
@@ -1240,11 +1245,11 @@ static double getMachFrequency(void) {
                            vertBinsCount:vertBins];
 
     if (!hist2d) {
-        NSLog(@"❌ histogram2d构建失败");
+        PIDVLog(@"❌ histogram2d构建失败");
         return @[];
     }
 
-    NSLog(@"🔍 [Python对齐] hist2d构建完成: shape=[%ld, %ld]",
+    PIDVLog(@"🔍 [Python对齐] hist2d构建完成: shape=[%ld, %ld]",
           (long)vertBins, (long)timeBins);
 
     // 🔍 新增：检查hist2d的统计信息
@@ -1257,7 +1262,7 @@ static double getMachFrequency(void) {
         if (v > histMax) histMax = v;
         if (v > 1e-6f) nonZeroCount++;
     }
-    NSLog(@"🔍 [hist2d统计] sum=%.6f, max=%.6f, 非零点=%ld/%ld",
+    PIDVLog(@"🔍 [hist2d统计] sum=%.6f, max=%.6f, 非零点=%ld/%ld",
           histSum, histMax, (long)nonZeroCount, (long)(vertBins * timeBins));
 
     // ========== 6. 高斯平滑（垂直方向，axis=0） ==========
@@ -1337,13 +1342,13 @@ static double getMachFrequency(void) {
     // Python: resp_y = np.linspace(vertrange[0], vertrange[-1], vertbins, dtype=np.float64)
     NSArray<NSNumber *> *respY = [self linspaceFrom:yMin to:yMax count:vertBins];
 
-    NSLog(@"🔍 [Python对齐] resp_y: 起点=%.6f, 终点=%.6f, 长度=%lu",
+    PIDVLog(@"🔍 [Python对齐] resp_y: 起点=%.6f, 终点=%.6f, 长度=%lu",
           [respY[0] doubleValue],
           [respY[respY.count - 1] doubleValue],
           (unsigned long)respY.count);
 
     // 🔍 调试：分析hist2d的分布特征 - 检查前10个和关键降采样点
-    NSLog(@"🔍 [Hist2D分析] 检查关键时间点的hist2d分布:");
+    PIDVLog(@"🔍 [Hist2D分析] 检查关键时间点的hist2d分布:");
 
     // 检查点：前10个 + 降采样关键位置 (40, 80, 120, ...)
     NSInteger checkPoints[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 40, 80, 120, 160, 200, 400, 800, 1200, 1600, 2000, 3000, 3999};
@@ -1383,7 +1388,7 @@ static double getMachFrequency(void) {
             }
         }
 
-        NSLog(@"  t[%4ld]: 加权平均=%.6f, maxHist=%.4f@bin%ld, 2ndMax=%.4f@bin%ld, ratio=%.2f",
+        PIDVLog(@"  t[%4ld]: 加权平均=%.6f, maxHist=%.4f@bin%ld, 2ndMax=%.4f@bin%ld, ratio=%.2f",
               (long)t, avgPos, maxHistVal, (long)maxBin, secondMaxVal, (long)secondMaxBin,
               maxHistVal > 0 ? secondMaxVal / maxHistVal : 0);
     }
@@ -1431,11 +1436,11 @@ static double getMachFrequency(void) {
 
         // 🔍 新增：打印关键时间点的详细信息
         if ([timePointsToAnalyze containsObject:@(t)]) {
-            NSLog(@"🔍 [加权平均详情] t[%ld]:", (long)t);
-            NSLog(@"  加权平均结果: %.6f", avgVal);
-            NSLog(@"  有权重的resp_y范围: [%.6f, %.6f]", minY_with_weight, maxY_with_weight);
-            NSLog(@"  最大histVal: %.6f", maxY_at_this_t);
-            NSLog(@"  weightSum: %.6f", weightSum);
+            PIDVLog(@"🔍 [加权平均详情] t[%ld]:", (long)t);
+            PIDVLog(@"  加权平均结果: %.6f", avgVal);
+            PIDVLog(@"  有权重的resp_y范围: [%.6f, %.6f]", minY_with_weight, maxY_with_weight);
+            PIDVLog(@"  最大histVal: %.6f", maxY_at_this_t);
+            PIDVLog(@"  weightSum: %.6f", weightSum);
         }
     }
 
@@ -1455,37 +1460,37 @@ static double getMachFrequency(void) {
             if (v > maxVal) maxVal = v;
         }
 
-        NSLog(@"📊 [最终结果] avgResponse统计:");
-        NSLog(@"  起点: %.6f (Python参考: ~0.8-1.0)", firstVal);
-        NSLog(@"  终点: %.6f (Python参考: ~1.3-1.5)", lastVal);
-        NSLog(@"  最小值: %.6f", minVal);
-        NSLog(@"  最大值: %.6f", maxVal);
+        PIDVLog(@"📊 [最终结果] avgResponse统计:");
+        PIDVLog(@"  起点: %.6f (Python参考: ~0.8-1.0)", firstVal);
+        PIDVLog(@"  终点: %.6f (Python参考: ~1.3-1.5)", lastVal);
+        PIDVLog(@"  最小值: %.6f", minVal);
+        PIDVLog(@"  最大值: %.6f", maxVal);
 
         // 打印前5个和后5个值
-        NSLog(@"📊 [最终结果] 前5个值:");
+        PIDVLog(@"📊 [最终结果] 前5个值:");
         for (NSInteger i = 0; i < MIN(5, avgResponse.count); i++) {
-            NSLog(@"  [%ld] = %.6f", (long)i, [avgResponse[i] doubleValue]);
+            PIDVLog(@"  [%ld] = %.6f", (long)i, [avgResponse[i] doubleValue]);
         }
-        NSLog(@"📊 [最终结果] 后5个值:");
+        PIDVLog(@"📊 [最终结果] 后5个值:");
         for (NSInteger i = MAX(0, avgResponse.count - 5); i < avgResponse.count; i++) {
-            NSLog(@"  [%ld] = %.6f", (long)i, [avgResponse[i] doubleValue]);
+            PIDVLog(@"  [%ld] = %.6f", (long)i, [avgResponse[i] doubleValue]);
         }
 
         // 🔍 新增：检查降采样位置的数据（匹配PIDAnalysisViewController的降采样逻辑）
-        NSLog(@"🔍 [降采样检查] 降采样到100点时的采样位置:");
+        PIDVLog(@"🔍 [降采样检查] 降采样到100点时的采样位置:");
         NSInteger displayPoints = 100;
         for (NSInteger i = 0; i < MIN(10, displayPoints); i++) {
             NSInteger srcIndex = (i * avgResponse.count) / displayPoints;
             double val = [avgResponse[srcIndex] doubleValue];
-            NSLog(@"  display[%ld] = avgResponse[%ld] = %.6f", (long)i, (long)srcIndex, val);
+            PIDVLog(@"  display[%ld] = avgResponse[%ld] = %.6f", (long)i, (long)srcIndex, val);
         }
     }
 
-    // 性能监控
+    // 性能监控(量纲修复:tick×timebase=ns,再除1e6得ms;原公式把2秒算成"12天")
     uint64_t endTime = mach_absolute_time();
-    double elapsedMs = (double)(endTime - startTime) * 1000.0 / getMachFrequency();
+    double elapsedMs = (double)(endTime - startTime) * getMachFrequency() / 1000000.0;
 
-    NSLog(@"✅ weighted_mode_avr完成: %ld窗口 -> 1条曲线 | 耗时: %.1fms",
+    PIDVLog(@"✅ weighted_mode_avr完成: %ld窗口 -> 1条曲线 | 耗时: %.1fms",
           (long)windowCount, elapsedMs);
 
     // 🔥 关键修复：阶跃响应应该从0开始，表示相对于初始状态的变化
@@ -1493,14 +1498,14 @@ static double getMachFrequency(void) {
     // 例如：如果加权平均结果是 [0.97, 1.10, 1.20]，减去0.97后得到 [0, 0.13, 0.23]
     if (avgResponse.count > 0) {
         double baseValue = [avgResponse[0] doubleValue];
-        NSLog(@"🔍 [零点调整] 加权平均原始起点=%.6f，对所有值减去baseValue", baseValue);
+        PIDVLog(@"🔍 [零点调整] 加权平均原始起点=%.6f，对所有值减去baseValue", baseValue);
 
         for (NSInteger i = 0; i < avgResponse.count; i++) {
             double adjustedVal = [avgResponse[i] doubleValue] - baseValue;
             avgResponse[i] = @(adjustedVal);
         }
 
-        NSLog(@"🔍 [零点调整] 调整后起点=%.6f，终点=%.6f",
+        PIDVLog(@"🔍 [零点调整] 调整后起点=%.6f，终点=%.6f",
               [avgResponse[0] doubleValue], [avgResponse[avgResponse.count-1] doubleValue]);
     }
 
@@ -1513,7 +1518,7 @@ static double getMachFrequency(void) {
             if (v < minVal) minVal = v;
             if (v > maxVal) maxVal = v;
         }
-        NSLog(@"🎯🎯🎯 [最终结果] 起点=%.3f, 终点=%.3f, 跨度=%.3f (点数=%lu)",
+        PIDVLog(@"🎯🎯🎯 [最终结果] 起点=%.3f, 终点=%.3f, 跨度=%.3f (点数=%lu)",
               [avgResponse[0] doubleValue], [avgResponse[avgResponse.count-1] doubleValue],
               [avgResponse[avgResponse.count-1] doubleValue] - [avgResponse[0] doubleValue],
               (unsigned long)avgResponse.count);
@@ -1662,7 +1667,7 @@ static double getMachFrequency(void) {
     }
 
     // 🎯 打印统计信息（带独特标记，方便筛选）
-    NSLog(@"🎯🎯🎯 [hist2d填充] 总点数=%ld, 处理=%ld, 忽略=%ld (超范围值被跳过)",
+    PIDVLog(@"🎯🎯🎯 [hist2d填充] 总点数=%ld, 处理=%ld, 忽略=%ld (超范围值被跳过)",
           (long)times.count, (long)processedCount, (long)ignoredCount);
 
     // 🎯🎯🎯 关键：打印实际使用的 value 范围（用于验证）
@@ -1674,7 +1679,7 @@ static double getMachFrequency(void) {
             if (v > actualValueMax) actualValueMax = v;
         }
     }
-    NSLog(@"🎯🎯🎯 [hist2d实际范围] value范围=[%.3f, %.3f], vertRange=[%.3f, %.3f]",
+    PIDVLog(@"🎯🎯🎯 [hist2d实际范围] value范围=[%.3f, %.3f], vertRange=[%.3f, %.3f]",
           actualValueMin, actualValueMax, valueMin, valueMax);
 
     // 4. 转置为 [vertbins, timebins] 以匹配Python的.transpose()
@@ -1755,12 +1760,12 @@ static double getMachFrequency(void) {
 
         if (quality < 0.5) {
             filteredCount++;
-            NSLog(@"⚠️ [质量过滤] 窗口[%ld] 偏差=%.3f > %.3f，已过滤",
+            PIDVLog(@"⚠️ [质量过滤] 窗口[%ld] 偏差=%.3f > %.3f，已过滤",
                   (long)(qualityMask.count - 1), deviation, threshold);
         }
     }
 
-    NSLog(@"🔍 [质量过滤] 总窗口=%lu, 过滤=%ld, 保留=%lu",
+    PIDVLog(@"🔍 [质量过滤] 总窗口=%lu, 过滤=%ld, 保留=%lu",
           (unsigned long)stepResponse.count, (long)filteredCount,
           (unsigned long)(stepResponse.count - filteredCount));
 

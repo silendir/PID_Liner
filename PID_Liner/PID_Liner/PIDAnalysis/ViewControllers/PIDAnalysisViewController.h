@@ -62,11 +62,23 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL hidesBuiltinImportButton;
 
 /**
- * 分析完成回调(诊断→推荐→CLI→保存到链 全部完成后调用)
- * 容器(工作台)据此刷新链头/轮次链;block 内自行切主线程。非迭代模式不触发。
- * 任务#28 0.4c-2 第3步:导入下一轮后工作台据此即时刷新轮次 +1 / 历史虚线 +1 条
+ * 分析完成回调(分析管线走完即触发——无论是否存档到链:无 PID 元数据的 CSV
+ * 不产生 record,但容器(工作台)仍需刷新 UI/解禁控件,故不挂在存档路径上)
+ * block 内自行切主线程。
  */
 @property (nonatomic, copy, nullable) void (^onAnalysisComplete)(void);
+
+/**
+ * 当前推荐 CLI 文本(随页内滑块/真值 toggle 取对应版本;未生成返回 nil)
+ * 供容器(工作台「导出推荐值」弹窗)读取展示/复制
+ */
+- (nullable NSString *)currentRecommendationCLI;
+
+/**
+ * 取消进行中的分析(容器 pop/替换本 VC 时调用):
+ * 后台各检查点静默中止,不再回主线程配图/存档/弹窗——避免离场后仍卡主线程
+ */
+- (void)cancelAnalysis;
 
 @end
 

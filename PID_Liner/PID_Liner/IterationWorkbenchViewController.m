@@ -69,6 +69,15 @@
     [self renderHeaderAndChain];
 }
 
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    // 🔑 离开本页(pop)即取消嵌入 VC 的后台分析——否则解析继续跑完、
+    // 主线程配图卡 UI、存档/弹窗在死页面上照样触发(真机已踩)
+    if (self.isMovingFromParentViewController) {
+        [self.currentAnalysisVC cancelAnalysis];
+    }
+}
+
 #pragma mark - Setup
 
 - (void)setupNav {
@@ -139,9 +148,9 @@
     _chartContainer.translatesAutoresizingMaskIntoConstraints = NO;
     [contentView addSubview:_chartContainer];
 
-    // 导入下一轮按钮
+    // 📋 推荐值出口按钮(分析完成才解禁;弹窗内含"导入下一轮返参"——顺序:先拿CLI飞,飞完再导入)
     _importNextButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [_importNextButton setTitle:@"📥 导入下一轮返参" forState:UIControlStateNormal];
+    [_importNextButton setTitle:@"📋 导出推荐值" forState:UIControlStateNormal];
     [_importNextButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     _importNextButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     _importNextButton.backgroundColor = [UIColor systemBlueColor];
@@ -189,24 +198,25 @@
         [_iterationChainScroll.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor],
         [_iterationChainScroll.heightAnchor constraintEqualToConstant:56],
 
-        // 响应图
-        [chartTitle.topAnchor constraintEqualToAnchor:_iterationChainScroll.bottomAnchor constant:14],
+        // 响应图(标题随导入按钮下移重锚)
+        [chartTitle.topAnchor constraintEqualToAnchor:_importNextButton.bottomAnchor constant:12],
         [chartTitle.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
 
         [_chartContainer.topAnchor constraintEqualToAnchor:chartTitle.bottomAnchor constant:6],
         [_chartContainer.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
         [_chartContainer.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
+        // 🔑 图表容器钉底撑 contentSize(导入按钮上移后由它承担)
+        [_chartContainer.bottomAnchor constraintEqualToAnchor:contentView.bottomAnchor constant:-16],
         // 🔑 图表容器高度 = PIDAnalysisVC 完全摊开所需高度(3轴图+控件+tabBar≈1985pt)
         //   给足高度让内部 scrollView 不滚动,只剩外层工作台一套 scroll(消除双 scroll 嵌套)
         [_chartContainer.heightAnchor constraintEqualToConstant:[PIDAnalysisViewController fullyExpandedRequiredHeight]],
 
-        // 🔑 0.4c-2:推荐区/CLI 区已进 PIDAnalysisVC 内部(图表下方),工作台不再需要占位
-        // 导入按钮(钉 contentView 底,撑开 contentSize)
-        [_importNextButton.topAnchor constraintEqualToAnchor:_chartContainer.bottomAnchor constant:14],
+        // 🔑 导入按钮上移到轮次链与图表之间——原钉 1985pt 容器底部,进场看不见还得滚过
+        //   整个 webview 才能点到(且中途与 webview 手势打架滚不动)
+        [_importNextButton.topAnchor constraintEqualToAnchor:_iterationChainScroll.bottomAnchor constant:12],
         [_importNextButton.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor constant:16],
         [_importNextButton.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor constant:-16],
-        [_importNextButton.heightAnchor constraintEqualToConstant:46],
-        [_importNextButton.bottomAnchor constraintEqualToAnchor:contentView.bottomAnchor constant:-16]
+        [_importNextButton.heightAnchor constraintEqualToConstant:46]
     ]];
 }
 
@@ -309,8 +319,9 @@
 
 /// 渲染最新轮的响应图(嵌入 PIDAnalysisViewController 子VC)
 - (void)renderLatestAnalysis {
-    // 移除旧子 VC
+    // 移除旧子 VC(先取消其后台分析,防换轮后旧分析仍在跑)
     if (self.currentAnalysisVC) {
+        [self.currentAnalysisVC cancelAnalysis];
         [self.currentAnalysisVC willMoveToParentViewController:nil];
         [self.currentAnalysisVC.view removeFromSuperview];
         [self.currentAnalysisVC removeFromParentViewController];
@@ -322,6 +333,7 @@
         ? self.pendingNextRoundCSVPath
         : [self latestCSVPath];
     if (csvPath.length == 0) {
+        _importNextButton.enabled = YES;  // 无图可等,导入先行
         UILabel *hint = [[UILabel alloc] init];
         hint.text = @"暂无可分析的 CSV";
         hint.textColor = [UIColor secondaryLabelColor];
@@ -367,9 +379,11 @@
             [s reloadChainData];
             [s renderHeaderAndChain];
             s.pendingNextRoundCSVPath = nil;
+            s.importNextButton.enabled = YES;  // 图表就绪,恢复导入入口
         });
     };
     self.currentAnalysisVC = vc;
+    _importNextButton.enabled = NO;  // 🔑 分析期间禁用(图表未就绪时导入会打断/混淆状态)
     [vc startAnalysis];
 }
 
@@ -408,16 +422,106 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-/// 📥 导入下一轮返参(任务#28 0.4c-2 第3步)
-/// 线性流程:选 BBL → 转出 N Session → 单选一段飞行 → 嵌入 PIDAnalysisVC 分析 →
-/// VC 分析完自动 appendRecord 到【当前链】作第 N+1 轮(无丢弃/另立/合并,一条链=一台机一直拟合)
+/// 📋 导出推荐值(迭代节奏:分析→拿CLI→换参飞→飞完才"导入下一轮返参")
+/// 弹窗 = CLI 预览 + 复制 + 延后的导入入口(导入按钮藏在此弹窗里而非裸露在页面)
 - (void)importNextTapped {
+    NSString *cli = [self.currentAnalysisVC currentRecommendationCLI];
+    NSString *message = cli.length > 0
+        ? [NSString stringWithFormat:@"把下面的 CLI 粘贴到 Betaflight Configurator 执行并 save,\n用新参数飞行后再回来导入下一轮。\n\n%@", cli]
+        : @"本轮未生成推荐值。\n常见原因:飞行片段太短没有有效机动数据(如解锁测试段),\n或老固件 CSV 缺少 PID 元数据。\n可删除本方案后用 ➕ 选时长足够的 Session 重建。";
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"推荐值 · 下一轮"
+                          message:message
+                   preferredStyle:UIAlertControllerStyleAlert];
+    if (cli.length > 0) {
+        [alert addAction:[UIAlertAction actionWithTitle:@"📋 复制推荐 CLI" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            UIPasteboard.generalPasteboard.string = cli;
+            [SVProgressHUD showSuccessWithStatus:@"已复制,去 BF Configurator 粘贴"];
+        }]];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"📥 导入下一轮返参(飞完后)" style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a) { [self presentImportSourceSheet]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+/// 📥 导入下一轮返参 · 数据来源双选(在"导出推荐值"弹窗之后才到达此处)
+/// 🔑 双来源:①外部 BBL 文件 ②App 内已有 CSV(蓝牙取数/示例已落沙盒,沙盒未暴露给"文件"App,
+/// 文件选择器够不到——不接此入口蓝牙迭代闭环断链)
+- (void)presentImportSourceSheet {
+    UIAlertController *sheet = [UIAlertController
+        alertControllerWithTitle:@"导入下一轮返参"
+                          message:nil
+                   preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"📁 导入 BBL 文件" style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a) { [self presentBBLPickerForNextRound]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"📡 选择 App 内已有记录(蓝牙下载等)" style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a) { [self presentInternalCSVSelectionSheet]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = self.importNextButton;
+        sheet.popoverPresentationController.sourceRect = self.importNextButton.bounds;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)presentBBLPickerForNextRound {
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[[UTType typeWithIdentifier:@"public.data"]]
                                                                      asCopy:YES];
     picker.delegate = self;
     picker.modalPresentationStyle = UIModalPresentationPageSheet;
     [self presentViewController:picker animated:YES completion:nil];
+}
+
+/// App 内已有 CSV 单选(按修改时间倒序,蓝牙最新下载排最前;同文件指纹守卫会拦重复入链)
+- (void)presentInternalCSVSelectionSheet {
+    NSString *docs = [BBLImportService documentsDirectory];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+    for (NSString *file in [fm contentsOfDirectoryAtPath:docs error:nil]) {
+        if (![[file.pathExtension lowercaseString] isEqualToString:@"csv"]) continue;
+        NSString *path = [docs stringByAppendingPathComponent:file];
+        NSDate *mtime = ((NSDictionary *)[fm attributesOfItemAtPath:path error:nil]).fileModificationDate ?: [NSDate distantPast];
+        [items addObject:@{@"path": path, @"name": file, @"time": mtime}];
+    }
+    if (items.count == 0) {
+        [self showAlertWithTitle:@"没有可选记录" message:@"App 内暂无 CSV(可先去「蓝牙取数」下载)"];
+        return;
+    }
+    [items sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [b[@"time"] compare:a[@"time"]];  // 新→旧
+    }];
+
+    UIAlertController *sheet = [UIAlertController
+        alertControllerWithTitle:@"选择本轮飞行的记录"
+                          message:@"蓝牙下载的飞行数据按时间排在最前"
+                   preferredStyle:UIAlertControllerStyleActionSheet];
+    static const NSInteger kMaxShown = 15;  // sheet 过长不可用,截断提示
+    NSArray<NSDictionary *> *shown = [items subarrayWithRange:NSMakeRange(0, MIN(items.count, kMaxShown))];
+    NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+    fmt.dateFormat = @"MM-dd HH:mm";
+    for (NSDictionary *item in shown) {
+        // 🔑 短片段标注:CSV<300KB ≈ <3秒飞行(解锁测试),出不了曲线——选择器无法拦死(数据要保留),
+        // 标注让用户自己跳过;误选也有"空分析不入链"守卫兜底
+        NSString *path = item[@"path"];
+        long long size = [[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil] fileSize];
+        NSString *stubTag = (size > 0 && size < 300 * 1024) ? @" ⚠️疑似短片段" : @"";
+        NSString *title = [NSString stringWithFormat:@"%@ (%@)%@", item[@"name"], [fmt stringFromDate:item[@"time"]], stubTag];
+        [sheet addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault
+                                                 handler:^(UIAlertAction *a) { [self reloadAnalysisWithCSV:path]; }]];
+    }
+    if (items.count > kMaxShown) {
+        // 无 Disabled 栚,用 Default 样式但点击无动作,仅作截断提示
+        [sheet addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"还有 %ld 条更早的未列出…", (long)(items.count - kMaxShown)]
+                                                  style:UIAlertActionStyleDefault handler:nil]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = self.importNextButton;
+        sheet.popoverPresentationController.sourceRect = self.importNextButton.bounds;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 #pragma mark - 导入下一轮:UIDocumentPickerDelegate

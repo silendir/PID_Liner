@@ -309,7 +309,14 @@ typedef NS_ENUM(NSInteger, BBLImportErrorCode) {
         [prefix appendFormat:@"# Motor KV:%@\n", motorKV];
     }
 
-    if (prefix.length == 0) return;
+    if (prefix.length == 0) {
+        NSLog(@"⚠️ [元数据注入] 无可注入内容(header.craftName=%@, fwCode=%ld, PID=%@)",
+              header.craftName, (long)header.firmwareVersionCode, header.currentPIDValues);
+        return;
+    }
+    long injectedLines = (long)[prefix componentsSeparatedByString:@"\n"].count - 1;
+    NSLog(@"📝 [元数据注入] 已写入 %ld 行(craft=%@, fwCode=%ld)",
+          injectedLines, header.craftName, (long)header.firmwareVersionCode);
 
     NSString *newContent = [prefix stringByAppendingString:content];
     NSError *writeErr = nil;

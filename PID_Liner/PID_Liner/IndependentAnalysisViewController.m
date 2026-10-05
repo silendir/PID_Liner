@@ -7,11 +7,13 @@
 
 #import "IndependentAnalysisViewController.h"
 #import "BBLImportService.h"
+#import "BlackboxDecoder.h"
 #import "PIDAnalysisViewController.h"
 #import "IterationWorkbenchViewController.h"
 #import "IterationChainManager.h"
 #import "PIDCSVParser.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <SVProgressHUD/SVProgressHUD.h>
 
 /// 三态(条件渲染,不平铺)
 typedef NS_ENUM(NSInteger, IndepState) {
@@ -30,6 +32,8 @@ typedef NS_ENUM(NSInteger, IndepState) {
 
 // 空态
 @property (nonatomic, strong) UIButton *importButton;
+@property (nonatomic, strong) UIButton *demoButton;       // 加入示例(审核兜底/无数据体验)
+@property (nonatomic, strong) NSArray<NSNumber *> *sessionDurationSecs;  // 与 sessionCSVPaths 平行的时长(秒),用于默认选最长+chip展示
 @property (nonatomic, strong) UIView *lastCSVCard;        // 继续上次卡片(有缓存才显示)
 @property (nonatomic, strong) UILabel *lastCSVLabel;
 @property (nonatomic, copy, nullable) NSString *lastCSVPath;  // 缓存的 CSV 路径(已校验存在)
@@ -40,6 +44,7 @@ typedef NS_ENUM(NSInteger, IndepState) {
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
 
 // 结果态
+@property (nonatomic, assign) BOOL pageLeft;              // 🔑 pop 置位:转换完成回调不再落地 UI
 @property (nonatomic, strong) UIScrollView *sessionChipScroll;
 @property (nonatomic, strong) UIView *chartContainer;     // 嵌入 PIDAnalysisViewController
 @property (nonatomic, copy) NSArray<NSString *> *sessionCSVPaths;  // 各 Session 的 CSV 路径
@@ -59,14 +64,25 @@ typedef NS_ENUM(NSInteger, IndepState) {
     [self setupUI];
     [self loadLastCSV];          // 读「继续上次」缓存
 
-    // 🔑 任务#28 0.4c-2 第3步(Q3):「纳入迭代」桥接 — 把当前分析结果建链首飞轮,推入工作台
+    // 🔑 任务#28 0.4c-2 第3步(Q3):「创建迭代方案」桥接 — 把当前分析结果建链首飞轮,推入工作台
+    // ⚠️ 仅新建链,不追加已有方案(追加轮次的职责在工作台「📥 导入下一轮返参」),名字与行为对齐
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
-        initWithTitle:@"纳入迭代"
+        initWithTitle:@"创建迭代方案"
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(includeInIterationTapped)];
     self.state = IndepStateEmpty;
     [self applyState];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    // 🔑 离场(pop)即取消:子分析 VC 的后台分析 + 本页 BBL 转换的落地回调
+    // (否则解析跑完仍回死页面配图/切状态,卡主线程)
+    if (self.isMovingFromParentViewController) {
+        self.pageLeft = YES;
+        [self.currentAnalysisVC cancelAnalysis];
+    }
 }
 
 #pragma mark - UI Setup
@@ -128,6 +144,18 @@ typedef NS_ENUM(NSInteger, IndepState) {
     [_importButton addTarget:self action:@selector(importButtonTapped) forControlEvents:UIControlEventTouchUpInside];
     [_emptyView addSubview:_importButton];
 
+    // 「加入示例」次级按钮(稳定版兜底逻辑:审核员无真机数据也能全流程跑通)
+    _demoButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [_demoButton setTitle:@"✨ 没有文件?加入示例体验" forState:UIControlStateNormal];
+    [_demoButton setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    _demoButton.titleLabel.font = [UIFont systemFontOfSize:15];
+    _demoButton.layer.cornerRadius = 14;
+    _demoButton.layer.borderWidth = 1.5;
+    _demoButton.layer.borderColor = [UIColor systemBlueColor].CGColor;
+    _demoButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [_demoButton addTarget:self action:@selector(demoButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [_emptyView addSubview:_demoButton];
+
     // 「继续上次」卡片(初始隐藏,有缓存才显示)
     _lastCSVCard = [[UIView alloc] init];
     _lastCSVCard.backgroundColor = [UIColor secondarySystemBackgroundColor];
@@ -170,7 +198,12 @@ typedef NS_ENUM(NSInteger, IndepState) {
         [_importButton.heightAnchor constraintEqualToConstant:52],
         [_importButton.widthAnchor constraintEqualToAnchor:_emptyView.widthAnchor multiplier:0.7],
 
-        [_lastCSVCard.topAnchor constraintEqualToAnchor:_importButton.bottomAnchor constant:18],
+        [_demoButton.topAnchor constraintEqualToAnchor:_importButton.bottomAnchor constant:14],
+        [_demoButton.centerXAnchor constraintEqualToAnchor:_emptyView.centerXAnchor],
+        [_demoButton.heightAnchor constraintEqualToConstant:44],
+        [_demoButton.widthAnchor constraintEqualToAnchor:_emptyView.widthAnchor multiplier:0.7],
+
+        [_lastCSVCard.topAnchor constraintEqualToAnchor:_demoButton.bottomAnchor constant:18],
         [_lastCSVCard.leadingAnchor constraintEqualToAnchor:_emptyView.leadingAnchor constant:24],
         [_lastCSVCard.trailingAnchor constraintEqualToAnchor:_emptyView.trailingAnchor constant:-24],
         [_lastCSVCard.heightAnchor constraintEqualToConstant:62],
@@ -241,7 +274,8 @@ typedef NS_ENUM(NSInteger, IndepState) {
 
     // 顶部 Session chip 横滚区
     _sessionChipScroll = [[UIScrollView alloc] init];
-    _sessionChipScroll.showsHorizontalScrollIndicator = NO;
+    _sessionChipScroll.showsHorizontalScrollIndicator = YES;
+    _sessionChipScroll.alwaysBounceHorizontal = YES;
     _sessionChipScroll.translatesAutoresizingMaskIntoConstraints = NO;
     [_resultView addSubview:_sessionChipScroll];
 
@@ -286,11 +320,36 @@ typedef NS_ENUM(NSInteger, IndepState) {
     [self presentViewController:picker animated:YES completion:nil];
 }
 
+/// ✨ 加入示例(审核兜底):copy bundle 001.bbl → 转 CSV → 直接进结果态,与稳定版兜底逻辑对齐
+- (void)demoButtonTapped {
+    [SVProgressHUD showWithStatus:@"生成示例数据…"];
+    __weak typeof(self) weakSelf = self;
+    [BBLImportService loadDemoBBLWithCompletion:^(NSString *csvPath, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [SVProgressHUD dismiss];
+            __strong typeof(weakSelf) s = weakSelf;
+            if (!s || s.pageLeft) return;  // 🔑 页面已 pop,不落地 UI
+            if (!csvPath) {
+                [s showAlertWithTitle:@"加入失败" message:error.localizedDescription ?: @"示例数据生成失败"];
+                return;
+            }
+            // 单 Session 直接进结果态(同「继续上次」路径,不重复转换)
+            s.sessionDurationSecs = nil;  // 清残留时长:示例/单文件无时长信息,防旧值误触发碎片段守卫
+            s.sessionCSVPaths = @[csvPath];
+            s.state = IndepStateResult;
+            [s applyState];
+            [s buildSessionChips];
+            [s showAnalysisForSessionIndex:0];
+        });
+    }];
+}
+
 #pragma mark - 空态:继续上次
 
 - (void)lastCSVCardTapped {
     if (self.lastCSVPath.length == 0) return;
     // 直接用已缓存的 CSV 进结果态(单 Session,无横滚切换)
+    self.sessionDurationSecs = nil;  // 清残留时长(同上)
     self.sessionCSVPaths = @[self.lastCSVPath];
     self.state = IndepStateResult;
     [self applyState];
@@ -362,25 +421,75 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
                 });
             } error:&err];
 
-        // 收集成功的 CSV 路径
+        // 收集成功的 CSV(带 logIndex,供时长对齐)
         NSMutableArray<NSString *> *csvs = [NSMutableArray array];
+        NSMutableArray<NSNumber *> *logIndexes = [NSMutableArray array];
         for (BBLImportCSVResult *r in results) {
-            if (r.csvPath) [csvs addObject:r.csvPath];
+            if (r.csvPath) {
+                [csvs addObject:r.csvPath];
+                [logIndexes addObject:@(r.logIndex)];
+            }
+        }
+
+        // 时长表(listLogs 轻量读取;时长用于"默认选最长"+chip 展示)
+        NSArray<BBLSessionInfo *> *infos = [[BBLImportService shared] listSessionsForBBL:bblPath error:nil];
+        NSMutableDictionary<NSNumber *, NSNumber *> *durByLogIndex = [NSMutableDictionary dictionary];
+        for (BBLSessionInfo *info in infos) {
+            durByLogIndex[@(info.logIndex)] = @((double)info.durationUs / 1000000.0);
+        }
+        NSMutableArray<NSNumber *> *durs = [NSMutableArray array];
+        for (NSNumber *li in logIndexes) {
+            [durs addObject:durByLogIndex[li] ?: @0];
+        }
+
+        // 🔑 默认打开时长最长的 Session——第一个常是解锁测试碎片段(<2s),默认打开必然"分析了个寂寞"
+        NSUInteger defaultIdx = 0;
+        double maxDur = -1;
+        for (NSUInteger i = 0; i < durs.count; i++) {
+            double d = durs[i].doubleValue;
+            if (d > maxDur) { maxDur = d; defaultIdx = i; }
+        }
+
+        // 🔑 空Session防御第1层:时长已知且 <2 秒的碎片段(解锁测试)不进 chip 列表
+        // (时长未知=listSessions失败时不过滤,宁滥勿缺)
+        NSMutableArray<NSString *> *validCsvs = [NSMutableArray array];
+        NSMutableArray<NSNumber *> *validDurs = [NSMutableArray array];
+        NSInteger skippedStubs = 0;
+        for (NSUInteger i = 0; i < csvs.count; i++) {
+            double d = durs[i].doubleValue;
+            if (d > 0 && d < 2.0) { skippedStubs++; continue; }
+            [validCsvs addObject:csvs[i]];
+            [validDurs addObject:durs[i]];
         }
 
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong typeof(weakSelf) s = weakSelf;
-            if (!s) return;
-            if (csvs.count == 0) {
-                [s handleProcessingFailure:err.localizedDescription ?: @"无可生成的 CSV"];
+            if (!s || s.pageLeft) return;  // 🔑 页面已 pop,不落地 UI
+            if (validCsvs.count == 0) {
+                [s handleProcessingFailure:skippedStubs > 0
+                    ? @"所有 Session 都不足 2 秒,无法出响应曲线。\n数据已保留:短片段可能含炸机现场,可在「☰ 总列表」选它进炸机诊断。"
+                    : (err.localizedDescription ?: @"无可生成的 CSV")];
                 return;
             }
-            s.sessionCSVPaths = [csvs copy];
-            s.lastCSVPath = csvs.firstObject;
+            if (skippedStubs > 0) {
+                [SVProgressHUD showInfoWithStatus:[NSString
+                    stringWithFormat:@"已隐藏 %ld 个 <2秒片段(出不了曲线;如需炸机诊断去 ☰ 总列表)", (long)skippedStubs]];
+            }
+            // 重算 defaultIdx(过滤后索引位移)
+            NSUInteger validDefault = 0;
+            double validMax = -1;
+            for (NSUInteger i = 0; i < validDurs.count; i++) {
+                double d = validDurs[i].doubleValue;
+                if (d > validMax) { validMax = d; validDefault = i; }
+            }
+            s.sessionCSVPaths = [validCsvs copy];
+            s.sessionDurationSecs = [validDurs copy];
+            s.lastCSVPath = validCsvs[validDefault];  // "继续上次"也指向真实飞行
+            s.selectedSessionIndex = (NSInteger)validDefault;
             s.state = IndepStateResult;
             [s applyState];
             [s buildSessionChips];
-            [s showAnalysisForSessionIndex:0];
+            [s showAnalysisForSessionIndex:(NSInteger)validDefault];
         });
     });
 }
@@ -402,17 +511,22 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     NSUInteger count = self.sessionCSVPaths.count;
     if (count == 0) return;
 
-    UIView *row = [[UIView alloc] init];
+    // 🔑 滚动修复:内容钉在 contentLayoutGuide 四边,contentSize 才会被 chip 链撑开
+    // (旧写法只钉 leading、trailing 事后补加,滚动区计算不可靠导致"滚不动只看得见 S1/S2")
+    UIStackView *row = [[UIStackView alloc] init];
+    row.axis = UILayoutConstraintAxisHorizontal;
+    row.spacing = 8;
     row.translatesAutoresizingMaskIntoConstraints = NO;
     [_sessionChipScroll addSubview:row];
-    // row 铺满 scroll 高度,宽度由内部 chip 撑开
     [NSLayoutConstraint activateConstraints:@[
-        [row.topAnchor constraintEqualToAnchor:_sessionChipScroll.topAnchor],
-        [row.leadingAnchor constraintEqualToAnchor:_sessionChipScroll.leadingAnchor],
-        [row.heightAnchor constraintEqualToAnchor:_sessionChipScroll.heightAnchor]
+        [row.topAnchor constraintEqualToAnchor:_sessionChipScroll.contentLayoutGuide.topAnchor],
+        [row.bottomAnchor constraintEqualToAnchor:_sessionChipScroll.contentLayoutGuide.bottomAnchor],
+        [row.leadingAnchor constraintEqualToAnchor:_sessionChipScroll.contentLayoutGuide.leadingAnchor constant:16],
+        [row.trailingAnchor constraintEqualToAnchor:_sessionChipScroll.contentLayoutGuide.trailingAnchor constant:-16]
+        // 🔑 不钉 row.height == frameLayoutGuide.height:首帧 scroll frame 为 0 时该约束与
+        // chip 内容高度互斥,activateConstraints 会直接抛异常崩溃(真机已踩)。高度交给 chip 撑
     ]];
 
-    UIView *prev = nil;
     for (NSUInteger i = 0; i < count; i++) {
         // chip = UIView 容器 + UILabel(避开 UIButton iOS15 contentEdgeInsets deprecated)
         UIView *chip = [[UIView alloc] init];
@@ -421,12 +535,18 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         chip.layer.masksToBounds = YES;
         chip.translatesAutoresizingMaskIntoConstraints = NO;
         chip.userInteractionEnabled = YES;
-        [row addSubview:chip];
 
+        // 标题:S序号 + 时长(有的话) + 文件名——时长让"没飞的碎片段"一眼可辨
+        NSMutableString *title = [NSMutableString stringWithFormat:@"S%lu", (unsigned long)(i + 1)];
+        if (i < self.sessionDurationSecs.count) {
+            long sec = lround(self.sessionDurationSecs[i].doubleValue);
+            if (sec > 0) [title appendFormat:@" · %ld:%02ld", sec / 60, sec % 60];
+        }
         NSString *name = [self.sessionCSVPaths[i] lastPathComponent];
+        [title appendFormat:@" · %@", [name stringByDeletingPathExtension]];
+
         UILabel *chipLabel = [[UILabel alloc] init];
-        chipLabel.text = [NSString stringWithFormat:@"S%lu · %@", (unsigned long)(i + 1),
-                           [name stringByDeletingPathExtension]];
+        chipLabel.text = title;
         chipLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
         chipLabel.translatesAutoresizingMaskIntoConstraints = NO;
         [chip addSubview:chipLabel];
@@ -435,22 +555,18 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
                                                                               action:@selector(sessionChipTapped:)];
         [chip addGestureRecognizer:tap];
 
+        // 🔑 必须先入层级再激活约束——chip 与 row 无公共祖先时激活约束直接抛异常崩溃(真机已踩)
+        [row addArrangedSubview:chip];
+
         [NSLayoutConstraint activateConstraints:@[
             [chip.topAnchor constraintEqualToAnchor:row.topAnchor constant:5],
             [chip.bottomAnchor constraintEqualToAnchor:row.bottomAnchor constant:-5],
-            [chip.leadingAnchor constraintEqualToAnchor:(prev ? prev.trailingAnchor : row.leadingAnchor)
-                                              constant:prev ? 8 : 16],
             // chip 宽度由 label 撑开(label 内边距 12/12)
             [chipLabel.topAnchor constraintEqualToAnchor:chip.topAnchor],
             [chipLabel.bottomAnchor constraintEqualToAnchor:chip.bottomAnchor],
             [chipLabel.leadingAnchor constraintEqualToAnchor:chip.leadingAnchor constant:12],
             [chipLabel.trailingAnchor constraintEqualToAnchor:chip.trailingAnchor constant:-12]
         ]];
-        // 末个 chip 右侧约束(撑开 row 宽度)
-        if (i == count - 1) {
-            [row.trailingAnchor constraintEqualToAnchor:chip.trailingAnchor constant:16].active = YES;
-        }
-        prev = chip;
     }
     [self highlightSessionChipAtIndex:self.selectedSessionIndex];
 }
@@ -462,6 +578,16 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 /// 切换 Session:重建嵌入的 PIDAnalysisViewController(避免动其内部状态机)
 - (void)showAnalysisForSessionIndex:(NSInteger)idx {
     if (idx < 0 || idx >= (NSInteger)self.sessionCSVPaths.count) return;
+
+    // 🔑 空Session防御第2层:漏网的碎片段(时长已知但<2秒)点了不给分析,给可读提示
+    if (idx < (NSInteger)self.sessionDurationSecs.count) {
+        double d = self.sessionDurationSecs[idx].doubleValue;
+        if (d > 0 && d < 2.0) {
+            [self showAlertWithTitle:@"该片段没有有效飞行数据"
+                              message:@"这段不足 2 秒,多为上电解锁测试。请选择时长更长的 Session。"];
+            return;
+        }
+    }
 
     // 移除旧子 VC
     if (self.currentAnalysisVC) {

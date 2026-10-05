@@ -24,10 +24,11 @@
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <CommonCrypto/CommonDigest.h>
 
-@interface PIDAnalysisViewController () <UITabBarControllerDelegate, UIDocumentPickerDelegate>
+@interface PIDAnalysisViewController () <UIDocumentPickerDelegate>
 
-// Tab控制器
-@property (nonatomic, strong) UITabBarController *tabBarController;
+// 🔑 顶部图表切换器(替代 UITabBarController——tab 栏在 1985pt 容器底部用户根本看不见)
+@property (nonatomic, strong) UISegmentedControl *chartSegment;
+@property (nonatomic, strong) UIView *chartPageContainer;  // 双子页共居容器,切换只切 hidden
 
 // 子视图控制器
 @property (nonatomic, strong) UIViewController *responseViewController;
@@ -35,6 +36,8 @@
 
 // 分析数据
 @property (nonatomic, strong) PIDCSVData *parsedData;
+@property (nonatomic, assign) BOOL parseInProgress;    // 🔑 CSV 后台解析进行中(防重入+竞态判定)
+@property (nonatomic, assign) BOOL analysisCancelled;  // 🔑 容器 pop 时置位:后台分析在各检查点静默中止
 @property (nonatomic, strong) PIDResponseResult *rollResponse;
 @property (nonatomic, strong) PIDResponseResult *pitchResponse;
 @property (nonatomic, strong) PIDResponseResult *yawResponse;
@@ -74,6 +77,11 @@
 @end
 
 @implementation PIDAnalysisViewController
+
+- (void)dealloc {
+    // 🔑 弱持有改造后:容器 pop 移除子 VC 即刻触发(不再等后台 block 跑完)
+    NSLog(@"🧹 [分析VC] dealloc — 页面已销毁,残余后台检查点将空转返回");
+}
 
 - (instancetype)initWithCSVFilePath:(NSString *)filePath {
     self = [super init];
@@ -133,7 +141,7 @@
 
 - (void)updateChartsIfNeeded {
     // 只有在Tab视图可见且有数据时才更新图表
-    if (!_tabBarController.view.hidden && (_rollResponse || _rollSpectrum || _parsedData)) {
+    if (!_chartPageContainer.hidden && (_rollResponse || _rollSpectrum || _parsedData)) {
         [self updateCharts];
     }
 }
@@ -173,10 +181,11 @@
     [_retryButton addTarget:self action:@selector(retryAnalysis) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:_retryButton];
 
-    // 设置约束
+    // 🔑 loading 钉视图顶部而非"居中"——嵌入工作台时本 view 高 1985pt,
+    //   居中=屏幕下方 985pt 用户看不见(真机已踩);顶部 40pt 处进场即可见
     [NSLayoutConstraint activateConstraints:@[
         [_activityIndicator.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [_activityIndicator.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor constant:-30],
+        [_activityIndicator.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:40],
 
         [_statusLabel.topAnchor constraintEqualToAnchor:_activityIndicator.bottomAnchor constant:16],
         [_statusLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:40],
@@ -194,59 +203,67 @@
 }
 
 - (void)setupTabBarController {
-    // 创建Tab控制器
-    _tabBarController = [[UITabBarController alloc] init];
-    _tabBarController.delegate = self;
-
-    // 创建响应图页面
+    // 🔑 重构:顶部 segmented 切换器 + 双子页共居容器(替代 UITabBarController)
+    //   动机:tab 栏钉在 1985pt 嵌入容器最底端用户不可见;切到顶部后与图表同屏
     _responseViewController = [self createResponseViewController];
-
-    // 创建噪声图页面
     _noiseViewController = [self createNoiseViewController];
 
-    // 设置Tab图标 - 使用更可靠的图片设置方式
-    UITabBarItem *responseItem = [[UITabBarItem alloc]
-        initWithTitle:@"响应图"
-        image:[UIImage systemImageNamed:@"chart.xyaxis.line"]
-        tag:0];
-    _responseViewController.tabBarItem = responseItem;
+    // 顶部切换器(分析完成前禁用——图表未就绪时切换无意义)
+    _chartSegment = [[UISegmentedControl alloc] initWithItems:@[@"响应图", @"噪声图"]];
+    _chartSegment.selectedSegmentIndex = 0;
+    _chartSegment.enabled = NO;
+    _chartSegment.translatesAutoresizingMaskIntoConstraints = NO;
+    [_chartSegment addTarget:self action:@selector(chartSegmentChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.view addSubview:_chartSegment];
 
-    UITabBarItem *noiseItem = [[UITabBarItem alloc]
-        initWithTitle:@"噪声图"
-        image:[UIImage systemImageNamed:@"waveform.path.ecg"]
-        tag:1];
-    _noiseViewController.tabBarItem = noiseItem;
+    // 双子页共居容器(两页都常驻,切换只切 hidden,零 add/remove 开销)
+    _chartPageContainer = [[UIView alloc] init];
+    _chartPageContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:_chartPageContainer];
 
-    _tabBarController.viewControllers = @[_responseViewController, _noiseViewController];
+    [self addChildViewController:_responseViewController];
+    _responseViewController.view.translatesAutoresizingMaskIntoConstraints = NO;
+    [_chartPageContainer addSubview:_responseViewController.view];
+    [_responseViewController didMoveToParentViewController:self];
 
-    // 配置Tab Bar外观
-    if (@available(iOS 13.0, *)) {
-        UITabBarAppearance *appearance = [[UITabBarAppearance alloc] init];
-        appearance.stackedLayoutAppearance.normal.titlePositionAdjustment = UIOffsetZero;
-        appearance.stackedLayoutAppearance.selected.titlePositionAdjustment = UIOffsetZero;
-        appearance.inlineLayoutAppearance.normal.titlePositionAdjustment = UIOffsetZero;
-        appearance.inlineLayoutAppearance.selected.titlePositionAdjustment = UIOffsetZero;
-        _tabBarController.tabBar.standardAppearance = appearance;
-    }
+    [self addChildViewController:_noiseViewController];
+    _noiseViewController.view.translatesAutoresizingMaskIntoConstraints = NO;
+    [_chartPageContainer addSubview:_noiseViewController.view];
+    [_noiseViewController didMoveToParentViewController:self];
+    _noiseViewController.view.hidden = YES;
 
-    // 添加Tab控制器视图
-    [self addChildViewController:_tabBarController];
-    _tabBarController.view.frame = self.view.bounds;  // 先设置frame
-    _tabBarController.view.translatesAutoresizingMaskIntoConstraints = NO;  // 然后用auto layout
-    [self.view addSubview:_tabBarController.view];
-    [_tabBarController didMoveToParentViewController:self];
-
-    // 确保TabBar视图正确填充
-    _tabBarController.view.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
-        [_tabBarController.view.topAnchor constraintEqualToAnchor:self.view.topAnchor],
-        [_tabBarController.view.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-        [_tabBarController.view.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [_tabBarController.view.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
+        [_chartSegment.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8],
+        [_chartSegment.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:40],
+        [_chartSegment.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-40],
+        [_chartSegment.heightAnchor constraintEqualToConstant:32],
+
+        [_chartPageContainer.topAnchor constraintEqualToAnchor:_chartSegment.bottomAnchor constant:5],
+        [_chartPageContainer.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [_chartPageContainer.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [_chartPageContainer.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+
+        [_responseViewController.view.topAnchor constraintEqualToAnchor:_chartPageContainer.topAnchor],
+        [_responseViewController.view.leadingAnchor constraintEqualToAnchor:_chartPageContainer.leadingAnchor],
+        [_responseViewController.view.trailingAnchor constraintEqualToAnchor:_chartPageContainer.trailingAnchor],
+        [_responseViewController.view.bottomAnchor constraintEqualToAnchor:_chartPageContainer.bottomAnchor],
+
+        [_noiseViewController.view.topAnchor constraintEqualToAnchor:_chartPageContainer.topAnchor],
+        [_noiseViewController.view.leadingAnchor constraintEqualToAnchor:_chartPageContainer.leadingAnchor],
+        [_noiseViewController.view.trailingAnchor constraintEqualToAnchor:_chartPageContainer.trailingAnchor],
+        [_noiseViewController.view.bottomAnchor constraintEqualToAnchor:_chartPageContainer.bottomAnchor]
     ]];
 
-    // 初始隐藏Tab视图
-    _tabBarController.view.hidden = YES;
+    // 初始隐藏(loading 期间只见 loading UI,图表区不露脸)
+    _chartSegment.hidden = YES;
+    _chartPageContainer.hidden = YES;
+}
+
+/// 顶部切换:响应图/噪声图
+- (void)chartSegmentChanged:(UISegmentedControl *)sender {
+    BOOL isNoise = sender.selectedSegmentIndex == 1;
+    _noiseViewController.view.hidden = !isNoise;
+    _responseViewController.view.hidden = isNoise;
 }
 
 - (UIViewController *)createResponseViewController {
@@ -659,37 +676,49 @@
  * 解析并分析CSV数据
  */
 - (void)parseAndAnalyze {
+    _parseInProgress = YES;       // 🔑 防重入:viewDidLoad 与容器 startAnalysis 可能先后触发
+    _analysisCancelled = NO;      // 🔑 新一轮开始,清除取消标记(同实例复跑路径)
     [_activityIndicator startAnimating];
     _progressView.hidden = NO;
     _progressView.progress = 0;
     _statusLabel.text = @"正在解析 CSV 文件...";
 
+    // 🔑 弱持有贯穿全链:容器 pop 移除子 VC 后本 VC 立即 dealloc,
+    // 解析/分析 block 的检查点因 weakSelf==nil 全部静默返回,不再续命页面
+    NSString *csvPath = [_csvFilePath copy];
+    __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        PIDCSVData *data = nil;
+        NSString *parseError = nil;
         @try {
             // 🔥 解析前更新进度 (0% → 10%)
-            [self updateProgress:0.05f status:@"正在读取 CSV 文件..."];
+            [weakSelf updateProgress:0.05f status:@"正在读取 CSV 文件..."];
 
-            // 解析CSV
+            // 解析CSV(用拷贝的路径,不依赖 self 存活)
             PIDCSVParser *parser = [PIDCSVParser parser];
-            PIDCSVData *data = [parser parseCSV:self->_csvFilePath];
+            data = [parser parseCSV:csvPath];
 
             // 🔥 解析完成更新进度 (10% → 20%)
-            [self updateProgress:0.20f status:@"正在准备分析..."];
-
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self->_parsedData = data;
-
-                if (self->_parsedData && self->_parsedData.timeSeconds.count > 0) {
-                    [self startAnalysis];
-                } else {
-                    [self showError:@"CSV解析失败，文件可能已损坏"];
-                }
-            });
+            [weakSelf updateProgress:0.20f status:@"正在准备分析..."];
         } @catch (NSException *exception) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self showError:exception.reason];
-            });
+            parseError = exception.reason;
         }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) s = weakSelf;
+            if (!s) return;                              // 🔑 页面已释放,全部作废
+            s->_parsedData = data;
+            s->_parseInProgress = NO;
+            if (s->_analysisCancelled) return;           // 🔑 已被容器取消,不再进分析
+
+            if (s->_parsedData && s->_parsedData.timeSeconds.count > 0) {
+                [s startAnalysis];
+            } else if (parseError.length > 0) {
+                [s showError:parseError];
+            } else {
+                [s showError:@"CSV解析失败，文件可能已损坏"];
+            }
+        });
     });
 }
 
@@ -698,7 +727,12 @@
  */
 - (void)startAnalysis {
     if (!_parsedData || _parsedData.timeSeconds.count == 0) {
-        [self showError:@"没有可分析的数据"];
+        // 🔑 竞态修复:容器(工作台/独立分析)嵌完 VC 立刻调本方法时,CSV 往往还在后台解析
+        // ——此刻报"没有可分析的数据"是假失败(解析完成后内部会再调本方法并成功出曲线)。
+        // 正确行为:文件在而数据未就绪 → 转解析;解析中 → 静默等内部回调,不重复弹错。
+        if (_csvFilePath.length > 0 && !_parseInProgress) {
+            [self parseAndAnalyze];
+        }
         return;
     }
 
@@ -709,8 +743,14 @@
     _statusLabel.text = @"正在分析PID数据...";
     _retryButton.hidden = YES;
 
+    // 🔑 弱持有:容器 pop 并移除子 VC 后本 VC 立即 dealloc,后台 block 不再续命页面
+    // (当前正在跑的单轴计算会跑完这一段,但后续检查点因 weakSelf==nil 全部静默返回)
+    __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [self performAnalysis];
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s || s->_analysisCancelled) return;
+        [s performAnalysis];
+        // performAnalysis 返回后立即释放强引用,让 dealloc 不再等本 block 之外的任何东西
     });
 }
 
@@ -760,6 +800,7 @@
         // Roll (轴0) - 20% → 45%
         if (axisP0 && axisP0.count > 0) {
             [self updateProgress:0.20f status:@"正在分析 Roll 轴..."];
+            if (self->_analysisCancelled) return;  // 🔑 取消检查点(轴间)
             [self analyzeAxis:0
                 withPValues:axisP0
                 analyzer:analyzer
@@ -771,6 +812,7 @@
         }
 
         // Pitch (轴1) - 45% → 70%
+        if (self->_analysisCancelled) return;  // 🔑 取消检查点(轴间)
         if (axisP1 && axisP1.count > 0) {
             [self updateProgress:0.45f status:@"正在分析 Pitch 轴..."];
             [self analyzeAxis:1
@@ -784,6 +826,7 @@
         }
 
         // Yaw (轴2) - 70% → 95%
+        if (self->_analysisCancelled) return;  // 🔑 取消检查点(轴间)
         if (axisP2 && axisP2.count > 0) {
             [self updateProgress:0.70f status:@"正在分析 Yaw 轴..."];
             [self analyzeAxis:2
@@ -798,6 +841,7 @@
 
         // 回到主线程更新UI
         dispatch_async(dispatch_get_main_queue(), ^{
+            if (self->_analysisCancelled) return;  // 🔑 取消检查点(收尾,阻止死页面配图/存档/弹窗)
             if (responses.count >= 3) {
                 self->_rollResponse = responses[0];
                 self->_pitchResponse = responses[1];
@@ -813,10 +857,13 @@
             [self updateCharts];
 
             // 🔑 保存本轮调参记录（仅执行一次，不在runDiagnosisPipeline里重复保存）
+            // 🔑 空分析不入链:无任何轴响应(碎片段/无机动数据)时追加记录=垃圾轮次污染链
             {
                 PIDValues *currentPID = [self currentPIDFromParsedData];
-                if (currentPID) {
+                if (currentPID && (self->_rollResponse || self->_pitchResponse || self->_yawResponse)) {
                     [self saveCurrentTuningRecord:currentPID];
+                } else if (currentPID) {
+                    NSLog(@"⚠️ [迭代链] 本轮无响应曲线,跳过入链(疑似碎片段)");
                 }
             }
 
@@ -1036,6 +1083,7 @@
  * 配置三个独立的响应图（Roll, Pitch, Yaw）
  */
 - (void)configureResponseCharts {
+    if (_analysisCancelled) return;  // 🔑 取消检查点(此处含主线程重计算 hist2d,取消后不再卡 UI)
     // 定义静态key（与createResponseViewController中的key保持一致）
     static char const *const kChartViewKeys[] = {"aaChartView0", "aaChartView1", "aaChartView2"};
 
@@ -1818,6 +1866,8 @@
 #pragma mark - UI State
 
 - (void)showAnalysisComplete {
+    if (_analysisCancelled) return;  // 🔑 取消检查点
+
     // 🔥 更新进度到 100%
     _progressView.progress = 1.0;
 
@@ -1830,8 +1880,13 @@
         _progressView.hidden = YES;
     });
 
-    // 显示Tab视图
-    _tabBarController.view.hidden = NO;
+    // 显示图表区与顶部切换器(此刻图表已就绪,解除禁用)
+    _chartPageContainer.hidden = NO;
+    _chartSegment.hidden = NO;
+    _chartSegment.enabled = YES;
+
+    // 🔑 分析完成信号无条件触发(容器据此解禁/刷新;存档与否不影响本信号)
+    if (self.onAnalysisComplete) self.onAnalysisComplete();
 
     NSLog(@"✅ PID分析完成");
 }
@@ -2011,48 +2066,36 @@
  * 耗时 <10ms
  */
 - (void)runDiagnosisPipeline {
-    // 检查是否至少有一轴特征
-    if (!self.rollFeatures && !self.pitchFeatures && !self.yawFeatures) {
-        NSLog(@"⚠️ [诊断] 无特征数据，跳过");
+    // 🔑 顺序死锁修复(真机已踩):本方法在 configureSingleAxisChart 之前调用,
+    // 而三轴特征原本在图表配置里才提取 → 首轮特征必为 nil → 此处静默跳过 →
+    // 无推荐/无绿虚线/无CLI("还是未能生成推荐曲线"的根因,日志锚点:无 📊[诊断评分] 且
+    // 📊[Roll 低输入] 特征日志出现在 ⚠️[诊断]跳过 之后)。
+    // 改为:以响应数据为入口条件,特征在本方法内从 currentCurve 现场提取,不依赖图表配置顺序。
+    if (!_rollResponse && !_pitchResponse && !_yawResponse) {
+        NSLog(@"⚠️ [诊断] 无响应数据，跳过");
         return;
     }
 
     uint64_t startTime = mach_absolute_time();
 
-    // ===== 第3层：诊断 =====
-    NSArray<PIDResponseFeatures *> *features = @[
-        self.rollFeatures ?: [[PIDResponseFeatures alloc] init],
-        self.pitchFeatures ?: [[PIDResponseFeatures alloc] init],
-        self.yawFeatures ?: [[PIDResponseFeatures alloc] init]
-    ];
-    PIDCurveDiagnostic *diagnostic = [PIDCurveDiagnostic diagnoseWithFeatures:features];
-    NSLog(@"📊 [诊断评分] 综合=%.0f分", diagnostic.overallScore);
+    double sampleRate = _parsedData.sampleRate > 0 ? _parsedData.sampleRate : 8000.0;
 
     // ===== 第2层：获取当前PID =====
     // 优先从 BBL Header CSV 注释行获取实际PID值
     PIDValues *currentPID = [self currentPIDFromParsedData];
 
-    // ===== 第4层：推荐 + 预测曲线 =====
-    double sampleRate = _parsedData.sampleRate > 0 ? _parsedData.sampleRate : 8000.0;
-    PIDRecommendationEngine *engine = [[PIDRecommendationEngine alloc] init];
-
-    // 为每个有诊断的轴生成推荐
-    NSArray<PIDAxisDiagnosis *> *diagnoses = diagnostic.axisDiagnoses;
+    // ===== 第1.5层：逐轴计算低输入曲线 + 现场提取特征 =====
+    // (图表配置随后会用含质量过滤的曲线重新提取并覆盖属性——两边独立,互不依赖)
     NSArray<PIDResponseResult *> *responses = @[_rollResponse, _pitchResponse, _yawResponse];
+    NSMutableArray<NSArray<NSNumber *> *> *currentCurves = [NSMutableArray arrayWithCapacity:3];
+    NSMutableArray<PIDResponseFeatures *> *features = [NSMutableArray arrayWithCapacity:3];
 
-    NSMutableArray<PIDTuningResult *> *tuningResults = [NSMutableArray arrayWithCapacity:3];
-
-    for (NSInteger i = 0; i < MIN(diagnoses.count, (NSUInteger)3); i++) {
-        PIDAxisDiagnosis *axisDiag = diagnoses[i];
+    for (NSInteger i = 0; i < 3; i++) {
         PIDResponseResult *response = responses[i];
 
-        // 获取该轴的当前PID
-        PIDValues *axisPID = [self pidValuesForAxis:i fromCurrent:currentPID];
-
-        // 获取当前阶跃响应曲线（低输入）
+        // 计算当前阶跃响应曲线（低输入,与图表同口径的加权平均）
         NSArray<NSNumber *> *currentCurve = nil;
         if (response && response.stepResponse.count > 0) {
-            // 使用加权平均计算低输入曲线（与图表一致）
             NSDictionary *masks = [PIDTraceAnalyzer lowHighMask:response.maxInput threshold:500.0];
             NSArray<NSNumber *> *lowMask = masks[@"low"];
             NSDictionary *tooLowMasks = [PIDTraceAnalyzer lowHighMask:response.maxInput threshold:20.0];
@@ -2070,10 +2113,39 @@
                                                                       vertBins:1000
                                                                    sampleRate:sampleRate];
         }
+        [currentCurves addObject:currentCurve ?: @[]];
+
+        PIDResponseFeatures *f = nil;
+        if (currentCurve.count > 10) {
+            f = [PIDTraceAnalyzer extractFeaturesFromResponse:currentCurve sampleRate:sampleRate];
+        }
+        [features addObject:f ?: [[PIDResponseFeatures alloc] init]];
+        // 同步到属性(供保存记录/修正系数读取;图表配置稍后覆盖为自己的版本)
+        switch (i) {
+            case 0: self.rollFeatures = f; break;
+            case 1: self.pitchFeatures = f; break;
+            case 2: self.yawFeatures = f; break;
+        }
+    }
+
+    // ===== 第3层：诊断 =====
+    PIDCurveDiagnostic *diagnostic = [PIDCurveDiagnostic diagnoseWithFeatures:features];
+    NSLog(@"📊 [诊断评分] 综合=%.0f分", diagnostic.overallScore);
+
+    // ===== 第4层：推荐 + 预测曲线 =====
+    PIDRecommendationEngine *engine = [[PIDRecommendationEngine alloc] init];
+
+    // 为每个有诊断的轴生成推荐
+    NSArray<PIDAxisDiagnosis *> *diagnoses = diagnostic.axisDiagnoses;
+    NSMutableArray<PIDTuningResult *> *tuningResults = [NSMutableArray arrayWithCapacity:3];
+
+    for (NSInteger i = 0; i < MIN(diagnoses.count, (NSUInteger)3); i++) {
+        PIDAxisDiagnosis *axisDiag = diagnoses[i];
+        PIDValues *axisPID = [self pidValuesForAxis:i fromCurrent:currentPID];
 
         PIDTuningResult *result = [engine generateRecommendationWithDiagnosis:axisDiag
                                                                     currentPID:axisPID
-                                                               currentResponse:currentCurve ?: @[]
+                                                               currentResponse:currentCurves[i]
                                                                    sampleRate:sampleRate];
         [tuningResults addObject:result];
     }
@@ -2380,11 +2452,25 @@
     }
 
     [self saveCurrentRecordToChain:self.currentChainId currentPID:currentPID];
+    // 🔑 onAnalysisComplete 已移至 showAnalysisComplete 无条件触发——
+    // 存档路径(无PID元数据/指纹去重)被跳过时容器仍需刷新UI/解禁,挂这里会死禁用(真机已踩)
+}
 
-    // 🔑 任务#28 0.4c-2 第3步:通知容器(工作台)本轮分析+保存到链已完成
-    // (appendRecord 已同步完成,链 records 已更新;block 由容器实现并负责切主线程)
-    // 非迭代模式不会走到这里(上方三个 early return 已拦截)
-    if (self.onAnalysisComplete) self.onAnalysisComplete();
+/// 当前推荐 CLI(当前模式优先,缺三轴时滑块版可能为 nil→回退真值版;都无→nil)
+- (nullable NSString *)currentRecommendationCLI {
+    NSString *primary = self.cliDisplayModeIsSlider ? self.sliderCLICommands : self.cliCommands;
+    if (primary.length > 0) return primary;
+    NSString *fallback = self.cliDisplayModeIsSlider ? self.cliCommands : self.sliderCLICommands;
+    return fallback.length > 0 ? fallback : nil;
+}
+
+/// 取消分析:置位标记,后台/主线程各检查点自行中止
+- (void)cancelAnalysis {
+    _analysisCancelled = YES;
+    [_activityIndicator stopAnimating];
+    _progressView.hidden = YES;
+    _statusLabel.hidden = YES;
+    NSLog(@"🛑 [分析] 已取消(pop/替换)");
 }
 
 /// 🔧 构建并保存调参记录到指定迭代链
@@ -3012,6 +3098,12 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         NSLog(@"✏️ [改名] %@ → %@", self.currentCraftName, newName);
         self.currentCraftName = newName;
 
+        // 🔑 迭代模式下改名对象=方案(链 craftName)——旧逻辑只改轮次记录字段,
+        // 用户看到的"方案名"纹丝不动属语义错位;改链名后工作台链头/首页列表随之更新
+        if (self.isIterationMode && self.currentChainId.length > 0) {
+            [[IterationChainManager sharedManager] updateCraftName:newName forChain:self.currentChainId];
+        }
+
         // 重新加载历史
         [self loadTuningHistory];
 
@@ -3034,6 +3126,14 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 - (void)checkFlightTimeAndAppendToChain:(NSString *)chainId
                                   record:(PIDTuningRecord *)record
                                chainMgr:(IterationChainManager *)chainMgr {
+    // 🔑 指纹幂等守卫:同一 CSV 重复分析(反复进出工作台/页面刷新重跑分析)不堆假轮次
+    // (工作台每次渲染都 startAnalysis→走到这里,无此守卫链会无限膨胀出重复记录)
+    NSString *lastFingerprint = self.tuningHistory.lastObject.csvFingerprint;
+    if (lastFingerprint.length > 0 && [lastFingerprint isEqualToString:record.csvFingerprint]) {
+        NSLog(@"ℹ️ [迭代链] CSV 指纹与最新轮相同,跳过重复记录(幂等)");
+        return;
+    }
+
     // 只在有历史记录时检查
     if (self.tuningHistory.count == 0 || !record.flightTime) {
         [chainMgr appendRecord:record toChain:chainId];

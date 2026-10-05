@@ -12,14 +12,18 @@
 #import "IndependentAnalysisViewController.h"
 #import "IterationWorkbenchViewController.h"
 #import "BBLImportService.h"
+#import "BlackboxDecoder.h"   // BBLSessionInfo(➕建方案的碎片段时长防御)
 #import "IterationChainManager.h"
 #import "IterationChain.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <SVProgressHUD/SVProgressHUD.h>
 
-@interface HomeViewController () <UITableViewDataSource, UITableViewDelegate>
+@interface HomeViewController () <UITableViewDataSource, UITableViewDelegate, UIDocumentPickerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UIView *headerView;          // 「选一条路」+ Y 型三入口
 @property (nonatomic, strong) UILabel *emptySchemeLabel;   // 方案列表空态提示
 @property (nonatomic, strong) NSMutableArray<IterationChain *> *schemes;
+@property (nonatomic, strong) NSArray<BBLImportCSVResult *> *pendingSchemeSessions;  // 新建方案:转换成功的 Session 候选
 @end
 
 @implementation HomeViewController
@@ -53,7 +57,7 @@
                target:self
                action:@selector(totalListButtonTapped)];
 
-    // 右上角双按钮:蓝牙取数(BLE→大容量存储) + 扫码(光学传输接收 BBL)
+    // 右上角三按钮:新建方案(导入BBL建链) + 蓝牙取数 + 扫码
     UIBarButtonItem *bleButton = [[UIBarButtonItem alloc]
         initWithImage:[UIImage systemImageNamed:@"antenna.radiowaves.left.and.right"]
                 style:UIBarButtonItemStylePlain
@@ -64,7 +68,12 @@
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(scanEntryTapped)];
-    self.navigationItem.rightBarButtonItems = @[scanButton, bleButton];
+    UIBarButtonItem *addSchemeButton = [[UIBarButtonItem alloc]
+        initWithImage:[UIImage systemImageNamed:@"plus"]
+                style:UIBarButtonItemStylePlain
+               target:self
+               action:@selector(addSchemeButtonTapped)];
+    self.navigationItem.rightBarButtonItems = @[scanButton, bleButton, addSchemeButton];
 }
 
 - (void)setupTableView {
@@ -381,16 +390,11 @@
 
 #pragma mark - 三入口 Actions
 
-/// 🛩️ 独立分析 → CSV 记录空则弹推荐导入例子,否则进独立分析三态
+/// 🛩️ 独立分析 → 直接进三态页(空态页内已有「✨加入示例」+「📁导入BBL」+「继续上次」,
+/// 首页再弹"要加示例吗"属 0.3 旧设计的重复门,打断点击预期,已删)
 - (void)independentEntryTapped {
     NSLog(@"[Home] 独立分析入口");
-    if (![BBLImportService hasAnyCSVRecord]) {
-        [self promptDemoWithTitle:@"还没有飞行记录"
-                          message:@"加入一条示例飞行数据(BF 4.5),体验独立分析?"
-                         onJoined:^{ [self enterIndependentAnalysis]; }];
-    } else {
-        [self enterIndependentAnalysis];
-    }
+    [self enterIndependentAnalysis];
 }
 
 - (void)enterIndependentAnalysis {
@@ -404,11 +408,121 @@
     [self loadSchemes];  // 刷新(按 createdAt 倒序)
     if (self.schemes.count > 0) {
         [self pushWorkbenchForChain:self.schemes.firstObject];
-    } else {
-        [self promptDemoWithTitle:@"还没有方案"
-                          message:@"加入一条示例飞行数据作为第一个方案,体验多轮迭代?"
-                         onJoined:^{ [self ensureDemoChainAndEnterWorkbench]; }];
+        return;
     }
+    // 🔑 空态三选:导入自己的 BBL 建第一个方案(正经入口) / 加入示例(体验) / 取消
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"开始一个调参方案"
+                          message:@"导入一份飞行 BBL 作为方案的第一轮,\n之后每次换参飞行都导入到同一条链迭代。"
+                   preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"📥 导入 BBL 新建方案" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [self presentSchemeBBLPicker];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"加入示例(体验)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        [self promptDemoWithTitle:@"加入示例"
+                          message:@"用内置示例飞行数据体验多轮迭代流程?"
+                         onJoined:^{ [self ensureDemoChainAndEnterWorkbench]; }];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+#pragma mark - 导入 BBL 新建方案(第一轮入口)
+
+- (void)presentSchemeBBLPicker {
+    // BBL 无系统 UTType,用通用 data 放开,后缀在回调里校验
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:YES];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *url = urls.firstObject;
+    NSString *name = url.lastPathComponent;
+    if (![name.pathExtension.lowercaseString isEqualToString:@"bbl"]) {
+        [self showSimpleAlertWithTitle:@"请选择 .bbl 文件" message:name];
+        return;
+    }
+
+    // asCopy:YES 已复制到临时区,转存 Documents(与蓝牙/扫码导入一致的落盘位置)
+    NSString *dest = [[BBLImportService documentsDirectory] stringByAppendingPathComponent:name];
+    NSError *copyError = nil;
+    [[NSFileManager defaultManager] removeItemAtPath:dest error:nil];
+    if (![[NSFileManager defaultManager] copyItemAtURL:url toURL:[NSURL fileURLWithPath:dest] error:&copyError]) {
+        [self showSimpleAlertWithTitle:@"保存失败" message:copyError.localizedDescription];
+        return;
+    }
+
+    // 后台批量转换全部 Session,成功后单选建链
+    [SVProgressHUD showWithStatus:@"解码 BBL…"];
+    BBLImportService *svc = [BBLImportService shared];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSArray<BBLImportCSVResult *> *results = [svc convertAllSessionsForBBL:dest
+                                                                      motorKV:nil
+                                                                     progress:nil
+                                                                        error:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [SVProgressHUD dismiss];
+            NSMutableArray<BBLImportCSVResult *> *ok = [[results filteredArrayUsingPredicate:
+                [NSPredicate predicateWithBlock:^BOOL(BBLImportCSVResult *r, NSDictionary *b) { return r.isSuccess; }]] mutableCopy];
+
+            // 🔑 碎片段防御(与独立分析同款):<2秒解锁测试 Session 出不了曲线,建链=空方案
+            // (首轮链 CSV 是碎片段 → 工作台无响应无诊断无CLI,弹"无推荐值"的根因)
+            NSArray<BBLSessionInfo *> *infos = [[BBLImportService shared] listSessionsForBBL:dest error:nil];
+            NSMutableDictionary<NSNumber *, NSNumber *> *durByLog = [NSMutableDictionary dictionary];
+            for (BBLSessionInfo *info in infos) {
+                durByLog[@(info.logIndex)] = @((double)info.durationUs / 1000000.0);
+            }
+            NSInteger stubs = 0;
+            for (BBLImportCSVResult *r in [ok copy]) {
+                NSNumber *d = durByLog[@(r.logIndex)];
+                if (d && d.doubleValue > 0 && d.doubleValue < 2.0) {
+                    [ok removeObject:r];
+                    stubs++;
+                }
+            }
+            if (ok.count == 0) {
+                [self showSimpleAlertWithTitle:@"没有可用的飞行数据"
+                    message:stubs > 0
+                        ? @"全部 Session 不足 2 秒(多为解锁测试),无法建方案。\n短片段可用于炸机诊断(☰ 总列表)。"
+                        : (results.firstObject.errorMessage ?: @"BBL 解码失败")];
+                return;
+            }
+            if (ok.count == 1) {
+                [self createSchemeChainFromSession:ok.firstObject];
+            } else {
+                [self showSessionPickSheet:ok];
+            }
+        });
+    });
+}
+
+/// 多 Session 单选(一个方案 = 一条链 = 一个 Session 的迭代史;与工作台导入下一轮同交互)
+- (void)showSessionPickSheet:(NSArray<BBLImportCSVResult *> *)sessions {
+    UIAlertController *sheet = [UIAlertController
+        alertControllerWithTitle:@"选择一个 Session 作为方案第一轮"
+                          message:@"每个 Session 独立成链互不混参"
+                   preferredStyle:UIAlertControllerStyleActionSheet];
+    for (BBLImportCSVResult *r in sessions) {
+        [sheet addAction:[UIAlertAction actionWithTitle:r.sessionDescription ?: r.csvPath.lastPathComponent
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(UIAlertAction *a) { [self createSchemeChainFromSession:r]; }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)createSchemeChainFromSession:(BBLImportCSVResult *)result {
+    // 方案名暂用 BBL 文件名占位(Q2 手动命名后续加编辑)
+    NSString *bblName = result.csvPath.lastPathComponent;  // CSV 名含 session 序号,文件名做 craft 名占位
+    NSString *craftName = bblName ?: @"我的方案";
+    IterationChain *chain = [[IterationChainManager sharedManager] createChainWithCraftName:craftName
+                                                                                     csvPath:result.csvPath
+                                                                                sessionIndex:result.logIndex];
+    [self loadSchemes];
+    [self pushWorkbenchForChain:chain];
 }
 
 /// 加入示例 → 用最近 demo CSV 建/复用一条迭代链 → 进工作台
@@ -543,6 +657,30 @@
     IterationChain *chain = self.schemes[indexPath.row];
     IterationWorkbenchViewController *vc = [[IterationWorkbenchViewController alloc] initWithChainId:chain.chainId];
     [self.navigationController pushViewController:vc animated:YES];
+}
+
+/// ➕ 新建方案(常驻入口,与方案数无关——有方案时 🎯 卡片直达最新链,这里负责"另起一个方案")
+- (void)addSchemeButtonTapped {
+    [self presentSchemeBBLPicker];
+}
+
+/// 方案列表左滑删除(整链硬删,含全部轮次)
+- (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (editingStyle != UITableViewCellEditingStyleDelete) return;
+    IterationChain *chain = self.schemes[indexPath.row];
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"删除这个方案?"
+        message:[NSString stringWithFormat:@"「%@」及其全部迭代轮次将被硬删除,无法恢复。",
+            chain.craftName.length > 0 ? chain.craftName : chain.chainId]
+        preferredStyle:UIAlertControllerStyleAlert];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        [[IterationChainManager sharedManager] deleteChain:chain.chainId];
+        [weakSelf loadSchemes];
+        [weakSelf.tableView reloadData];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 @end

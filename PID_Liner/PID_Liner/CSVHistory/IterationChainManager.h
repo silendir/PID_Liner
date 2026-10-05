@@ -52,6 +52,11 @@ NS_ASSUME_NONNULL_BEGIN
 /// @param chainId 目标链ID
 - (void)removeLastRecordFromChain:(NSString *)chainId;
 
+/// 重命名方案(改链的 craftName——旧"改名"只改轮次记录字段属语义错位,方案名才是用户认知对象)
+/// @param craftName 新方案名
+/// @param chainId 目标链ID
+- (void)updateCraftName:(NSString *)craftName forChain:(NSString *)chainId;
+
 #pragma mark - 删除
 
 /// 删除指定链

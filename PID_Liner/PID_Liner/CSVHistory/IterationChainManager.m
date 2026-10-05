@@ -30,8 +30,40 @@ static NSString *const kChainDirectoryName = @"IterationChains";
     self = [super init];
     if (self) {
         [self ensureDirectoryExists];
+        [self pruneDuplicateFingerprintRecords];
     }
     return self;
+}
+
+/// 🔧 一次性数据修复:剔除"同 CSV 指纹连续重复"的假轮次。
+/// 成因=指纹幂等守卫上线前,反复进出工作台把同一 CSV 分析 N 次攒出 N 条重复记录;
+/// 同指纹连续记录按定义不可能是真实的换参迭代,保留首条(真实轮)其余清除。
+- (void)pruneDuplicateFingerprintRecords {
+    NSString *dir = [self chainDirectory];
+    NSArray<NSString *> *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
+    for (NSString *file in files) {
+        if (![file.pathExtension isEqualToString:@"json"]) continue;
+        NSString *path = [dir stringByAppendingPathComponent:file];
+        IterationChain *chain = [self loadChainFromFile:path];
+        if (chain.records.count < 2) continue;
+
+        NSMutableArray<PIDTuningRecord *> *pruned = [NSMutableArray array];
+        NSString *lastKeptFingerprint = nil;
+        NSInteger removed = 0;
+        for (PIDTuningRecord *r in chain.records) {
+            if (r.csvFingerprint.length > 0 && [r.csvFingerprint isEqualToString:lastKeptFingerprint]) {
+                removed++;  // 与上一条保留记录同指纹 = 重复分析的假轮次
+                continue;
+            }
+            [pruned addObject:r];
+            lastKeptFingerprint = r.csvFingerprint;
+        }
+        if (removed > 0) {
+            chain.records = [pruned copy];
+            [self saveChain:chain];
+            NSLog(@"🧹 [迭代链] 已清除 %ld 条假轮次(链 %@)", (long)removed, chain.chainId);
+        }
+    }
 }
 
 - (NSInteger)maxIterations {
@@ -150,6 +182,19 @@ static NSString *const kChainDirectoryName = @"IterationChains";
     [chain removeLastRecord];
     [self saveChain:chain];
     NSLog(@"↩ [迭代链] 已撤销链%@最新轮 (剩余%lu轮)", chainId, (unsigned long)chain.records.count);
+}
+
+/// 重命名方案(改链 craftName 并持久化;首页方案列表/工作台链头随之更新)
+- (void)updateCraftName:(NSString *)craftName forChain:(NSString *)chainId {
+    if (!chainId.length || craftName.length == 0) return;
+    IterationChain *chain = [self chainForId:chainId];
+    if (!chain) {
+        NSLog(@"⚠️ [迭代链] 改名失败,未找到链: %@", chainId);
+        return;
+    }
+    chain.craftName = craftName;
+    [self saveChain:chain];
+    NSLog(@"✏️ [迭代链] 方案改名: %@ → %@", chainId, craftName);
 }
 
 #pragma mark - 删除
