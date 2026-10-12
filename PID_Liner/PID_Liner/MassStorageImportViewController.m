@@ -11,6 +11,7 @@
 #import "BBLImportService.h"
 #import "DataflashDownloader.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import "SVProgressHUD.h"
 
 typedef NS_ENUM(NSUInteger, MscStage) {
     MscStageScanning   = 0,  // 态1 设备列表
@@ -31,6 +32,7 @@ typedef NS_ENUM(NSUInteger, MscStage) {
 @property (nonatomic, strong) NSMutableArray<FCBleDevice *> *devices;
 @property (nonatomic, strong) FCBleDevice *selectedDevice;
 @property (nonatomic, assign) MscStage stage;
+@property (nonatomic, strong, nullable) NSURL *exportingBBLURL;  // 非 nil=当前 picker 是"另存导出"而非导入
 @end
 
 @implementation MassStorageImportViewController
@@ -336,6 +338,14 @@ typedef NS_ENUM(NSUInteger, MscStage) {
 #pragma mark - UIDocumentPickerDelegate
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    // 导出模式回调:系统已把 .bbl 复制到用户选的目录,收尾退出本页
+    // (必须在导入逻辑之前分流,否则导出目标目录会被当导入文件二次处理)
+    if (self.exportingBBLURL) {
+        self.exportingBBLURL = nil;
+        [SVProgressHUD showSuccessWithStatus:@"已另存到「文件」"];
+        [self.navigationController popViewControllerAnimated:YES];
+        return;
+    }
     NSURL *url = urls.firstObject;
     NSString *name = url.lastPathComponent;
     if (![name.pathExtension.lowercaseString isEqualToString:@"bbl"]) {
@@ -356,6 +366,10 @@ typedef NS_ENUM(NSUInteger, MscStage) {
     [self convertAndAlertBBL:destURL];
 }
 
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    self.exportingBBLURL = nil;  // 导出中途取消:留在本页,导入路径无取消分支(取消即不选)
+}
+
 /// BBL 转码 + 结果弹窗(文件选择器路径与蓝牙直下路径共用;成功后退出本页)
 - (void)convertAndAlertBBL:(NSURL *)url {
     NSString *name = url.lastPathComponent;
@@ -373,9 +387,27 @@ typedef NS_ENUM(NSUInteger, MscStage) {
         : (results.firstObject.errorMessage ?: convertError.localizedDescription ?: @"BBL 解码失败");
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:msg
                                                              preferredStyle:UIAlertControllerStyleAlert];
+    if (ok > 0) {
+        __weak typeof(self) weakSelf = self;
+        // App 外备份:原件再存一份到系统"文件"App,App 卸载/丢失后原始黑匣子数据仍可找回
+        [alert addAction:[UIAlertAction actionWithTitle:@"📤 另存到「文件」" style:UIAlertActionStyleDefault
+                                               handler:^(UIAlertAction *a) {
+            __strong typeof(weakSelf) s = weakSelf;
+            if (s) [s presentBBLExporter:url];
+        }]];
+    }
     [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *a) { [self.navigationController popViewControllerAnimated:YES]; }]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+/// 把已导入沙盒的 .bbl 原件另存一份到"文件"App(用户选目录,系统负责复制)
+- (void)presentBBLExporter:(NSURL *)bblURL {
+    self.exportingBBLURL = bblURL;
+    UIDocumentPickerViewController *exporter =
+        [[UIDocumentPickerViewController alloc] initForExportingURLs:@[bblURL] asCopy:YES];
+    exporter.delegate = self;
+    [self presentViewController:exporter animated:YES completion:nil];
 }
 
 - (void)showAlertTitle:(NSString *)title message:(NSString *)message {

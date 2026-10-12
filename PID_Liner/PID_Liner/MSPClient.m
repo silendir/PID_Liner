@@ -143,13 +143,15 @@ typedef NS_ENUM(NSUInteger, MSPParseState) {
             _crc = b;
             _received = 0;
             [_payload setLength:0];
-            _state = (_payloadLen == 0) ? MSPParseStateV1Checksum : MSPParseStateV1Command;
+            // len=0 也要先读 cmd 再进 Checksum:跳过 cmd 会把 cmd 字节当校验和,
+            // ERASE 这类空 payload 响应(len=0)永远解析失败 → 上层白等超时(真机已踩)
+            _state = MSPParseStateV1Command;
             break;
 
         case MSPParseStateV1Command:
             _crc ^= b;
             _rxCmd = b;
-            _state = MSPParseStateV1Payload;
+            _state = (_payloadLen == 0) ? MSPParseStateV1Checksum : MSPParseStateV1Payload;
             break;
 
         case MSPParseStateV1Payload:

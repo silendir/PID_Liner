@@ -7,7 +7,6 @@
 
 #import "HomeViewController.h"
 #import "CSVHistoryViewController.h"
-#import "CimbarScanViewController.h"
 #import "MassStorageImportViewController.h"
 #import "IndependentAnalysisViewController.h"
 #import "IterationWorkbenchViewController.h"
@@ -15,6 +14,8 @@
 #import "BlackboxDecoder.h"   // BBLSessionInfo(➕建方案的碎片段时长防御)
 #import "IterationChainManager.h"
 #import "IterationChain.h"
+#import "FCBluetoothService.h"
+#import "MSPClient.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <SVProgressHUD/SVProgressHUD.h>
 
@@ -24,6 +25,9 @@
 @property (nonatomic, strong) UILabel *emptySchemeLabel;   // 方案列表空态提示
 @property (nonatomic, strong) NSMutableArray<IterationChain *> *schemes;
 @property (nonatomic, strong) NSArray<BBLImportCSVResult *> *pendingSchemeSessions;  // 新建方案:转换成功的 Session 候选
+// 🔑 一键清黑匣子流水线状态(全程 HUD,不进页面)
+@property (nonatomic, assign) BOOL bbEraseRunning;         // 防重入:流水线跑完/失败前不允许再触发
+@property (nonatomic, assign) NSInteger bbPollCount;       // SUMMARY 轮询次数(判定总超时)
 @end
 
 @implementation HomeViewController
@@ -57,19 +61,19 @@
                target:self
                action:@selector(totalListButtonTapped)];
 
-    // 右上角双按钮:蓝牙取数 + 扫码(➕新建方案已删——意义不明且职责与
-    // 🎯空态/独立分析右上/☰转换记录「创建迭代方案」重叠)
+    // 右上角双按钮:蓝牙取数 + 一键清黑匣子(扫码已摘——cimbar 光学传输实用度低;
+    // ➕新建方案已删——意义不明且职责与 🎯空态/独立分析右上/☰转换记录「创建迭代方案」重叠)
     UIBarButtonItem *bleButton = [[UIBarButtonItem alloc]
         initWithImage:[UIImage systemImageNamed:@"antenna.radiowaves.left.and.right"]
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(bleImportEntryTapped)];
-    UIBarButtonItem *scanButton = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"qrcode.viewfinder"]
+    UIBarButtonItem *eraseButton = [[UIBarButtonItem alloc]
+        initWithImage:[UIImage systemImageNamed:@"trash"]
                 style:UIBarButtonItemStylePlain
                target:self
-               action:@selector(scanEntryTapped)];
-    self.navigationItem.rightBarButtonItems = @[scanButton, bleButton];
+               action:@selector(eraseBlackboxEntryTapped)];
+    self.navigationItem.rightBarButtonItems = @[eraseButton, bleButton];
 }
 
 - (void)setupTableView {
@@ -559,11 +563,192 @@
     [self pushCSVHistory];
 }
 
-/// 📷 扫码接收 → 光学传输 BBL
-- (void)scanEntryTapped {
-    NSLog(@"[Home] 扫码接收入口");
-    CimbarScanViewController *vc = [[CimbarScanViewController alloc] init];
-    [self.navigationController pushViewController:vc animated:YES];
+#pragma mark - 一键清空飞控黑匣子(蓝牙流水线)
+
+/// 🗑 清黑匣子入口:确认后全自动跑完 扫描→连接→握手→擦除→验证→挥手,全程 HUD 无页面
+- (void)eraseBlackboxEntryTapped {
+    if (self.bbEraseRunning) return;  // 防重入:上一条流水线还在跑
+    // 破坏性操作必须确认:板载黑盒数据清了就没了
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"清空飞控黑匣子"
+        message:@"将蓝牙连接飞控并擦除板载黑盒闪存,已记录的飞行日志不可恢复。\n\n请确认数据已下载保存,且飞控已通电、蓝牙模块就绪。"
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"清空" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        [self bbEraseStart];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+/// 第1步:扫描 3 秒收设备 → 0台报错 / 1台直连 / 多台弹选择
+- (void)bbEraseStart {
+    FCBluetoothService *ble = [FCBluetoothService shared];
+    if (!ble.bluetoothReady) {
+        // 首次点击:CBCentralManager 此刻才被点出来,系统上电要几百毫秒
+        // (首次使用还要等权限弹窗确认)→ 不报错打断,等上电完成自动续跑,
+        // 用户不再需要点第二次。15s 兜底覆盖蓝牙关闭/未授权等真失败。
+        self.bbEraseRunning = YES;
+        [SVProgressHUD showWithStatus:ble.bluetoothStateText];
+        __weak typeof(self) weakSelf = self;
+        ble.onStateChanged = ^(BOOL ready, NSString *stateText) {
+            __strong typeof(weakSelf) s = weakSelf;
+            if (!s || !s.bbEraseRunning) return;
+            if (ready) {
+                ble.onStateChanged = nil;
+                [SVProgressHUD showWithStatus:@"正在扫描飞控蓝牙…"];
+                [s bbEraseStart];  // 就绪,从扫描起重新走流水线
+            } else {
+                [SVProgressHUD showWithStatus:stateText];  // 上电中/等权限确认
+            }
+        };
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) s = weakSelf;
+            if (!s || !s.bbEraseRunning || ble.bluetoothReady) return;
+            ble.onStateChanged = nil;
+            s.bbEraseRunning = NO;
+            [SVProgressHUD showErrorWithStatus:ble.bluetoothStateText];
+        });
+        return;
+    }
+    self.bbEraseRunning = YES;
+    self.bbPollCount = 0;
+    [SVProgressHUD showWithStatus:@"正在扫描飞控蓝牙…"];
+    [ble startScan];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s || !s.bbEraseRunning) { if (s) [ble stopScan]; return; }
+        [ble stopScan];
+        NSArray<FCBleDevice *> *devices = ble.foundDevices ?: @[];
+        if (devices.count == 0) {
+            [s bbEraseFinishSuccess:NO message:@"未发现飞控蓝牙\n请确认飞控通电、蓝牙模块指示灯亮"];
+            return;
+        }
+        if (devices.count == 1) {
+            [s bbEraseConnect:devices.firstObject];
+            return;
+        }
+        // 多台:居中 Alert 选择(Alert 样式 iPad 免 popover 锚点)
+        [SVProgressHUD dismiss];
+        UIAlertController *pick = [UIAlertController alertControllerWithTitle:@"发现多台飞控"
+                                                                      message:@"选择要清空黑匣子的设备"
+                                                             preferredStyle:UIAlertControllerStyleAlert];
+        for (FCBleDevice *d in devices) {
+            [pick addAction:[UIAlertAction actionWithTitle:d.name.length ? d.name : @"未命名设备"
+                                                     style:UIAlertActionStyleDefault
+                                                   handler:^(UIAlertAction *a) { [s bbEraseConnect:d]; }]];
+        }
+        [pick addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
+            s.bbEraseRunning = NO;
+        }]];
+        [s presentViewController:pick animated:YES completion:nil];
+    });
+}
+
+/// 第2步:连接
+- (void)bbEraseConnect:(FCBleDevice *)device {
+    [SVProgressHUD showWithStatus:[NSString stringWithFormat:@"正在连接 %@…", device.name ?: @"飞控"]];
+    __weak typeof(self) weakSelf = self;
+    [[FCBluetoothService shared] connectDevice:device completion:^(NSString *errorMessage) {
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s || !s.bbEraseRunning) return;
+        if (errorMessage) {
+            [s bbEraseFinishSuccess:NO message:[NSString stringWithFormat:@"连接失败:%@", errorMessage]];
+            return;
+        }
+        [s bbEraseHandshake];
+    }];
+}
+
+/// 第3步:MSP 链路探测(API_VERSION 必答秒回,分清"链路不通"和"擦除慢")
+- (void)bbEraseHandshake {
+    [SVProgressHUD showWithStatus:@"已连接,探测 MSP 链路…"];
+    __weak typeof(self) weakSelf = self;
+    [[FCBluetoothService shared] sendCommand:MSPCommandApiVersion payload:[NSData data] reply:^(NSData *p, NSString *err) {
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s || !s.bbEraseRunning) return;
+        if (err) {
+            [s bbEraseFinishSuccess:NO message:[NSString stringWithFormat:@"MSP 链路不通:%@", err]];
+            return;
+        }
+        [s bbEraseSend];
+    }];
+}
+
+/// 第4步:发擦除命令。老固件整片擦 NOR 时阻塞 MSP(30s+ 才回 ack),
+/// sendCommand 的 5s 超时必然先引爆——超时≠失败,是预期路径;真实判定交给 SUMMARY 轮询
+- (void)bbEraseSend {
+    [SVProgressHUD showWithStatus:@"正在擦除黑匣子…(约30~60秒,请勿给飞控断电)"];
+    FCBluetoothService *ble = [FCBluetoothService shared];
+    __weak typeof(self) weakSelf = self;
+    [ble sendCommand:MSPCommandDataflashErase payload:[NSData data] reply:^(NSData *p, NSString *err) {
+        NSLog(@"[清黑匣] ERASE 返回(超时也属预期): %@", err ?: @"已ack");
+    }];
+    // 等 ERASE 的 5s 超时引爆(waitingReply 复位,否则 SUMMARY 发不出去)再开始轮询
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s || !s.bbEraseRunning) return;
+        [s bbErasePoll];
+    });
+}
+
+/// 第5步:轮询 SUMMARY(每5秒一次,最多18次≈96秒总窗口)直到"已用字节=0"
+- (void)bbErasePoll {
+    FCBluetoothService *ble = [FCBluetoothService shared];
+    if (!ble.isConnected) {
+        [self bbEraseFinishSuccess:NO message:@"擦除期间蓝牙断连,结果未知\n重连后再点一次「清空」可验证"];
+        return;
+    }
+    self.bbPollCount++;
+    if (self.bbPollCount > 18) {
+        [self bbEraseFinishSuccess:NO message:@"擦除超时:飞控长时间无响应\n请重试一次,或改用插线方式清理"];
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    [[FCBluetoothService shared] sendCommand:MSPCommandDataflashSummary payload:[NSData data] reply:^(NSData *p, NSString *err) {
+        __strong typeof(weakSelf) s = weakSelf;
+        if (!s || !s.bbEraseRunning) return;
+        if (err || p.length < 13) {
+            // 擦除阻塞期探不进去 → 继续等下一轮
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                __strong typeof(weakSelf) s2 = weakSelf;
+                if (!s2 || !s2.bbEraseRunning) return;
+                [s2 bbErasePoll];
+            });
+            return;
+        }
+        // payload: flags(1) + sector(u32) + total(u32) + used(u32) = 13 字节
+        uint8_t flags = ((const uint8_t *)p.bytes)[0];
+        if (!(flags & 0x02)) {
+            [s bbEraseFinishSuccess:NO message:@"飞控没有板载 dataflash 黑盒\n(SD 卡机型不支持此方式)"];
+            return;
+        }
+        uint32_t used = 0;
+        [p getBytes:&used range:NSMakeRange(9, 4)];  // iOS ARM 小端,直接读
+        if (used == 0) {
+            [s bbEraseFinishSuccess:YES message:@"黑匣子已清空"];
+            return;
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) s2 = weakSelf;
+            if (!s2 || !s2.bbEraseRunning) return;
+            [s2 bbErasePoll];
+        });
+    }];
+}
+
+/// 终点:提示 + 挥手断链
+- (void)bbEraseFinishSuccess:(BOOL)success message:(NSString *)message {
+    self.bbEraseRunning = NO;
+    if (success) {
+        [SVProgressHUD showSuccessWithStatus:message];
+        NSLog(@"[清黑匣] ✅ %@", message);
+    } else {
+        [SVProgressHUD showErrorWithStatus:message];
+        NSLog(@"[清黑匣] ❌ %@", message);
+    }
+    [[FCBluetoothService shared] disconnect];  // 无论成败都挥手
 }
 
 /// 📡 蓝牙取数 → BLE 激活大容量存储 → USB 文件导入

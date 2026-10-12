@@ -19,6 +19,7 @@ typedef NS_ENUM(uint8_t, MSPCommand) {
     MSPCommandSetReboot       = 68,  // MSP_SET_REBOOT,payload[0]=rebootType
     MSPCommandDataflashSummary = 70, // 响应[flags,扇区u32,总容量u32,已用u32],13字节
     MSPCommandDataflashRead    = 71, // 蓝牙直下黑盒:4KB块必须走 v2 帧(v1 长度字段1字节装不下)
+    MSPCommandDataflashErase   = 72, // MSP_DATAFLASH_ERASE,无payload,整片擦板载黑盒NOR。慢操作:老固件阻塞MSP直到擦完(30s+),新固件擦除不阻塞;成功与否以 SUMMARY 已用字节归零为准
 };
 
 /// MSP_SET_REBOOT 的 rebootType
