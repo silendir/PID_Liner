@@ -14,6 +14,10 @@
 #import "IterationChainManager.h"
 #import "BBLImportService.h"
 
+/// 行数流式统计的封顶值:超过即不再数,显示为"N+ 行"(防超大文件卡顿;
+/// 显示层必须带"+"否则会被误读为文件精确行数——2026-10-13 排查黄线事故时被它误导过)
+static const NSInteger kLineCountStatCap = 100000;
+
 #pragma mark - CSVRecord Implementation
 
 @implementation CSVRecord
@@ -50,7 +54,7 @@
     }
 
     // 使用流式读取统计行数，避免大文件导致内存问题
-    _lineCount = [self countLinesInFileStreaming:_filePath maxLines:100000];
+    _lineCount = [self countLinesInFileStreaming:_filePath maxLines:kLineCountStatCap];
 }
 
 /// 流式读取文件统计行数，设置上限避免超大文件卡顿
@@ -499,10 +503,16 @@
         config.text = record.displayName;
 
         NSMutableString *subtitle = [NSMutableString string];
-        [subtitle appendFormat:@"Session %ld | %@ | %ld 行\n%@",
-                (long)record.sessionIndex + 1,
+        // 🔑 sessionIndex 来自文件名"_sessionN"(已是1-based人类序号),显示不能再+1
+        //    (历史双+1导致"第6条显示Session7",2026-10-13排查实锤)
+        // 🔑 行数统计上限10万,到顶的文件显示"100000+行"而非误导性的精确值
+        NSString *lineText = (record.lineCount >= kLineCountStatCap)
+            ? [NSString stringWithFormat:@"%ld+ 行", (long)kLineCountStatCap]
+            : [NSString stringWithFormat:@"%ld 行", (long)record.lineCount];
+        [subtitle appendFormat:@"Session %ld | %@ | %@\n%@",
+                (long)record.sessionIndex,
                 [record formattedFileSize],
-                (long)record.lineCount,
+                lineText,
                 [record formattedCreateTime]];
 
         if (item.childCount > 0) {

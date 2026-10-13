@@ -22,7 +22,18 @@ static const NSInteger kDefaultMaxRows = 100000;
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _maxRows = kDefaultMaxRows;          // 默认限制10万行
+        // 🔑 解析行数上限按设备物理内存分级(真机事故:固定10万把138.6s长飞行的
+        //    尾段38秒砍掉,Roll全部高输入窗口丢失,"黄线全无"——2026-10-13排查实锤)
+        //    每行42字段装箱约1KB,各档都留2.5倍以上jetsam余量,不设超限不溢出
+        uint64_t ram = [NSProcessInfo processInfo].physicalMemory;
+        const uint64_t GB = 1024ull * 1024 * 1024;
+        if (ram >= 6 * GB) {
+            _maxRows = 400000;                   // 新机型: 6分钟@1kHz
+        } else if (ram >= 3 * GB) {
+            _maxRows = 250000;                   // 主流机型: 4分钟@1kHz
+        } else {
+            _maxRows = kDefaultMaxRows;          // 老设备保底: 10万
+        }
         _skipEmptyValues = YES;
         _bufferSize = kDefaultBufferSize;
     }
@@ -45,6 +56,9 @@ static const NSInteger kDefaultMaxRows = 100000;
 
 // 读取缓冲区（保存跨行的剩余数据）
 @property (nonatomic, strong) NSMutableData *readBuffer;
+
+// 🔑 本轮解析因 maxRows 上限被忽略的尾部行数(0=未截断;调用方据此提示用户)
+@property (nonatomic, assign, readwrite) NSInteger lastTruncatedRows;
 
 @end
 
@@ -241,6 +255,26 @@ static const NSInteger kDefaultMaxRows = 100000;
                         progressHandler(currentRow, totalRows);
                     });
                 }
+            }
+        }
+
+        // 🔑 截断检测:读满上限后继续流式数完剩余行(只数不解析,成本低)。
+        //    静默砍数据的事故必须让日志和调用方看得见(2026-10-13 黄线消失事故的教训)
+        self.lastTruncatedRows = 0;
+        if (self.config.maxRows > 0 && currentRow >= self.config.maxRows && hasMoreData) {
+            while (hasMoreData) {
+                @autoreleasepool {
+                    NSString *rest = [self readNextLineFromFile:fileHandle];
+                    if (!rest || rest.length == 0) {
+                        hasMoreData = NO;
+                        break;
+                    }
+                    self.lastTruncatedRows++;
+                }
+            }
+            if (self.lastTruncatedRows > 0) {
+                NSLog(@"⚠️ [CSV解析] 数据超长:仅解析前 %ld 行,忽略尾部 %ld 行(长飞行尾段被截断,高输入窗口可能丢失)",
+                      (long)currentRow, (long)self.lastTruncatedRows);
             }
         }
 

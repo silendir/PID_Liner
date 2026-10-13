@@ -825,6 +825,7 @@ static NSString *_sCachedKey = nil;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         PIDCSVData *data = nil;
         NSString *parseError = nil;
+        NSInteger truncatedRows = 0;   // 🔑 解析层截断的尾部行数(>0=长飞行被砍)
         @try {
             // 🔥 解析前更新进度 (0% → 10%)
             [weakSelf updateProgress:0.05f status:@"正在读取 CSV 文件..."];
@@ -832,6 +833,7 @@ static NSString *_sCachedKey = nil;
             // 解析CSV(用拷贝的路径,不依赖 self 存活)
             PIDCSVParser *parser = [PIDCSVParser parser];
             data = [parser parseCSV:csvPath];
+            truncatedRows = parser.lastTruncatedRows;
 
             // 🔥 解析完成更新进度 (10% → 20%)
             [weakSelf updateProgress:0.20f status:@"正在准备分析..."];
@@ -845,6 +847,13 @@ static NSString *_sCachedKey = nil;
             s->_parsedData = data;
             s->_parseInProgress = NO;
             if (s->_analysisCancelled) return;           // 🔑 已被容器取消,不再进分析
+
+            // 🔑 截断可见化:数据被上限砍尾必须喊出来(静默砍导致"黄线全无"调查半天才定位)
+            if (truncatedRows > 0) {
+                [SVProgressHUD showInfoWithStatus:[NSString stringWithFormat:
+                    @"⚠️ 飞行过长,仅分析前 %ld 行数据,尾部 %ld 行被忽略",
+                    (long)(s->_parsedData ? s->_parsedData.dataLength : 0), (long)truncatedRows]];
+            }
 
             if (s->_parsedData && s->_parsedData.timeSeconds.count > 0) {
                 [s startAnalysis];

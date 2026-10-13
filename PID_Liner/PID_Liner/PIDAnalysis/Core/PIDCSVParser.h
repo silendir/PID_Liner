@@ -51,6 +51,9 @@ NS_ASSUME_NONNULL_BEGIN
 // 最后错误信息
 @property (nonatomic, readonly, copy, nullable) NSString *lastErrorMessage;
 
+/// 🔑 上次 parseCSV 因 maxRows 上限被忽略的尾部行数(0=未截断;调用方据此向用户提示长飞行被截)
+@property (nonatomic, readonly, assign) NSInteger lastTruncatedRows;
+
 // 是否使用详细日志
 @property (nonatomic, assign) BOOL verboseLogging;
 
