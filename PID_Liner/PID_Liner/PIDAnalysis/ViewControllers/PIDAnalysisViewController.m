@@ -762,6 +762,19 @@ static NSString *_sCachedKey = nil;
     UIViewController *vc = [[UIViewController alloc] init];
     vc.view.backgroundColor = [UIColor systemBackgroundColor];
 
+    // 🔑 频带诊断卡(P2): 文字判读(TPA/机械/AG/数据覆盖),configureNoiseChart 填充
+    UITextView *diagCard = [[UITextView alloc] init];
+    diagCard.translatesAutoresizingMaskIntoConstraints = NO;
+    diagCard.editable = NO;
+    diagCard.scrollEnabled = YES;
+    diagCard.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    diagCard.layer.cornerRadius = 10;
+    diagCard.textContainerInset = UIEdgeInsetsMake(8, 10, 8, 10);
+    diagCard.font = [UIFont systemFontOfSize:12];
+    diagCard.text = @"📊 频带诊断将在分析完成后显示";
+    [vc.view addSubview:diagCard];
+    objc_setAssociatedObject(vc, "noiseDiagnosisCard", diagCard, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
     // 创建AAChartView用于显示噪声频谱图
     AAChartView *chartView = [[AAChartView alloc] init];
     chartView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -770,14 +783,16 @@ static NSString *_sCachedKey = nil;
     [vc.view addSubview:chartView];
 
     [NSLayoutConstraint activateConstraints:@[
-        [chartView.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:10],
+        [diagCard.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:10],
+        [diagCard.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:10],
+        [diagCard.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-10],
+        [diagCard.heightAnchor constraintEqualToConstant:150],
+
+        [chartView.topAnchor constraintEqualToAnchor:diagCard.bottomAnchor constant:8],
         [chartView.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:10],
         [chartView.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-10],
         [chartView.bottomAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.bottomAnchor constant:-10]
     ]];
-
-    // 保存chartView引用以便更新数据
-    objc_setAssociatedObject(vc, @"aaNoiseChartView", chartView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     // 添加导出按钮
     vc.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
@@ -2032,7 +2047,8 @@ static NSString *_sCachedKey = nil;
     // 🔥 使用 AAOptions 绘制图表
     [chartView aa_drawChartWithOptions:aaOptions];
 
-    // 🔑 频带诊断(P1): 频谱×油门分桶 → TPA/AG/机械判读(P2 诊断卡 UI 的数据源,先落日志)
+    // 🔑 频带诊断(P1): 频谱×油门分桶 → TPA/AG/机械判读
+    UITextView *diagCard = objc_getAssociatedObject(self, "noiseDiagnosisCard");
     if (_rollSpectrum) {
         double bp = [_parsedData.filterConfig[@"tpa_breakpoint"] doubleValue];
         if (bp <= 0) bp = 1350.0;   // PWM 缺省(吴总机实测值)
@@ -2040,8 +2056,26 @@ static NSString *_sCachedKey = nil;
                                                              throttlePerWindow:self.noiseThrottlePerWindow ?: @[]
                                                                    throttleSeq:_parsedData.rcCommand3
                                                                          bpPWM:bp];
-        // 诊断结论暂存(P2 诊断卡直接读)
         objc_setAssociatedObject(self, "noiseDiagnosisResult", diag, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+        // 🔑 P2 诊断卡: 判读文字化(✅绿 ⚠️橙,结论+建议+数据覆盖)
+        if (diagCard) {
+            NSMutableAttributedString *as = [[NSMutableAttributedString alloc] init];
+            [as appendAttributedString:[[NSAttributedString alloc] initWithString:@"📋 频带诊断\n"
+                attributes:@{NSFontAttributeName: [UIFont boldSystemFontOfSize:13],
+                             NSForegroundColorAttributeName: [UIColor labelColor]}]];
+            for (NSString *line in diag.adviceLines) {
+                UIColor *color = [line hasPrefix:@"✅"] ? [UIColor systemGreenColor]
+                               : ([line hasPrefix:@"⚠️"] ? [UIColor systemOrangeColor] : [UIColor secondaryLabelColor]);
+                [as appendAttributedString:[[NSAttributedString alloc]
+                    initWithString:[line stringByAppendingString:@"\n"]
+                    attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12],
+                                 NSForegroundColorAttributeName: color}]];
+            }
+            diagCard.attributedText = as;
+        }
+    } else if (diagCard) {
+        diagCard.text = @"📊 暂无频谱数据,无法进行频带诊断";
     }
 
     NSLog(@"✅ [噪声图] 图表绘制完成");
