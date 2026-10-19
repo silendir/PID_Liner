@@ -14,6 +14,7 @@
 #import "PIDRecommendationEngine.h"
 #import "PIDCLIGenerator.h"
 #import "BFSliderMapper.h"
+#import "NoiseDiagnosisEngine.h"
 #import "IterationChainManager.h"
 #import "BlackboxDecoder.h"
 #import <objc/runtime.h>
@@ -47,7 +48,9 @@
 @property (nonatomic, copy, nullable) NSArray<NSNumber *> *rollMeasuredCurve;
 @property (nonatomic, copy, nullable) NSArray<NSNumber *> *pitchMeasuredCurve;
 @property (nonatomic, copy, nullable) NSArray<NSNumber *> *yawMeasuredCurve;
-@property (nonatomic, strong) PIDResponseResult *rollResponse;
+// 🔑 频带诊断: 每窗口油门均值(与频谱一维对齐,P1 噪声诊断引擎输入)
+@property (nonatomic, strong, nullable) NSArray<NSNumber *> *noiseThrottlePerWindow;
+@property (nonatomic, strong, nullable) PIDResponseResult *rollResponse;
 @property (nonatomic, strong) PIDResponseResult *pitchResponse;
 @property (nonatomic, strong) PIDResponseResult *yawResponse;
 @property (nonatomic, strong) PIDSpectrumResult *rollSpectrum;
@@ -1104,6 +1107,17 @@ static NSString *_sCachedKey = nil;
 
     NSLog(@"✅ 轴%ld堆叠数据创建成功: %ld个窗口", (long)axisIndex, (long)stackData.windowCount);
 
+    // 🔑 频带诊断: 每窗口油门均值(与 spectrum 一维天然对齐;axis0 的窗口切分即全数据口径,只算一次)
+    if (axisIndex == 0 && stackData.throttle.count > 0) {
+        NSMutableArray<NSNumber *> *tpw = [NSMutableArray arrayWithCapacity:stackData.throttle.count];
+        for (NSArray<NSNumber *> *tw in stackData.throttle) {
+            double sum = 0;
+            for (NSNumber *v in tw) sum += v.doubleValue;
+            [tpw addObject:@(tw.count > 0 ? sum / tw.count : 0)];
+        }
+        self.noiseThrottlePerWindow = [tpw copy];
+    }
+
     // 🔍 调试：检查堆叠后的input数据
     if (stackData.input.count > 0) {
         NSArray<NSNumber *> *firstWindow = stackData.input[0];
@@ -2017,6 +2031,18 @@ static NSString *_sCachedKey = nil;
 
     // 🔥 使用 AAOptions 绘制图表
     [chartView aa_drawChartWithOptions:aaOptions];
+
+    // 🔑 频带诊断(P1): 频谱×油门分桶 → TPA/AG/机械判读(P2 诊断卡 UI 的数据源,先落日志)
+    if (_rollSpectrum) {
+        double bp = [_parsedData.filterConfig[@"tpa_breakpoint"] doubleValue];
+        if (bp <= 0) bp = 1350.0;   // PWM 缺省(吴总机实测值)
+        NoiseDiagnosisResult *diag = [NoiseDiagnosisEngine diagnoseWithSpectrum:_rollSpectrum
+                                                             throttlePerWindow:self.noiseThrottlePerWindow ?: @[]
+                                                                   throttleSeq:_parsedData.rcCommand3
+                                                                         bpPWM:bp];
+        // 诊断结论暂存(P2 诊断卡直接读)
+        objc_setAssociatedObject(self, "noiseDiagnosisResult", diag, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 
     NSLog(@"✅ [噪声图] 图表绘制完成");
 }
