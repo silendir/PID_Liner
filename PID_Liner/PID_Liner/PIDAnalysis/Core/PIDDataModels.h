@@ -68,6 +68,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong, nullable) NSDictionary *currentPIDFromHeader;  // BBL Header原始PID {roll:{p,i,d,ff}, pitch:..., yaw:...}
 @property (nonatomic, assign) NSInteger motorKV;                  // 电机KV值 (用户确认)
 
+/// 🔑 滤波/TPA/AG 配置 (BBL Header 经 `# FCParam:Key:Value` 注入行解析)
+///    频带诊断(P2 诊断卡/滤波对照线)的数据源：dterm_lpf1_static_hz、tpa_rate、anti_gravity_gain 等
+@property (nonatomic, copy, nullable) NSDictionary<NSString *, NSString *> *filterConfig;
+
 // 迭代链标记 (从CSV头注释行解析，二轮+导入时写入)
 @property (nonatomic, copy, nullable) NSString *chainId;            // 迭代链ID (UUID)
 @property (nonatomic, assign) NSInteger chainIteration;             // 在链中的第几轮 (0=首次无链)

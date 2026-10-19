@@ -308,6 +308,27 @@ typedef NS_ENUM(NSInteger, BBLImportErrorCode) {
     if (motorKV.length > 0) {
         [prefix appendFormat:@"# Motor KV:%@\n", motorKV];
     }
+    // 🔑 滤波/TPA/AG 配置(频带诊断与滤波对照线的数据源,P0新增——键名保留 BBL header 原名,
+    //    解析层按 `# FCParam:Key:Value` 归入 PIDCSVData.filterConfig)
+    {
+        NSDictionary *params = header.configParameters;
+        NSArray<NSString *> *fcKeys = @[
+            @"dterm_lpf1_static_hz", @"dterm_lpf1_dyn_hz", @"dterm_lpf1_dyn_expo",
+            @"dterm_lpf2_static_hz",
+            @"dterm_notch_hz", @"dterm_notch_cutoff",
+            @"gyro_lpf1_static_hz", @"gyro_lpf1_dyn_hz",
+            @"dyn_lpf_gyro_min_hz", @"dyn_lpf_gyro_max_hz",
+            @"tpa_mode", @"tpa_rate", @"tpa_breakpoint",
+            @"tpa_low_rate", @"tpa_low_breakpoint",
+            @"anti_gravity_gain", @"anti_gravity_p_gain", @"anti_gravity_cutoff_hz",
+        ];
+        for (NSString *key in fcKeys) {
+            NSString *val = params[key];
+            if (val.length > 0) {
+                [prefix appendFormat:@"# FCParam:%@:%@\n", key, val];
+            }
+        }
+    }
 
     if (prefix.length == 0) {
         NSLog(@"⚠️ [元数据注入] 无可注入内容(header.craftName=%@, fwCode=%ld, PID=%@)",

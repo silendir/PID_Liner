@@ -177,7 +177,7 @@ static const NSInteger kDefaultMaxRows = 100000;
 
 - (nullable NSString *)extractCraftNameFromCSV:(NSString *)filePath {
     NSString *craftName = nil;
-    [self readFirstNonCommentLine:filePath error:nil extractedCraftName:&craftName extractedFlightTime:nil extractedFwVersion:nil extractedPIDConfig:nil extractedMotorKV:nil extractedChainId:nil extractedChainIteration:nil];
+    [self readFirstNonCommentLine:filePath error:nil extractedCraftName:&craftName extractedFlightTime:nil extractedFwVersion:nil extractedPIDConfig:nil extractedMotorKV:nil extractedChainId:nil extractedChainIteration:nil extractedFCParams:nil];
     return craftName;
 }
 
@@ -214,6 +214,7 @@ static const NSInteger kDefaultMaxRows = 100000;
         NSInteger parsedMotorKV = 0;
         NSString *parsedChainId = nil;
         NSInteger parsedChainIteration = 0;
+        NSDictionary *parsedFCParams = nil;
         NSString *headerLine = [self readFirstNonCommentLine:filePath
                                                        error:nil
                                         extractedCraftName:&parsedCraftName
@@ -222,7 +223,8 @@ static const NSInteger kDefaultMaxRows = 100000;
                                           extractedPIDConfig:&parsedPIDConfig
                                             extractedMotorKV:&parsedMotorKV
                                               extractedChainId:&parsedChainId
-                                        extractedChainIteration:&parsedChainIteration];
+                                        extractedChainIteration:&parsedChainIteration
+                                             extractedFCParams:&parsedFCParams];
         NSArray<NSString *> *headers = [self parseCSVLine:headerLine];
         [self buildFieldIndexes:headers];
 
@@ -284,6 +286,7 @@ static const NSInteger kDefaultMaxRows = 100000;
         PIDCSVData *result = [self buildResult];
         result.dataLength = currentRow;
         result.craftName = parsedCraftName;  // 🔧 传递 craftName
+        result.filterConfig = parsedFCParams;  // 🔑 传递滤波/TPA/AG配置(频带诊断数据源)
 
         // 🔧 传递 flightTime（从 # Flight time:XXX 微秒时间戳转换）
         if (parsedFlightTimeStr.length > 0) {
@@ -445,7 +448,7 @@ static const NSInteger kDefaultMaxRows = 100000;
  * 读取文件第一行
  */
 - (nullable NSString *)readFirstLine:(NSString *)filePath error:(NSError **)error {
-    return [self readFirstNonCommentLine:filePath error:error extractedCraftName:nil extractedFlightTime:nil extractedFwVersion:nil extractedPIDConfig:nil extractedMotorKV:nil extractedChainId:nil extractedChainIteration:nil];
+    return [self readFirstNonCommentLine:filePath error:error extractedCraftName:nil extractedFlightTime:nil extractedFwVersion:nil extractedPIDConfig:nil extractedMotorKV:nil extractedChainId:nil extractedChainIteration:nil extractedFCParams:nil];
 }
 
 /**
@@ -463,7 +466,8 @@ static const NSInteger kDefaultMaxRows = 100000;
                      extractedPIDConfig:(NSDictionary **)pidConfigOut
                         extractedMotorKV:(NSInteger *)motorKVOut
                           extractedChainId:(NSString **)chainIdOut
-                    extractedChainIteration:(NSInteger *)chainIterationOut {
+                    extractedChainIteration:(NSInteger *)chainIterationOut
+                         extractedFCParams:(NSDictionary **)fcParamsOut {
     NSData *fileData = [NSData dataWithContentsOfFile:filePath];
     if (!fileData || fileData.length == 0) {
         return nil;
@@ -475,6 +479,8 @@ static const NSInteger kDefaultMaxRows = 100000;
 
     // 用于收集PID配置
     NSMutableDictionary *pidConfig = [NSMutableDictionary dictionary];
+    // 🔑 用于收集滤波/TPA/AG配置(# FCParam:Key:Value,频带诊断数据源)
+    NSMutableDictionary *fcParams = [NSMutableDictionary dictionary];
 
     NSArray<NSString *> *lines = [content componentsSeparatedByString:@"\n"];
     for (NSString *line in lines) {
@@ -521,6 +527,22 @@ static const NSInteger kDefaultMaxRows = 100000;
                                     [NSCharacterSet whitespaceCharacterSet]];
                 *chainIterationOut = [iterStr integerValue];
             }
+            // 🔑 滤波/TPA/AG配置: # FCParam:dterm_lpf1_static_hz:75 (频带诊断数据源)
+            if ([trimmed hasPrefix:@"# FCParam:"] && fcParamsOut) {
+                NSString *kv = [trimmed substringFromIndex:10];   // "Key:Value"
+                NSRange colonRange = [kv rangeOfString:@":"];
+                if (colonRange.location != NSNotFound && colonRange.location > 0) {
+                    NSString *k = [[kv substringToIndex:colonRange.location]
+                                   stringByTrimmingCharactersInSet:
+                                   [NSCharacterSet whitespaceCharacterSet]];
+                    NSString *v = [[kv substringFromIndex:colonRange.location + 1]
+                                   stringByTrimmingCharactersInSet:
+                                   [NSCharacterSet whitespaceCharacterSet]];
+                    if (k.length > 0 && v.length > 0) {
+                        fcParams[k] = v;
+                    }
+                }
+            }
             // PID配置: # PID roll:42,85,35,65 (p,i,d,ff)
             if ([trimmed hasPrefix:@"# PID "]) {
                 NSString *pidLine = [trimmed substringFromIndex:6]; // "roll:42,85,35,65"
@@ -550,6 +572,10 @@ static const NSInteger kDefaultMaxRows = 100000;
         // 传递收集的PID配置
         if (pidConfigOut && pidConfig.count > 0) {
             *pidConfigOut = [pidConfig copy];
+        }
+        // 🔑 传递滤波/TPA/AG配置
+        if (fcParamsOut && fcParams.count > 0) {
+            *fcParamsOut = [fcParams copy];
         }
         return trimmed;
     }
