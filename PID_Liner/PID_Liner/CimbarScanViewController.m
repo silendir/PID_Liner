@@ -55,6 +55,11 @@
     [self stopCapture];
 }
 
+// 防御:兜住未经 viewWillDisappear 的释放路径;stopRunning 线程安全可在任意线程调
+- (void)dealloc {
+    [_captureSession stopRunning];
+}
+
 #pragma mark - UI
 
 - (void)setupUI {
@@ -153,7 +158,11 @@
 }
 
 - (void)startCapture {
+    __weak typeof(self) weakSelf = self;
     dispatch_async(_frameQueue, ^{
+        typeof(self) self = weakSelf;   // 队列内局部强持:block 执行完即放,不延迟 VC 释放
+        if (!self) return;
+
         NSError *error = nil;
         AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithDeviceType:AVCaptureDeviceTypeBuiltInWideAngleCamera
                                                                      mediaType:AVMediaTypeVideo
@@ -161,15 +170,18 @@
         AVCaptureDeviceInput *input = device ? [AVCaptureDeviceInput deviceInputWithDevice:device error:&error] : nil;
         if (!input) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                [self showErrorAlert:error.localizedDescription ?: @"无法访问相机"];
+                [weakSelf showErrorAlert:error.localizedDescription ?: @"无法访问相机"];
             });
             return;
         }
 
         AVCaptureSession *session = [[AVCaptureSession alloc] init];
+        // 所有配置更改必须在 begin/commit 之间(苹果文档硬性要求;iOS 26 严格校验,老版本宽容)
+        [session beginConfiguration];
         session.sessionPreset = AVCaptureSessionPresetHigh;
         if (![session canAddInput:input]) {
-            dispatch_async(dispatch_get_main_queue(), ^{ [self showErrorAlert:@"相机输入初始化失败"]; });
+            [session commitConfiguration];
+            dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf showErrorAlert:@"相机输入初始化失败"]; });
             return;
         }
         [session addInput:input];
@@ -180,21 +192,29 @@
         output.alwaysDiscardsLateVideoFrames = YES;
         [output setSampleBufferDelegate:self queue:self->_frameQueue];
         if (![session canAddOutput:output]) {
-            dispatch_async(dispatch_get_main_queue(), ^{ [self showErrorAlert:@"相机输出初始化失败"]; });
+            [session commitConfiguration];
+            dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf showErrorAlert:@"相机输出初始化失败"]; });
             return;
         }
         [session addOutput:output];
+        [session commitConfiguration];
 
         self->_captureSession = session;
-        dispatch_async(dispatch_get_main_queue(), ^{ self->_previewLayer.session = session; });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            typeof(self) strongSelf = weakSelf;   // weak 不可直接解引用 ivar,先提升
+            if (!strongSelf) return;
+            strongSelf->_previewLayer.session = session;
+        });
         [session startRunning];
     });
 }
 
 - (void)stopCapture {
+    // 只持 session 不持 self:pop 后仍能把相机停干净,又不延迟 VC 释放
+    AVCaptureSession *session = _captureSession;
     dispatch_async(_frameQueue, ^{
-        if (self->_captureSession.isRunning)
-            [self->_captureSession stopRunning];
+        if (session.isRunning)
+            [session stopRunning];
     });
 }
 
