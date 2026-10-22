@@ -14,6 +14,7 @@
 #import "IterationChainManager.h"
 #import "BBLImportService.h"
 #import "NBTheme.h"
+#import "BlackboxDecoder.h"   // BBLSessionInfo(短片段判定读 durationUs)
 
 /// 行数流式统计的封顶值:超过即不再数,显示为"N+ 行"(防超大文件卡顿;
 /// 显示层必须带"+"否则会被误读为文件精确行数——2026-10-13 排查黄线事故时被它误导过)
@@ -423,14 +424,38 @@ static const NSInteger kLineCountStatCap = 100000;
 
     if (pending.count == 0) return;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSMutableDictionary<NSString *, NSArray<BBLSessionInfo *> *> *bblSessions = [NSMutableDictionary dictionary];
         for (CSVRecord *r in pending) {
+            // 行数统计(流式,带 10 万行封顶)
             NSString *key = [NSString stringWithFormat:@"%@|%@", r.filePath, @(r.fileSize)];
             NSInteger lines = [r countLinesInFileStreaming:r.filePath maxLines:kLineCountStatCap];
             [cache setObject:@(lines) forKey:key];
             r.lineCount = lines;  // NSInteger 写入,主线程 reload 后可见
+
+            // 🔑 短片段判定:来源 BBL 还在 Documents 时读其 durationUs(<2s,与建链碎片段防御同一把尺)
+            if (r.shortClip) continue;
+            for (NSString *ext in @[@"bbl", @"BBL"]) {
+                NSString *bblPath = [[BBLImportService documentsDirectory]
+                    stringByAppendingPathComponent:[r.sourceBBL stringByAppendingPathExtension:ext]];
+                if (![fm fileExistsAtPath:bblPath]) continue;
+                NSArray<BBLSessionInfo *> *sessions = bblSessions[bblPath];
+                if (!sessions) {
+                    sessions = [[BBLImportService shared] listSessionsForBBL:bblPath error:nil] ?: @[];
+                    bblSessions[bblPath] = sessions;
+                }
+                for (BBLSessionInfo *s in sessions) {
+                    if (s.logIndex == r.sessionIndex - 1) {  // 文件名 sessionN = logIndex+1
+                        double dur = s.durationUs / 1000000.0;
+                        r.shortClip = (dur > 0 && dur < 2.0);
+                        break;
+                    }
+                }
+                break;
+            }
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            [_tableView reloadData];  // 一次性刷新行数列
+            [_tableView reloadData];  // 行数与短片段标一并刷新
         });
     });
 }
@@ -525,15 +550,22 @@ static const NSInteger kLineCountStatCap = 100000;
     config.textProperties.color = NBTheme.ink;
     config.textToSecondaryTextVerticalPadding = 3;
 
-    // 🔹 Session 行(S 序号来自文件名"_sessionN",已是 1-based 人类序,显示不 +1)
+    // 🔹 Session 行
+    // 🔑 "S{N}" 前缀只在多 Session 批次显示(那里才有区分意义);
+    //    单日志 BBL 解码序号恒为 1,显示 "S1" 反而让人误以为丢了轮次身份(批次身份在卡头 BBL 名)
     // 🔑 行数统计上限10万,到顶的文件显示"100000+行"而非误导性的精确值
     NSString *lineText = (record.lineCount >= kLineCountStatCap)
         ? [NSString stringWithFormat:@"%ld+ 行", (long)kLineCountStatCap]
         : [NSString stringWithFormat:@"%ld 行", (long)record.lineCount];
-    config.text = [NSString stringWithFormat:@"S%ld · %@", (long)record.sessionIndex, record.displayName];
-    config.secondaryText = [NSString stringWithFormat:@"%@ | %@\n%@",
+    BOOL multiSession = (group.childRecords.count > 0);
+    config.text = multiSession
+        ? [NSString stringWithFormat:@"S%ld · %@", (long)record.sessionIndex, record.displayName]
+        : record.displayName;
+    NSString *clipTag = record.shortClip ? @" · ⚠️ 短片段" : @"";
+    config.secondaryText = [NSString stringWithFormat:@"%@ | %@%@\n%@",
             [record formattedFileSize],
             lineText,
+            clipTag,
             [record formattedCreateTime]];
     config.secondaryTextProperties.numberOfLines = 2;
     config.secondaryTextProperties.color = NBTheme.dim;
@@ -561,8 +593,10 @@ static const NSInteger kLineCountStatCap = 100000;
         totalLines += child.lineCount;
     }
 
-    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 74)];
-    v.backgroundColor = [UIColor colorWithRed:1 green:0.87 blue:0.35 alpha:0.35];  // DEBUG:可见性探测底,显示确认后移除
+    // 🔑 宽度用表格实际宽度初始化 + 挂自适应:reloadSections 重建时不再出现宽度跳变
+    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CGRectGetWidth(tableView.bounds), 74)];
+    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    v.backgroundColor = [UIColor clearColor];  // 透出表格底色,与页面一致
 
     UIView *card = [[UIView alloc] initWithFrame:CGRectInset(v.bounds, 8, 3)];
     card.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -596,10 +630,22 @@ static const NSInteger kLineCountStatCap = 100000;
     [card addSubview:count];
 
     UILabel *meta = [[UILabel alloc] initWithFrame:CGRectMake(31, 48, cardW - 31 - 18, 12)];
-    meta.text = [NSString stringWithFormat:@"%ld SESSIONS · %.1f MB · %ld 行",
+    // 批次创建时间 = 组内最早 createTime(第一次转换落盘时刻)
+    NSDate *batchDate = head.createTime;
+    for (CSVRecord *child in group.childRecords) {
+        if ([child.createTime compare:batchDate] == NSOrderedAscending) batchDate = child.createTime;
+    }
+    static NSDateFormatter *batchDateFmt;
+    static dispatch_once_t dateFmtOnce;
+    dispatch_once(&dateFmtOnce, ^{
+        batchDateFmt = [[NSDateFormatter alloc] init];
+        batchDateFmt.dateFormat = @"MM-dd HH:mm";
+    });
+    meta.text = [NSString stringWithFormat:@"%ld SESSIONS · %.1f MB · %ld 行 · 创建于 %@",
                  (long)(group.childRecords.count + 1),
                  totalSize / (1024.0 * 1024.0),
-                 (long)totalLines];
+                 (long)totalLines,
+                 [batchDateFmt stringFromDate:batchDate]];
     meta.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
     meta.textColor = NBTheme.faint;
     meta.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -729,9 +775,9 @@ static const NSInteger kLineCountStatCap = 100000;
 #pragma mark - 分组与显示辅助方法
 
 /// 展开/折叠指定 BBL 组(整段 section 重建,卡头箭头/子行一并刷新)
+/// 单 Session 组同样可展开——用户需要看到 S 序号与该文件的完整信息
 - (void)toggleExpandForGroupAtIndex:(NSInteger)section {
     CSVRecordGroup *group = self.recordGroups[section];
-    if (group.childRecords.count == 0) return;  // 单 Session 批次无子行
     group.isExpanded = !group.isExpanded;
     [_tableView reloadSections:[NSIndexSet indexSetWithIndex:section]
               withRowAnimation:UITableViewRowAnimationAutomatic];

@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) NSDate *createTime;       // 创建时间
 @property (nonatomic, assign) NSInteger fileSize;       // 文件大小(字节)
 @property (nonatomic, assign) NSInteger lineCount;      // 行数
+@property (nonatomic, assign) BOOL shortClip;           // 短片段(<2秒):分析必失败,列表打标防误点
 
 // 🔥 别名系统属性
 @property (nonatomic, copy) NSString *displayName;      // 显示名称（有别名用别名，无别名用原文件名）
