@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PID_Liner · 视觉重设计原型 — 三款式 A/B/T</title>
+<style>
+/* ============================================================
+   PID_Liner 视觉重设计 · 三款式合一
+   A. Night Bench 夜间调音台(暗)  B. Day Deck 白昼工作台(浅,day-theme作用域)
+   T. Terminal Bench 终端首页(借鉴 sdsh V7 布局语言)
+   设计手法继承 AssDJLL 提取: 单强调色/三级文字/发丝描边/实底投影/eyebrow
+   双语: 全文 data-zh/data-en,右上按钮切换
+   ============================================================ */
+:root{
+  --accent:#2B5BFF; --accent-grad-a:#1F49FF; --accent-grad-b:#4D8BFF;
+  --mint:#5EEAD4; --amber:#FFB454; --danger:#FF6B6B;
+  --bg:#0A0E1A; --bg2:#0F1526; --card:#131A2E; --card2:#1A2340;
+  --glass:rgba(255,255,255,.045); --hairline:rgba(255,255,255,.10); --hairline-strong:rgba(255,255,255,.18);
+  --ink:#E7F2EF; --dim:#93A0BC; --faint:#5A6584;
+  --serif:'Georgia','Times New Roman','STSong',serif;
+  --sans:-apple-system,'PingFang SC','PingFang TC','Helvetica Neue',sans-serif;
+  --mono:'SF Mono','Menlo','JetBrains Mono',monospace;
+  --r-card:16px; --r-ctl:10px; --r-pill:999px;
+  --shadow-card:0 6px 14px rgba(0,0,0,.35); --shadow-pop:0 8px 20px rgba(0,0,0,.45);
+  --glow-blue:0 0 9px rgba(43,91,255,.55),0 0 18px rgba(43,91,255,.25);
+  --glow-mint:0 0 9px rgba(94,234,212,.5),0 0 18px rgba(94,234,212,.22);
+  --ease:cubic-bezier(.25,.1,.25,1); --t:.25s;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5}
+/* ---- 款式B昼色作用域 ---- */
+.day-theme{color:var(--ink);--accent:#2B5BFF;--accent-grad-a:#1F49FF;--accent-grad-b:#4D8BFF;--mint:#0D9488;--amber:#B45309;--danger:#DC2626;--bg:#F5F7FC;--bg2:#EDF0F8;--card:#FFFFFF;--card2:#FAFBFF;--glass:#F0F3FA;--hairline:#E4E7F2;--hairline-strong:#C9CFDE;--ink:#0A102E;--dim:#5C6378;--faint:#99A0B6;--shadow-card:0 1px 3px rgba(10,16,46,.06),0 6px 14px rgba(10,16,46,.08);--shadow-pop:0 8px 20px rgba(10,16,46,.18);--glow-blue:0 0 10px rgba(43,91,255,.28);--glow-mint:0 0 10px rgba(13,148,136,.25)}
+.day-theme .phone{border-color:#fff;box-shadow:0 0 0 1.5px var(--hairline),var(--shadow-pop)}
+.day-theme .tbox{border-color:var(--hairline);background:var(--card)}
+.day-theme .tbox .tlabel{color:var(--accent);background:var(--bg)}
+.day-theme .tbox .tright{background:var(--bg)}
+.day-theme .ascii-rule .line{background:var(--hairline)}
+.day-theme .mod-row{border-bottom-color:var(--hairline)}
+.day-theme .term{background:var(--card);border-color:var(--hairline)}
+/* ---- 框架 ---- */
+.toolbar{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;gap:16px;padding:10px 28px;background:rgba(10,14,26,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--hairline)}
+.toolbar .brand{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--mint)}
+.toolbar nav{display:flex;gap:2px;flex:1;flex-wrap:wrap}
+.toolbar nav a{font-family:var(--mono);font-size:11px;color:var(--dim);text-decoration:none;padding:6px 12px;border-radius:var(--r-pill);transition:all var(--t) var(--ease)}
+.toolbar nav a:hover{color:var(--ink);background:var(--glass)}
+.lang-btn{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:1px;color:#0A0E1A;background:var(--mint);border:none;border-radius:var(--r-pill);padding:7px 16px;cursor:pointer;box-shadow:var(--glow-mint);transition:transform var(--t) var(--ease)}
+.lang-btn:active{transform:scale(.95)}
+.wrap{max-width:1560px;margin:0 auto;padding:76px 32px 120px}
+header.proto{padding:40px 0 8px;border-bottom:1px solid var(--hairline)}
+.eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:4px;text-transform:uppercase;color:var(--mint)}
+h1.proto-title{font-family:var(--serif);font-style:italic;font-size:38px;font-weight:600;margin:14px 0 6px}
+h1 .accent-word{color:var(--mint);text-shadow:0 0 12px rgba(94,234,212,.5)}
+.proto-sub{color:var(--dim);font-size:13.5px;max-width:860px}
+section{padding:52px 0 8px}
+h2.sec{font-family:var(--serif);font-size:25px;margin-bottom:4px}
+p.sec-note{color:var(--dim);font-size:13px;margin-bottom:26px;max-width:900px}
+.note-src{font-family:var(--mono);font-size:10px;color:var(--faint)}
+/* ---- 令牌/排版/形状 ---- */
+.token-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:13px}
+.token{background:var(--card);border:1px solid var(--hairline);border-radius:var(--r-card);overflow:hidden;transition:transform var(--t) var(--ease)}
+.token:hover{transform:translateY(-3px)}
+.token .swatch{height:58px;border-bottom:1px solid var(--hairline)}
+.token .meta{padding:9px 12px}
+.token .name{font-family:var(--mono);font-size:11px}
+.token .val{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.typo-row{display:flex;align-items:baseline;gap:20px;padding:13px 0;border-bottom:.5px solid var(--hairline)}
+.typo-row .tag{font-family:var(--mono);font-size:10px;color:var(--faint);width:190px;flex-shrink:0}
+.shape-row{display:flex;gap:24px;flex-wrap:wrap}
+.shape-demo{display:flex;flex-direction:column;align-items:center;gap:10px}
+.shape-box{width:96px;height:70px;background:var(--card2);border:1px solid var(--hairline-strong)}
+.shape-demo .lab{font-family:var(--mono);font-size:10px;color:var(--faint)}
+/* ---- iPhone ---- */
+.phone-row{display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start}
+.phone-block{display:flex;flex-direction:column;gap:12px}
+.phone-title{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--dim);text-transform:uppercase}
+.phone-desc{font-size:11.5px;color:var(--faint);max-width:340px;line-height:1.6}
+.phone{width:340px;height:716px;background:var(--bg);border-radius:44px;border:6px solid #1d2436;box-shadow:0 0 0 1.5px #2a3350,var(--shadow-pop),var(--glow-blue);overflow:hidden;position:relative;flex-shrink:0}
+.phone .island{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:96px;height:26px;background:#000;border-radius:999px;z-index:9}
+.screen{position:absolute;inset:0;padding:50px 17px 16px;display:flex;flex-direction:column;gap:11px;overflow:hidden}
+.statusbar{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--dim);padding:0 6px}
+/* ---- 组件 ---- */
+.eyebrow-s{font-family:var(--mono);font-size:8px;letter-spacing:3px;text-transform:uppercase;color:var(--mint)}
+.card{background:var(--card);border:1px solid var(--hairline);border-radius:var(--r-card);box-shadow:var(--shadow-card)}
+.btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,var(--accent-grad-a),var(--accent-grad-b));color:#fff;border:none;border-radius:var(--r-pill);font-size:14px;font-weight:600;padding:12px 20px;box-shadow:0 4px 12px rgba(43,91,255,.4);cursor:pointer;transition:transform var(--t) var(--ease)}
+.btn-primary:active{transform:scale(.97)}
+.btn-ghost{display:inline-flex;align-items:center;justify-content:center;background:transparent;color:var(--ink);border:1px solid var(--hairline-strong);border-radius:var(--r-pill);font-size:12.5px;padding:8px 16px;cursor:pointer;transition:all var(--t) var(--ease)}
+.badge-pro{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1.5px;color:#0A0E1A;background:linear-gradient(135deg,#FFD166,var(--amber));border-radius:5px;padding:2.5px 7px;box-shadow:0 0 10px rgba(255,180,84,.4)}
+.badge-live{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--dim)}
+.badge-live .dot{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 9px var(--mint),0 0 18px rgba(94,234,212,.5);animation:breathe 1.6s ease-in-out infinite}
+.badge-live.off .dot{background:var(--faint);box-shadow:none;animation:none}
+@keyframes breathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.82)}}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes genpulse{0%,100%{opacity:.45}50%{opacity:1}}
+.chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--dim);border:1px solid var(--hairline);border-radius:var(--r-pill);padding:5px 12px}
+.chip.on{color:#0A0E1A;background:var(--mint);border-color:var(--mint);font-weight:700}
+.day-theme .chip.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+.hairline{height:.5px;background:var(--hairline);border:none}
+.home-title{font-family:var(--serif);font-size:27px;font-weight:600;line-height:1.18;color:var(--ink)}
+.home-title em{color:var(--mint);font-style:italic}
+.day-theme .home-title em{color:var(--accent)}
+.entry-card{display:flex;align-items:center;gap:13px;padding:15px;border-radius:var(--r-card);background:var(--card);border:1px solid var(--hairline);box-shadow:var(--shadow-card)}
+.entry-ico{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0}
+.entry-card .t{font-size:14px;font-weight:700}
+.entry-card .s{font-size:10.5px;color:var(--dim);margin-top:2px}
+.tool-row{display:flex;gap:10px}
+.tool-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 0;border-radius:var(--r-ctl);background:var(--glass);border:1px solid var(--hairline);font-size:11.5px;color:var(--dim);transition:all var(--t) var(--ease)}
+.scheme-item{display:flex;align-items:center;gap:10px;background:var(--glass);border:1px solid var(--hairline);border-radius:var(--r-ctl);padding:10px 12px}
+.chart-card{background:var(--card);border:1px solid var(--hairline);border-radius:var(--r-card);padding:13px;box-shadow:var(--shadow-card)}
+.chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+.chart-head .t{font-size:12px;font-weight:700}
+.chart-head .u{font-family:var(--mono);font-size:9px;color:var(--faint)}
+.seg{display:flex;background:var(--glass);border:1px solid var(--hairline);border-radius:var(--r-pill);padding:3px}
+.seg span{flex:1;text-align:center;font-size:12px;padding:7px 0;border-radius:var(--r-pill);color:var(--dim)}
+.seg span.on{background:var(--card2);color:var(--ink);font-weight:600;box-shadow:var(--shadow-card)}
+.legend{display:flex;gap:14px;font-family:var(--mono);font-size:9px;color:var(--dim)}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.chain{display:flex;align-items:center}
+.chain .node{display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0}
+.chain .dotn{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;font-weight:700}
+.chain .dash{width:20px;height:0;border-top:1.5px dashed var(--faint);margin:0 4px 16px}
+.metric{background:var(--glass);border:1px solid var(--hairline);border-radius:var(--r-ctl);padding:10px}
+.metric .v{font-family:var(--mono);font-size:17px;font-weight:700}
+.metric .k{font-size:9.5px;color:var(--dim);margin-top:2px}
+.causal{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--dim);flex-wrap:wrap}
+.causal b{color:var(--ink)}
+.causal .arr{color:var(--mint);font-family:var(--mono)}
+/* ---- 终端组件(借鉴 sdsh V7) ---- */
+.tbox{position:relative;border:1px solid rgba(94,234,212,.22);background:#08110D;border-radius:6px}
+.tbox .tlabel{position:absolute;top:-8px;left:14px;background:var(--bg);padding:0 7px;font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--mint);line-height:16px;white-space:nowrap}
+.tbox .tright{position:absolute;top:-8px;right:14px;background:var(--bg);padding:0 7px;font-family:var(--mono);font-size:9px;letter-spacing:1px;color:var(--faint);line-height:16px;white-space:nowrap}
+.ascii-rule{display:flex;align-items:center;gap:10px}
+.ascii-rule .l{font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--faint);white-space:nowrap}
+.ascii-rule .line{flex:1;height:1px;background:rgba(94,234,212,.22)}
+.mod-row{display:flex;align-items:center;gap:12px;padding:10px 2px;border-bottom:1px solid rgba(94,234,212,.16)}
+.mod-row .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:28px;flex-shrink:0}
+.cursor{display:inline-block;width:7px;height:12px;background:var(--mint);vertical-align:-2px;animation:blink 1.1s step-end infinite}
+.term{font-family:var(--mono);border:1px solid rgba(94,234,212,.22);background:#08110D;border-radius:8px}
+/* ---- 弹窗组件 ---- */
+.comp-stage{border:1px solid var(--hairline);border-radius:20px;padding:36px;display:flex;gap:36px;flex-wrap:wrap;align-items:center;justify-content:center}
+.alert-card{width:270px;background:var(--card);border:1px solid var(--hairline);border-radius:var(--r-card);box-shadow:var(--shadow-pop);overflow:hidden}
+.alert-card .ah{padding:18px 18px 12px;text-align:center}
+.alert-card .at{font-size:15px;font-weight:700}
+.alert-card .am{font-size:12px;color:var(--dim);margin-top:6px;line-height:1.45}
+.alert-card .ab{display:flex;border-top:.5px solid var(--hairline)}
+.alert-card .ab button{flex:1;background:none;border:none;padding:13px 0;font-size:14px;cursor:pointer;color:var(--dim)}
+.alert-card .ab button+button{border-left:.5px solid var(--hairline)}
+.alert-card .ab button.primary{color:var(--accent);font-weight:600}
+.toast{display:inline-flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--hairline);border-radius:var(--r-pill);padding:10px 18px;font-size:12.5px;box-shadow:var(--shadow-pop)}
+.kbd{font-family:var(--mono);font-size:10.5px;background:rgba(0,0,0,.3);border:1px solid var(--hairline);border-radius:6px;padding:7px 10px;color:var(--mint);white-space:pre}
+.day-theme .kbd{background:var(--bg2);color:var(--accent)}
+.ios-map{background:var(--card);border:1px solid var(--hairline);border-radius:var(--r-card);padding:22px 26px;font-size:13px;color:var(--dim)}
+.ios-map code{font-family:var(--mono);font-size:11.5px;color:var(--mint);background:rgba(94,234,212,.08);padding:1px 6px;border-radius:4px}
+.day-theme .ios-map code{color:var(--accent);background:var(--wash,#E9EEFF)}
+.ios-map table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
+.ios-map td{padding:7px 8px;border-bottom:.5px solid var(--hairline);vertical-align:top}
+.ios-map td:first-child{font-family:var(--mono);color:var(--ink);white-space:nowrap}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <span class="brand">PID_LINER · UI PROPOSAL</span>
+  <nav>
+    <a href="#home3" data-zh="首页三变体" data-en="Home ×3">首页三变体</a>
+    <a href="#styleA" data-zh="款式A · 夜" data-en="Style A · Night">款式A · 夜</a>
+    <a href="#styleB" data-zh="款式B · 昼" data-en="Style B · Day">款式B · 昼</a>
+    <a href="#components" data-zh="弹窗组件" data-en="Components">弹窗组件</a>
+    <a href="#map" data-zh="落地映射" data-en="iOS Mapping">落地映射</a>
+  </nav>
+  <button class="lang-btn" onclick="toggleLang()" id="langBtn">EN</button>
+</div>
+
+<div class="wrap">
+
+<header class="proto">
+  <div class="eyebrow">PID_Liner · Visual Redesign Proposal · 3 Styles</div>
+  <h1 class="proto-title"><span data-zh="曲线即产品：" data-en="The curve is the product: ">曲线即产品：</span><span class="accent-word" data-zh="三款视觉提案" data-en="Three visual styles">三款视觉提案</span></h1>
+  <p class="proto-sub" data-zh="设计手法统一继承自参考项目 AssDJLL 的提取结果：单一强调色收敛、三级文字层级、1px 发丝描边、实底+辉光（非玻璃拟物）、eyebrow 编辑感排版、0.2~0.25s 克制动效。款式 A 取其「暗夜沙盘」夜页语言；款式 B 取其主体「Qwen Blue」浅色语系（飞行场强光下可读性优先）；首页终端变体 T 借鉴 sdsh 首页 V7 的布局语言。逻辑零改动。" data-en="All three share one design grammar extracted from the reference project AssDJLL: single accent color, 3-tier text hierarchy, 1px hairline strokes, solid fills with glow (no glassmorphism), editorial eyebrow typography, and restrained 0.2~0.25s motion. Style A adopts its night-palette; Style B adopts its main light 'Qwen Blue' language (readability under bright flyfield sun); Home variant T borrows the layout grammar of sdsh homepage V7. Zero logic changes.">设计手法统一继承自参考项目 AssDJLL 的提取结果：单一强调色收敛、三级文字层级、1px 发丝描边、实底+辉光（非玻璃拟物）、eyebrow 编辑感排版、0.2~0.25s 克制动效。款式 A 取其「暗夜沙盘」夜页语言；款式 B 取其主体「Qwen Blue」浅色语系（飞行场强光下可读性优先）；首页终端变体 T 借鉴 sdsh 首页 V7 的布局语言。逻辑零改动。</p>
+</header>
+
+<!-- ═══════════ 首页三变体 ═══════════ -->
+<section id="home3">
+  <h2 class="sec" data-zh="首页 · 三变体对比" data-en="Home · Three Variants">首页 · 三变体对比</h2>
+  <p class="sec-note" data-zh="同一信息架构（三入口 + 工具行 + 方案栏），三种气质。已采纳反馈：蓝牙呼吸灯（不占地方）、工具按钮图标上文字下（不再折行）、方案栏恢复完整操作空间。" data-en="Same information architecture (3 entries + tool row + scheme list), three temperaments. Adopted feedback: BLE breathing dot (space-saving), icon-over-label tool buttons (no more text wrap), and a full-height scheme list restored.">同一信息架构（三入口 + 工具行 + 方案栏），三种气质。已采纳反馈：蓝牙呼吸灯（不占地方）、工具按钮图标上文字下（不再折行）、方案栏恢复完整操作空间。</p>
+  <div class="phone-row">
+
+    <!-- A 夜色卡片风 -->
+    <div class="phone-block">
+      <div class="phone-title">A · Night Card <span style="color:var(--mint)">✓</span></div>
+      <div class="phone"><div class="island"></div><div class="screen">
+        <div class="statusbar"><span>23:16</span><span>▲ ⌁ ▮</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="home-title" style="font-size:26px"><span data-zh="选一条<em>嗨路</em>" data-en='Pick a <em>track</em>'>选一条<em>嗨路</em></span></div>
+            <div style="font-size:11.5px;color:var(--dim);margin-top:3px" data-zh="调一下, 还是深度喂屎" data-en="Tune it — or full-send it.">调一下, 还是深度喂屎</div>
+          </div>
+          <span class="badge-live"><span class="dot"></span>BLE</span>
+        </div>
+        <!-- 现状骨架: 上排左右两入口(副标题两句各指其一) -->
+        <div style="display:flex;gap:10px">
+          <div class="entry-card" style="flex:1;flex-direction:column;align-items:flex-start;gap:8px;padding:13px">
+            <div style="display:flex;justify-content:space-between;width:100%;align-items:flex-start">
+              <span style="font-size:20px">🛩️</span>
+              <span style="font-family:var(--mono);font-size:7.5px;letter-spacing:1px;color:var(--amber);border:1px solid var(--amber);border-radius:4px;padding:1px 5px">NO-SAVE</span>
+            </div>
+            <div><div class="t" style="font-size:13.5px" data-zh="独立分析" data-en="Quick Analysis">独立分析</div><div class="s" style="font-size:10px;line-height:1.5" data-zh="导入 BBL<br>选文件即出曲线" data-en="Import BBL —<br>pick file, get curve">导入 BBL<br>选文件即出曲线</div></div>
+          </div>
+          <div class="entry-card" style="flex:1;flex-direction:column;align-items:flex-start;gap:8px;padding:13px;border-color:rgba(94,234,212,.35)">
+            <div style="display:flex;justify-content:space-between;width:100%;align-items:flex-start">
+              <span style="font-size:20px">🎯</span>
+              <span style="font-family:var(--mono);font-size:7.5px;letter-spacing:1px;color:var(--mint);border:1px solid var(--mint);border-radius:4px;padding:1px 5px">×3</span>
+            </div>
+            <div><div class="t" style="font-size:13.5px" data-zh="方案迭代" data-en="Iteration">方案迭代</div><div class="s" style="font-size:10px;line-height:1.5" data-zh="多轮闭环收敛<br>换参飞 → 反馈" data-en="Closed-loop rounds:<br>fly → feedback">多轮闭环收敛<br>换参飞 → 反馈</div></div>
+          </div>
+        </div>
+        <!-- 第三入口: 炸机诊断横条 -->
+        <div class="entry-card" style="padding:10px 14px">
+          <div class="entry-ico" style="width:34px;height:34px;background:rgba(255,107,107,.14);font-size:16px">🩺</div>
+          <div style="flex:1"><div class="t" style="font-size:13px" data-zh="炸机诊断" data-en="Crash Doctor">炸机诊断</div><div class="s" style="font-size:10px" data-zh="因果链还原 · 指标时间线" data-en="Causal chain · timeline">因果链还原 · 指标时间线</div></div>
+          <span class="badge-pro">PRO</span>
+        </div>
+        <!-- 我的方案 -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">
+          <span style="font-size:13px;font-weight:600" data-zh="我的方案" data-en="My Schemes">我的方案</span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--faint)">12</span>
+        </div>
+        <div class="card" style="padding:11px 12px;display:flex;flex-direction:column;gap:8px;flex:1">
+          <div class="scheme-item">
+            <div style="flex:1"><div style="font-size:12px;font-weight:600">H415 Testbed</div><div style="font-family:var(--mono);font-size:9px;color:var(--faint);margin-top:2px" data-zh="第 4 轮 · 2h 前" data-en="Round 4 · 2h ago">第 4 轮 · 2h 前</div></div>
+            <span class="chip on" data-zh="继续" data-en="Resume">继续</span>
+          </div>
+          <div class="scheme-item">
+            <div style="flex:1"><div style="font-size:12px;font-weight:600" data-zh="5 寸竞速机" data-en="5-inch Racer">5 寸竞速机</div><div style="font-family:var(--mono);font-size:9px;color:var(--faint);margin-top:2px" data-zh="已收敛 · 6 轮 ✓" data-en="Converged · 6 rounds ✓">已收敛 · 6 轮 ✓</div></div>
+            <span class="chip" data-zh="查看" data-en="Open">查看</span>
+          </div>
+          <div style="text-align:center;font-family:var(--mono);font-size:9px;color:var(--faint);letter-spacing:1px;padding-top:2px" data-zh="空态: 暂无方案 · 点「方案迭代」开始一轮调参" data-en="Empty: no schemes · tap Iteration to start">空态: 暂无方案 · 点「方案迭代」开始一轮调参</div>
+        </div>
+        <div class="tool-row" style="gap:8px">
+          <div class="tool-btn" style="flex-direction:row;gap:6px;padding:9px 0;font-size:11px">📶 <span data-zh="蓝牙" data-en="BT">蓝牙</span></div>
+          <div class="tool-btn" style="flex-direction:row;gap:6px;padding:9px 0;font-size:11px">🗑️ <span data-zh="清黑匣子" data-en="Wipe">清黑匣子</span></div>
+          <div class="tool-btn" style="flex-direction:row;gap:6px;padding:9px 0;font-size:11px">💾 <span data-zh="U 盘" data-en="SD">U 盘</span></div>
+        </div>
+      </div></div>
+      <div class="phone-desc" data-zh="骨架忠实现状: 副标题「调一下(方案迭代) / 深度喂屎(独立分析)」左右对应上排两入口, 炸机诊断横条, 我的方案列表。" data-en="Faithful skeleton: subtitle maps to the two top entries, crash-doctor bar, scheme list.">骨架忠实现状: 副标题「调一下(方案迭代) / 深度喂屎(独立分析)」左右对应上排两入口, 炸机诊断横条, 我的方案列表。</div>
+    </div>
+
+    <!-- T 终端风 -->
+    <div class="phone-block">
+      <div class="phone-title">T · Terminal Bench <span style="color:var(--mint)">★ 参考 sdsh V7</span></div>
+      <div class="phone"><div class="island"></div><div class="screen" style="font-family:var(--mono);gap:9px">
+        <div class="statusbar"><span>23:16</span><span>▲ ⌁ ▮</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="display:flex;align-items:center;gap:9px">
+            <div style="width:22px;height:22px;border-radius:50%;border:1px solid rgba(94,234,212,.45);display:flex;align-items:center;justify-content:center"><div style="width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 8px var(--mint);animation:breathe 1.6s ease-in-out infinite"></div></div>
+            <span style="font-size:10.5px;border:1px solid var(--hairline);border-radius:3px;padding:4px 11px" data-zh="蓝牙 ›" data-en="Bluetooth ›">蓝牙 ›</span>
+          </div>
+          <span style="padding:5px 12px;background:var(--mint);color:#04120C;border-radius:3px;font-size:9.5px;font-weight:700;letter-spacing:2px">PRO</span>
+        </div>
+        <div style="font-size:8.5px;letter-spacing:2px;color:var(--faint)"><span style="color:var(--mint)">[BLE ONLINE]</span> <span data-zh="解码器就绪 — 已载入 12 个方案" data-en="DECODER READY — 12 SCHEMES LOADED">解码器就绪 — 已载入 12 个方案</span></div>
+        <div class="term" style="padding:12px 11px">
+          <div style="font-size:11px;line-height:1.6"><span style="color:var(--mint);font-weight:700">$ </span><span style="color:var(--mint)">pidliner analyze</span><span style="color:var(--dim)"> --session 05</span><span class="cursor" style="margin-left:4px"></span></div>
+          <div style="font-size:9px;line-height:1.9;color:var(--dim);margin-top:5px">
+            <div><span style="color:var(--faint)">[1/3]</span> <span data-zh="BBL 解码" data-en="BBL DECODE">BBL 解码</span> <span style="color:var(--faint)">········</span> <span style="color:var(--mint)">[OK] 2.4s</span></div>
+            <div><span style="color:var(--faint)">[2/3]</span> <span data-zh="响应拟合" data-en="RESPONSE FIT">响应拟合</span> <span style="color:var(--faint)">····</span> <span style="color:var(--mint)">[OK] 1.8s</span></div>
+            <div><span style="color:var(--mint)">[out]</span> <span data-zh="频带诊断" data-en="BAND DIAGNOSIS">频带诊断</span> <span style="color:var(--faint)">····</span> <span style="color:var(--mint);animation:genpulse 1.4s ease-in-out infinite">[READY]</span></div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:8.5px;letter-spacing:3px;color:var(--faint);margin-bottom:5px">BBL → CURVE → CLI</div>
+          <div class="home-title" style="font-size:24px"><span data-zh="选一条<em>嗨路</em>，开始调音。" data-en='Pick a <em>track</em>, start tuning.'>选一条<em>嗨路</em>，开始调音。</span></div>
+        </div>
+        <div class="tbox" style="padding:15px 11px 9px">
+          <div class="tlabel">┤ 01 · <span data-zh="独立分析" data-en="ANALYSIS">独立分析</span> ├</div>
+          <div style="font-size:10px;color:var(--dim);line-height:1.6" data-zh="单条 BBL · 响应曲线 + 频带噪声" data-en="Single BBL · response + band noise">单条 BBL · 响应曲线 + 频带噪声</div>
+          <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(94,234,212,.16);display:flex;justify-content:space-between;font-size:9px;letter-spacing:1px"><span style="color:var(--faint)">▸ out/analysis_session05</span><span style="color:var(--mint);font-weight:700" data-zh="开始 →" data-en="RUN →">开始 →</span></div>
+        </div>
+        <div style="padding:0 2px">
+          <div class="mod-row"><span class="no">[02]</span><div style="flex:1"><span style="font-size:13px;font-weight:700" data-zh="迭代工作台" data-en="ITERATION">迭代工作台</span> <span style="font-size:8px;letter-spacing:1px;color:var(--faint)">WORKBENCH</span></div><span style="color:var(--mint)">→</span></div>
+          <div class="mod-row"><span class="no">[03]</span><div style="flex:1"><span style="font-size:13px;font-weight:700" data-zh="炸机诊断" data-en="CRASH DOCTOR">炸机诊断</span> <span style="font-size:8px;letter-spacing:1px;color:var(--amber)">PRO</span></div><span style="color:var(--mint)">→</span></div>
+          <div class="mod-row"><span class="no">[04]</span><div style="flex:1"><span style="font-size:13px;font-weight:700" data-zh="蓝牙 / 清匣 / U盘" data-en="BT / WIPE / SD">蓝牙 / 清匣 / U盘</span></div><span style="color:var(--mint)">→</span></div>
+        </div>
+        <div class="ascii-rule"><span class="l" data-zh="── 方案" data-en="── SCHEMES">── 方案</span><div class="line"></div><span class="l">ls ./schemes</span></div>
+        <div style="padding:0 2px;flex:1">
+          <div class="mod-row"><span class="no">[S4]</span><div style="flex:1"><span style="font-size:12px;font-weight:700">H415 Testbed</span> <span style="font-size:8.5px;color:var(--faint)" data-zh="第4轮" data-en="R4">第4轮</span></div><span style="color:var(--mint);font-size:9px" data-zh="继续 →" data-en="RESUME →">继续 →</span></div>
+          <div class="mod-row"><span class="no">[S1]</span><div style="flex:1"><span style="font-size:12px;font-weight:700" data-zh="5寸竞速机" data-en="5-INCH RACER">5寸竞速机</span> <span style="font-size:8.5px;color:var(--mint)" data-zh="已收敛 ✓" data-en="CONVERGED ✓">已收敛 ✓</span></div><span style="color:var(--mint)">→</span></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:8px;letter-spacing:2px;color:var(--faint)"><span>PID_LINER v1.3</span><span style="color:var(--mint)">[EOF]</span></div>
+      </div></div>
+      <div class="phone-desc" data-zh="终端语言让 CLI 灵魂裸露：$ 命令行 Hero + pipeline 日志 + notch 标签边框 + 编号模块行。产品即一台正在工作的调参机器。" data-en="Terminal grammar exposes the CLI soul: $ hero + pipeline log + notch-label boxes + numbered module rows. The product IS a working tuning machine.">终端语言让 CLI 灵魂裸露：$ 命令行 Hero + pipeline 日志 + notch 标签边框 + 编号模块行。产品即一台正在工作的调参机器。</div>
+    </div>
+
+    <!-- B 浅色 -->
+    <div class="phone-block day-theme">
+      <div class="phone-title" style="color:var(--accent)">B · Day Deck</div>
+      <div class="phone"><div class="island"></div><div class="screen">
+        <div class="statusbar"><span>09:41</span><span>▲ ⌁ ▮</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div><div class="eyebrow-s" style="color:var(--accent)">PID_LINER · FLIGHT DATA LAB</div>
+          <div class="home-title"><span data-zh="选一条<em>嗨路</em>，开始调音。" data-en='Pick a <em>track</em>,<br>start tuning.'>选一条<em>嗨路</em>，开始调音。</span></div></div>
+          <span class="badge-live"><span class="dot"></span>BLE</span>
+        </div>
+        <div class="entry-card">
+          <div class="entry-ico" style="background:#E9EEFF">📈</div>
+          <div style="flex:1"><div class="t" data-zh="独立分析" data-en="Independent Analysis">独立分析</div><div class="s" data-zh="单条 BBL · 响应曲线 + 频带噪声" data-en="Single BBL · step response + band noise">单条 BBL · 响应曲线 + 频带噪声</div></div>
+          <span style="color:var(--faint)">›</span>
+        </div>
+        <div class="entry-card" style="border-color:var(--accent);background:linear-gradient(135deg,#fff,#F3F7FF)">
+          <div class="entry-ico" style="background:#D5E9FC">🎛️</div>
+          <div style="flex:1"><div class="t" data-zh="迭代方案工作台" data-en="Iteration Workbench">迭代方案工作台</div><div class="s" data-zh="多轮调参闭环 · 轮次链追踪" data-en="Multi-round tuning loop · chain tracking">多轮调参闭环 · 轮次链追踪</div></div>
+          <span style="color:var(--faint)">›</span>
+        </div>
+        <div class="entry-card">
+          <div class="entry-ico" style="background:#FDECEC">🩺</div>
+          <div style="flex:1"><div class="t" data-zh="炸机诊断" data-en="Crash Doctor">炸机诊断</div><div class="s" data-zh="因果链还原 · 指标时间线" data-en="Causal chain · metric timeline">因果链还原 · 指标时间线</div></div>
+          <span class="badge-pro">PRO</span>
+        </div>
+        <div class="tool-row">
+          <div class="tool-btn"><span style="font-size:17px">📶</span><span data-zh="蓝牙" data-en="Bluetooth">蓝牙</span></div>
+          <div class="tool-btn"><span style="font-size:17px">🗑️</span><span data-zh="清黑匣子" data-en="Wipe Logs">清黑匣子</span></div>
+          <div class="tool-btn"><span style="font-size:17px">💾</span><span data-zh="U 盘" data-en="SD Card">U 盘</span></div>
+        </div>
+        <div class="card" style="padding:13px 14px;flex:1;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:12px;font-weight:700" data-zh="迭代方案 · 12" data-en="Schemes · 12">迭代方案 · 12</span>
+            <span style="font-family:var(--mono);font-size:9px;color:var(--accent)" data-zh="查看全部 ›" data-en="View all ›">查看全部 ›</span>
+          </div>
+          <div class="scheme-item">
+            <div style="flex:1"><div style="font-size:12px;font-weight:600">H415 Testbed</div><div style="font-family:var(--mono);font-size:9px;color:var(--faint);margin-top:2px" data-zh="第 4 轮 · 2h 前" data-en="Round 4 · 2h ago">第 4 轮 · 2h 前</div></div>
+            <span class="chip on" data-zh="继续" data-en="Resume">继续</span>
+          </div>
+        </div>
+        <div style="text-align:center;font-family:var(--mono);font-size:9px;color:var(--faint);letter-spacing:2px">CURVE IS THE PRODUCT — v1.3</div>
+      </div></div>
+      <div class="phone-desc" data-zh="Qwen Blue 浅色编辑感。飞行场强光下可读性优先；白卡+冷发丝+电光蓝。" data-en="Qwen Blue editorial light mode. Built for flyfield sun; white cards, cool hairlines, electric blue.">Qwen Blue 浅色编辑感。飞行场强光下可读性优先；白卡+冷发丝+电光蓝。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 款式A 完整 ═══════════ -->
+<section id="styleA">
+  <h2 class="sec" data-zh="款式 A · Night Bench — 设计令牌" data-en="Style A · Night Bench — Tokens">款式 A · Night Bench — 设计令牌</h2>
+  <p class="sec-note" data-zh="暗夜沙盘基底 + 电光蓝/薄荷/琥珀三语义。落地即 UIColor 令牌单例。" data-en="Night bench base + electric blue / mint / amber semantics. Ships as a UIColor token singleton.">暗夜沙盘基底 + 电光蓝/薄荷/琥珀三语义。落地即 UIColor 令牌单例。</p>
+  <div class="token-grid">
+    <div class="token"><div class="swatch" style="background:#0A0E1A"></div><div class="meta"><div class="name">bg</div><div class="val">#0A0E1A</div></div></div>
+    <div class="token"><div class="swatch" style="background:#131A2E"></div><div class="meta"><div class="name">card</div><div class="val">#131A2E</div></div></div>
+    <div class="token"><div class="swatch" style="background:linear-gradient(135deg,#1F49FF,#4D8BFF)"></div><div class="meta"><div class="name">accent grad</div><div class="val">#1F49FF→#4D8BFF</div></div></div>
+    <div class="token"><div class="swatch" style="background:#5EEAD4"></div><div class="meta"><div class="name">mint</div><div class="val">#5EEAD4</div></div></div>
+    <div class="token"><div class="swatch" style="background:#FFB454"></div><div class="meta"><div class="name">amber</div><div class="val">#FFB454</div></div></div>
+    <div class="token"><div class="swatch" style="background:#FF6B6B"></div><div class="meta"><div class="name">danger</div><div class="val">#FF6B6B</div></div></div>
+    <div class="token"><div class="swatch" style="background:#E7F2EF"></div><div class="meta"><div class="name">ink</div><div class="val">#E7F2EF</div></div></div>
+    <div class="token"><div class="swatch" style="background:#93A0BC"></div><div class="meta"><div class="name">dim</div><div class="val">#93A0BC</div></div></div>
+    <div class="token"><div class="swatch" style="background:#5A6584"></div><div class="meta"><div class="name">faint</div><div class="val">#5A6584</div></div></div>
+  </div>
+  <h2 class="sec" style="margin-top:44px" data-zh="排版与形状" data-en="Typography & Shape">排版与形状</h2>
+  <div class="card" style="padding:8px 24px;margin-bottom:24px">
+    <div class="typo-row"><span class="tag">eyebrow · mono 10 / ls 4</span><span style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--mint)">FLIGHT DATA · SESSION 05</span></div>
+    <div class="typo-row"><span class="tag" data-zh="页面主标 · serif 30" data-en="Hero · serif 30">页面主标 · serif 30</span><span style="font-family:var(--serif);font-size:26px"><span data-zh="曲线即产品，<em style='color:var(--mint);font-style:italic'>调音而非接管</em>" data-en="Tuning, <em style='color:var(--mint);font-style:italic'>not autopilot</em>">曲线即产品，<em style="color:var(--mint);font-style:italic">调音而非接管</em></span></span></div>
+    <div class="typo-row"><span class="tag" data-zh="卡片标题 · sans 14.5 bold" data-en="Card title · sans 14.5 bold">卡片标题 · sans 14.5 bold</span><span style="font-size:14.5px;font-weight:700" data-zh="阶跃响应 · Roll 轴" data-en="Step Response · Roll">阶跃响应 · Roll 轴</span></div>
+    <div class="typo-row"><span class="tag" data-zh="正文 · sans 15" data-en="Body · sans 15">正文 · sans 15</span><span style="font-size:14px;color:var(--dim)" data-zh="高油门 PID 频段能量占比 1.3%，无高频振荡病灶。" data-en="Hi-throttle PID-band energy 1.3% — no HF oscillation lesion.">高油门 PID 频段能量占比 1.3%，无高频振荡病灶。</span></div>
+    <div class="typo-row"><span class="tag">CLI · mono 11</span><span class="kbd">set gyro_notch1_hz = 212</span></div>
+  </div>
+  <div class="shape-row">
+    <div class="shape-demo"><div class="shape-box" style="border-radius:16px"></div><span class="lab">card r16</span></div>
+    <div class="shape-demo"><div class="shape-box" style="border-radius:10px"></div><span class="lab">ctl r10</span></div>
+    <div class="shape-demo"><div class="shape-box" style="border-radius:18px"></div><span class="lab">bubble r18</span></div>
+    <div class="shape-demo"><div class="shape-box" style="box-shadow:var(--shadow-card)"></div><span class="lab">shadow</span></div>
+    <div class="shape-demo"><div class="shape-box" style="box-shadow:var(--glow-mint)"></div><span class="lab">glow</span></div>
+  </div>
+</section>
+
+<!-- A 分析页 -->
+<section>
+  <h2 class="sec" data-zh="款式 A · 分析页（响应 / 噪声）" data-en="Style A · Analysis (Response / Noise)">款式 A · 分析页（响应 / 噪声）</h2>
+  <div class="phone-row">
+    <div class="phone-block"><div class="phone-title" data-zh="响应图" data-en="Step Response">响应图</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="statusbar"><span>23:16</span><span>▲ ⌁ ▮</span></div>
+      <div style="display:flex;gap:8px;align-items:center"><span class="chip on">S1 · session5</span><span style="flex:1"></span><span class="badge-live"><span class="dot"></span>62979</span></div>
+      <div class="seg"><span class="on" data-zh="响应图" data-en="Response">响应图</span><span data-zh="噪声图" data-en="Noise">噪声图</span></div>
+      <div class="chart-card">
+        <div class="chart-head"><span class="t" data-zh="Roll 阶跃响应" data-en="Roll Step Response">Roll 阶跃响应</span><span class="u">K=80</span></div>
+        <svg viewBox="0 0 280 110" style="width:100%">
+          <line x1="0" y1="86" x2="280" y2="86" stroke="rgba(255,255,255,.12)"/><line x1="0" y1="30" x2="280" y2="30" stroke="rgba(255,255,255,.07)" stroke-dasharray="3 4"/>
+          <path d="M0,86 L38,86 C52,86 58,18 72,18 C86,18 92,38 104,38 C118,38 124,32 138,33 C170,35 220,31 280,31" fill="none" stroke="#5EEAD4" stroke-width="2.2" style="filter:drop-shadow(0 0 4px rgba(94,234,212,.6))"/>
+          <path d="M0,86 L44,86 C58,86 64,24 78,24 C94,24 100,40 112,40 C126,40 134,34 150,35 C180,37 225,32 280,32" fill="none" stroke="#FFB454" stroke-width="1.6" stroke-dasharray="5 4" opacity=".85"/>
+        </svg>
+        <div class="legend"><span><i style="background:#5EEAD4"></i><span data-zh="实测" data-en="Actual">实测</span></span><span><i style="background:#FFB454"></i><span data-zh="预测" data-en="Predicted">预测</span></span><span><i style="background:rgba(255,255,255,.3)"></i><span data-zh="目标" data-en="Target">目标</span></span></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-head"><span class="t">Pitch</span><span class="u">overshoot 8.9%</span></div>
+        <svg viewBox="0 0 280 110" style="width:100%"><line x1="0" y1="86" x2="280" y2="86" stroke="rgba(255,255,255,.12)"/><path d="M0,86 L42,86 C56,86 62,16 76,16 C90,16 96,42 110,42 C124,42 132,34 148,35 C180,37 230,31 280,31" fill="none" stroke="#4D8BFF" stroke-width="2.2"/></svg>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn-primary" style="width:100%" data-zh="复制 CLI 调参命令" data-en="Copy CLI Commands">复制 CLI 调参命令</button>
+    </div></div></div>
+    <div class="phone-block"><div class="phone-title" data-zh="噪声图 · 频带色区" data-en="Noise · Band Overlay">噪声图 · 频带色区</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="statusbar"><span>23:16</span><span>▲ ⌁ ▮</span></div>
+      <div style="display:flex;gap:8px"><span class="chip on">S1 · session5</span><span style="flex:1"></span><span class="chip">Roll</span></div>
+      <div class="seg"><span data-zh="响应图" data-en="Response">响应图</span><span class="on" data-zh="噪声图" data-en="Noise">噪声图</span></div>
+      <div class="chart-card" style="flex:1;display:flex;flex-direction:column">
+        <div class="chart-head"><span class="t" data-zh="噪声频谱" data-en="Noise Spectrum">噪声频谱</span><span class="u">GYRO · 110 WIN</span></div>
+        <svg viewBox="0 0 290 240" style="width:100%;flex:1">
+          <rect x="0" y="0" width="48" height="216" fill="#4A90D9" opacity=".13"/><rect x="48" y="0" width="120" height="216" fill="#F5A623" opacity=".13"/><rect x="168" y="0" width="72" height="216" fill="#E05656" opacity=".14"/><rect x="240" y="0" width="50" height="216" fill="#999" opacity=".08"/>
+          <text x="6" y="14" font-size="8" fill="#6FA8DC" font-family="monospace" data-zh="姿态" data-en="ATT">姿态</text>
+          <text x="66" y="14" font-size="8" fill="#E8A54B" font-family="monospace">PID/TPA</text>
+          <text x="176" y="14" font-size="8" fill="#E77" font-family="monospace" data-zh="机械" data-en="MECH">机械</text>
+          <text x="244" y="14" font-size="8" fill="#888" font-family="monospace" data-zh="滤波" data-en="LPF">滤波</text>
+          <line x1="0" y1="216" x2="290" y2="216" stroke="rgba(255,255,255,.15)"/>
+          <g fill="#5EEAD4" opacity=".85"><rect x="2" y="26" width="5" height="190"/><rect x="9" y="52" width="5" height="164"/><rect x="16" y="80" width="5" height="136"/><rect x="23" y="112" width="5" height="104"/><rect x="30" y="138" width="5" height="78"/><rect x="37" y="156" width="5" height="60"/><rect x="44" y="168" width="5" height="48"/><rect x="51" y="176" width="5" height="40"/><rect x="58" y="170" width="5" height="46"/><rect x="65" y="182" width="5" height="34"/><rect x="72" y="188" width="5" height="28"/><rect x="79" y="178" width="5" height="38"/><rect x="86" y="184" width="5" height="32"/><rect x="93" y="190" width="5" height="26"/><rect x="100" y="186" width="5" height="30"/><rect x="107" y="192" width="5" height="24"/><rect x="114" y="188" width="5" height="28"/><rect x="121" y="194" width="5" height="22"/><rect x="128" y="190" width="5" height="26"/><rect x="135" y="196" width="5" height="20"/></g>
+          <g fill="#FF7F0E" opacity=".8"><rect x="142" y="198" width="5" height="18"/><rect x="149" y="194" width="5" height="22"/><rect x="156" y="200" width="5" height="16"/></g>
+          <g fill="#FF6B6B"><rect x="184" y="120" width="5" height="96"/><rect x="191" y="150" width="5" height="66"/></g>
+          <circle cx="186.5" cy="116" r="3" fill="#FF6B6B" style="filter:drop-shadow(0 0 4px #FF6B6B)"/><line x1="186.5" y1="112" x2="186.5" y2="92" stroke="#FF6B6B"/><text x="176" y="88" font-size="9" fill="#FF9B9B" font-family="monospace">212Hz</text>
+          <g fill="#999" opacity=".5"><rect x="246" y="204" width="4" height="12"/><rect x="254" y="200" width="4" height="16"/><rect x="262" y="206" width="4" height="10"/><rect x="270" y="202" width="4" height="14"/><rect x="278" y="205" width="4" height="11"/></g>
+        </svg>
+      </div>
+      <div class="card" style="padding:12px 14px;border-color:rgba(255,107,107,.3)">
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--danger);margin-bottom:6px" data-zh="⚠ 尖峰判读" data-en="⚠ PEAK VERDICT">⚠ 尖峰判读</div>
+        <div style="font-size:11.5px;line-height:1.5;color:var(--dim)"><b style="color:#FF9B9B"><span data-zh="212Hz 尖峰 → 机械震动区" data-en="212Hz peak → mechanical band">212Hz 尖峰 → 机械震动区</span></b><span data-zh="，若各油门恒定：可静态陷波压制 ↓" data-en=" — steady across throttle: static notch ↓">，若各油门恒定：可静态陷波压制 ↓</span></div>
+        <div class="kbd" style="margin-top:8px">set gyro_notch1_hz = 212
+set gyro_notch1_cutoff = 160
+set dterm_notch_hz = 212
+set dterm_notch_cutoff = 160</div>
+      </div>
+    </div></div></div>
+  </div>
+</section>
+
+<!-- A 工作台 + 炸机 -->
+<section>
+  <div class="phone-row">
+    <div class="phone-block"><div class="phone-title" data-zh="迭代工作台" data-en="Iteration Workbench">迭代工作台</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="statusbar"><span>23:16</span><span>▲ ⌁ ▮</span></div>
+      <div class="eyebrow-s">ITERATION CHAIN · H415</div>
+      <div style="font-family:var(--serif);font-size:21px;font-weight:600" data-zh="第 4 轮 · 收敛中" data-en="Round 4 · Converging">第 4 轮 · 收敛中</div>
+      <div class="card" style="padding:15px 14px 10px">
+        <div class="chain">
+          <div class="node"><div class="dotn" style="background:var(--card2);color:var(--dim);border:1px solid var(--hairline)">1</div></div><div class="dash"></div>
+          <div class="node"><div class="dotn" style="background:var(--card2);color:var(--dim);border:1px solid var(--hairline)">2</div></div><div class="dash"></div>
+          <div class="node"><div class="dotn" style="background:var(--card2);color:var(--dim);border:1px solid var(--hairline)">3</div></div><div class="dash"></div>
+          <div class="node"><div class="dotn" style="background:var(--mint);color:#0A0E1A;box-shadow:var(--glow-mint)">4</div><span style="font-family:var(--mono);font-size:8px;color:var(--mint)" data-zh="当前" data-en="NOW">当前</span></div>
+          <div class="dash" style="border-top-style:dotted;opacity:.5"></div>
+          <div class="node"><div class="dotn" style="border:1.5px dashed var(--faint);color:var(--faint)">5</div><span style="font-family:var(--mono);font-size:8px;color:var(--faint)" data-zh="待飞" data-en="NEXT">待飞</span></div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-head"><span class="t" data-zh="推荐参数 → 预测对比" data-en="Recommended → Predicted">推荐参数 → 预测对比</span><span class="u">Δ P −8%</span></div>
+        <svg viewBox="0 0 280 84" style="width:100%"><line x1="0" y1="66" x2="280" y2="66" stroke="rgba(255,255,255,.12)"/><path d="M0,66 L36,66 C50,66 56,8 70,8 C84,8 90,30 102,30 C116,30 124,24 140,25 C172,27 222,24 280,24" fill="none" stroke="#FFB454" stroke-width="1.6" stroke-dasharray="5 4"/><path d="M0,66 L40,66 C54,66 60,14 74,14 C88,14 94,34 106,34 C120,34 128,27 144,28 C176,30 226,26 280,26" fill="none" stroke="#5EEAD4" stroke-width="2.2"/></svg>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn-primary" style="width:100%" data-zh="⇪ 导入下一轮返参" data-en="⇪ Import Next Round">⇪ 导入下一轮返参</button>
+      <button class="btn-ghost" style="width:100%" data-zh="导出本轮 CLI" data-en="Export This Round CLI">导出本轮 CLI</button>
+    </div></div></div>
+    <div class="phone-block"><div class="phone-title" data-zh="炸机诊断 · PRO" data-en="Crash Doctor · PRO">炸机诊断 · PRO</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="statusbar"><span>23:16</span><span>▲ ⌁ ▮</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><div class="eyebrow-s">CRASH DOCTOR</div><div style="font-family:var(--serif);font-size:21px;font-weight:600" data-zh="炸机诊断" data-en="Crash Doctor">炸机诊断</div></div>
+        <span class="badge-pro">PRO</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="metric"><div class="v" style="color:var(--danger)">2.1s</div><div class="k" data-zh="失控前时间" data-en="Time to loss">失控前时间</div></div>
+        <div class="metric"><div class="v" style="color:var(--amber)">1987°/s</div><div class="k" data-zh="峰值角速度" data-en="Peak gyro">峰值角速度</div></div>
+        <div class="metric"><div class="v" style="color:var(--mint)" data-zh="正常" data-en="OK">正常</div><div class="k" data-zh="电压骤降" data-en="Voltage sag">电压骤降</div></div>
+        <div class="metric"><div class="v" style="color:var(--amber)">-1</div><div class="k">RSSI</div></div>
+      </div>
+      <div class="card" style="padding:13px 14px">
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--faint);margin-bottom:8px" data-zh="因果链" data-en="CAUSAL CHAIN">因果链</div>
+        <div class="causal"><b data-zh="急滚" data-en="Hard roll">急滚</b><span class="arr">→</span><b data-zh="右前桨失载" data-en="FR prop stall">右前桨失载</b><span class="arr">→</span><b style="color:var(--danger)" data-zh="角速度饱和" data-en="Gyro saturation">角速度饱和</b><span class="arr">→</span><span data-zh="坠地" data-en="Impact">坠地</span></div>
+      </div>
+      <div class="card" style="padding:13px 14px;flex:1">
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--faint);margin-bottom:8px" data-zh="时间线 · T−2.1s → T0" data-en="TIMELINE · T−2.1s → T0">时间线 · T−2.1s → T0</div>
+        <svg viewBox="0 0 280 70" style="width:100%"><line x1="0" y1="35" x2="280" y2="35" stroke="rgba(255,255,255,.12)"/><circle cx="60" cy="35" r="4" fill="#FFB454"/><text x="48" y="20" font-size="8" fill="#FFB454" font-family="monospace">T−1.8s</text><circle cx="150" cy="35" r="4" fill="#FF7F0E"/><text x="136" y="55" font-size="8" fill="#FFA94D" font-family="monospace">T−0.9s</text><circle cx="252" cy="35" r="5" fill="#FF6B6B" style="filter:drop-shadow(0 0 5px #FF6B6B)"/><text x="234" y="20" font-size="8" fill="#FF9B9B" font-family="monospace">T0</text></svg>
+      </div>
+      <button class="btn-primary" style="width:100%;background:linear-gradient(135deg,#B8860B,#FFB454)" data-zh="解锁完整诊断报告" data-en="Unlock Full Report">解锁完整诊断报告</button>
+    </div></div></div>
+  </div>
+</section>
+
+<!-- ═══════════ 款式B 完整(昼色作用域) ═══════════ -->
+<div class="day-theme">
+<section id="styleB" style="border-top:1px solid var(--hairline);margin-top:40px">
+  <h2 class="sec" data-zh="款式 B · Day Deck — 设计令牌（昼色）" data-en="Style B · Day Deck — Tokens (Light)">款式 B · Day Deck — 设计令牌（昼色）</h2>
+  <p class="sec-note" data-zh="完整继承参考项目主体「Qwen Blue」浅色语系：云白冷底 + 白卡 + 冷发丝 + 单一电光蓝；语义色按浅底加深。与款式 A 共用组件工厂，仅令牌表不同——可演进为 App 内主题切换。" data-en="Faithful inheritance of the reference project's main 'Qwen Blue' light language: cloud-white base, white cards, cool hairlines, single electric blue; semantic colors darkened for light ground. Shares the same component factory as Style A — different token table only, ready for in-app theme switching.">完整继承参考项目主体「Qwen Blue」浅色语系：云白冷底 + 白卡 + 冷发丝 + 单一电光蓝；语义色按浅底加深。与款式 A 共用组件工厂，仅令牌表不同——可演进为 App 内主题切换。</p>
+  <div class="token-grid">
+    <div class="token"><div class="swatch" style="background:#F5F7FC"></div><div class="meta"><div class="name">bg</div><div class="val">#F5F7FC</div></div></div>
+    <div class="token"><div class="swatch" style="background:#fff;border-bottom:1px solid #eee"></div><div class="meta"><div class="name">card</div><div class="val">#FFFFFF</div></div></div>
+    <div class="token"><div class="swatch" style="background:linear-gradient(135deg,#1F49FF,#4D8BFF)"></div><div class="meta"><div class="name">accent</div><div class="val">#1F49FF→#4D8BFF</div></div></div>
+    <div class="token"><div class="swatch" style="background:#0D9488"></div><div class="meta"><div class="name">mint</div><div class="val">#0D9488</div></div></div>
+    <div class="token"><div class="swatch" style="background:#B45309"></div><div class="meta"><div class="name">amber</div><div class="val">#B45309</div></div></div>
+    <div class="token"><div class="swatch" style="background:#DC2626"></div><div class="meta"><div class="name">danger</div><div class="val">#DC2626</div></div></div>
+    <div class="token"><div class="swatch" style="background:#0A102E"></div><div class="meta"><div class="name">ink</div><div class="val">#0A102E</div></div></div>
+    <div class="token"><div class="swatch" style="background:#5C6378"></div><div class="meta"><div class="name">dim</div><div class="val">#5C6378</div></div></div>
+    <div class="token"><div class="swatch" style="background:#E4E7F2"></div><div class="meta"><div class="name">hairline</div><div class="val">#E4E7F2</div></div></div>
+  </div>
+  <div class="phone-row" style="margin-top:40px">
+    <div class="phone-block"><div class="phone-title" data-zh="响应图" data-en="Step Response">响应图</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="statusbar"><span>09:41</span><span>▲ ⌁ ▮</span></div>
+      <div style="display:flex;gap:8px;align-items:center"><span class="chip on">S1 · session5</span><span style="flex:1"></span><span class="badge-live"><span class="dot"></span>62979</span></div>
+      <div class="seg"><span class="on" data-zh="响应图" data-en="Response">响应图</span><span data-zh="噪声图" data-en="Noise">噪声图</span></div>
+      <div class="chart-card">
+        <div class="chart-head"><span class="t" data-zh="Roll 阶跃响应" data-en="Roll Step Response">Roll 阶跃响应</span><span class="u">K=80</span></div>
+        <svg viewBox="0 0 280 110" style="width:100%"><line x1="0" y1="86" x2="280" y2="86" stroke="#E4E7F2"/><path d="M0,86 L38,86 C52,86 58,18 72,18 C86,18 92,38 104,38 C118,38 124,32 138,33 C170,35 220,31 280,31" fill="none" stroke="#0D9488" stroke-width="2.2"/><path d="M0,86 L44,86 C58,86 64,24 78,24 C94,24 100,40 112,40 C126,40 134,34 150,35 C180,37 225,32 280,32" fill="none" stroke="#B45309" stroke-width="1.6" stroke-dasharray="5 4" opacity=".85"/></svg>
+        <div class="legend"><span><i style="background:#0D9488"></i><span data-zh="实测" data-en="Actual">实测</span></span><span><i style="background:#B45309"></i><span data-zh="预测" data-en="Predicted">预测</span></span></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-head"><span class="t">Pitch</span><span class="u">overshoot 8.9%</span></div>
+        <svg viewBox="0 0 280 110" style="width:100%"><line x1="0" y1="86" x2="280" y2="86" stroke="#E4E7F2"/><path d="M0,86 L42,86 C56,86 62,16 76,16 C90,16 96,42 110,42 C124,42 132,34 148,35 C180,37 230,31 280,31" fill="none" stroke="#2B5BFF" stroke-width="2.2"/></svg>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn-primary" style="width:100%" data-zh="复制 CLI 调参命令" data-en="Copy CLI Commands">复制 CLI 调参命令</button>
+    </div></div></div>
+    <div class="phone-block"><div class="phone-title" data-zh="噪声图 · 频带色区" data-en="Noise · Band Overlay">噪声图 · 频带色区</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="statusbar"><span>09:41</span><span>▲ ⌁ ▮</span></div>
+      <div style="display:flex;gap:8px"><span class="chip on">S1 · session5</span><span style="flex:1"></span><span class="chip">Roll</span></div>
+      <div class="seg"><span data-zh="响应图" data-en="Response">响应图</span><span class="on" data-zh="噪声图" data-en="Noise">噪声图</span></div>
+      <div class="chart-card" style="flex:1;display:flex;flex-direction:column">
+        <div class="chart-head"><span class="t" data-zh="噪声频谱" data-en="Noise Spectrum">噪声频谱</span><span class="u">GYRO · 110 WIN</span></div>
+        <svg viewBox="0 0 290 240" style="width:100%;flex:1">
+          <rect x="0" y="0" width="48" height="216" fill="#4A90D9" opacity=".07"/><rect x="48" y="0" width="120" height="216" fill="#F5A623" opacity=".08"/><rect x="168" y="0" width="72" height="216" fill="#E05656" opacity=".08"/><rect x="240" y="0" width="50" height="216" fill="#999" opacity=".05"/>
+          <text x="6" y="14" font-size="8" fill="#2B5BFF" font-family="monospace" data-zh="姿态" data-en="ATT">姿态</text>
+          <text x="66" y="14" font-size="8" fill="#B45309" font-family="monospace">PID/TPA</text>
+          <text x="176" y="14" font-size="8" fill="#DC2626" font-family="monospace" data-zh="机械" data-en="MECH">机械</text>
+          <text x="244" y="14" font-size="8" fill="#8a8fa3" font-family="monospace" data-zh="滤波" data-en="LPF">滤波</text>
+          <line x1="0" y1="216" x2="290" y2="216" stroke="#C9CFDE"/>
+          <g fill="#0D9488" opacity=".9"><rect x="2" y="26" width="5" height="190"/><rect x="9" y="52" width="5" height="164"/><rect x="16" y="80" width="5" height="136"/><rect x="23" y="112" width="5" height="104"/><rect x="30" y="138" width="5" height="78"/><rect x="37" y="156" width="5" height="60"/><rect x="44" y="168" width="5" height="48"/><rect x="51" y="176" width="5" height="40"/><rect x="58" y="170" width="5" height="46"/><rect x="65" y="182" width="5" height="34"/><rect x="72" y="188" width="5" height="28"/><rect x="79" y="178" width="5" height="38"/><rect x="86" y="184" width="5" height="32"/><rect x="93" y="190" width="5" height="26"/><rect x="100" y="186" width="5" height="30"/><rect x="107" y="192" width="5" height="24"/><rect x="114" y="188" width="5" height="28"/><rect x="121" y="194" width="5" height="22"/><rect x="128" y="190" width="5" height="26"/><rect x="135" y="196" width="5" height="20"/></g>
+          <g fill="#2B5BFF" opacity=".75"><rect x="142" y="198" width="5" height="18"/><rect x="149" y="194" width="5" height="22"/><rect x="156" y="200" width="5" height="16"/></g>
+          <g fill="#DC2626"><rect x="184" y="120" width="5" height="96"/><rect x="191" y="150" width="5" height="66"/></g>
+          <circle cx="186.5" cy="116" r="3" fill="#DC2626"/><line x1="186.5" y1="112" x2="186.5" y2="92" stroke="#DC2626"/><text x="176" y="88" font-size="9" fill="#DC2626" font-family="monospace">212Hz</text>
+        </svg>
+      </div>
+      <div style="padding:12px 14px;border-radius:var(--r-card);background:#E9EEFF;border:1px solid #D6DEF5">
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--danger);margin-bottom:6px" data-zh="⚠ 尖峰判读" data-en="⚠ PEAK VERDICT">⚠ 尖峰判读</div>
+        <div style="font-size:11.5px;line-height:1.5;color:var(--dim)"><b style="color:var(--danger)"><span data-zh="212Hz 尖峰 → 机械震动区" data-en="212Hz peak → mechanical band">212Hz 尖峰 → 机械震动区</span></b><span data-zh="，若各油门恒定：可静态陷波压制 ↓" data-en=" — steady across throttle: static notch ↓">，若各油门恒定：可静态陷波压制 ↓</span></div>
+        <div class="kbd" style="margin-top:8px;background:#fff">set gyro_notch1_hz = 212
+set gyro_notch1_cutoff = 160</div>
+      </div>
+    </div></div></div>
+    <div class="phone-block"><div class="phone-title" data-zh="迭代工作台" data-en="Iteration Workbench">迭代工作台</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="statusbar"><span>09:41</span><span>▲ ⌁ ▮</span></div>
+      <div class="eyebrow-s" style="color:var(--accent)">ITERATION CHAIN · H415</div>
+      <div style="font-family:var(--serif);font-size:21px;font-weight:600" data-zh="第 4 轮 · 收敛中" data-en="Round 4 · Converging">第 4 轮 · 收敛中</div>
+      <div class="card" style="padding:15px 14px 10px">
+        <div class="chain">
+          <div class="node"><div class="dotn">1</div></div><div class="dash"></div>
+          <div class="node"><div class="dotn">2</div></div><div class="dash"></div>
+          <div class="node"><div class="dotn">3</div></div><div class="dash"></div>
+          <div class="node"><div class="dotn" style="background:var(--accent);color:#fff;border-color:var(--accent)">4</div><span style="font-family:var(--mono);font-size:8px;color:var(--accent)" data-zh="当前" data-en="NOW">当前</span></div>
+          <div class="dash" style="border-top-style:dotted;opacity:.5"></div>
+          <div class="node"><div class="dotn" style="border:1.5px dashed var(--faint);color:var(--faint)">5</div><span style="font-family:var(--mono);font-size:8px;color:var(--faint)" data-zh="待飞" data-en="NEXT">待飞</span></div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn-primary" style="width:100%" data-zh="⇪ 导入下一轮返参" data-en="⇪ Import Next Round">⇪ 导入下一轮返参</button>
+      <button class="btn-ghost" style="width:100%" data-zh="导出本轮 CLI" data-en="Export This Round CLI">导出本轮 CLI</button>
+    </div></div></div>
+  </div>
+</section>
+</div>
+
+<!-- ═══════════ 弹窗组件 ═══════════ -->
+<section id="components">
+  <h2 class="sec" data-zh="弹窗与组件 · 两款通用" data-en="Alerts & Components · Shared">弹窗与组件 · 两款通用</h2>
+  <p class="sec-note" data-zh="68 处系统弹窗统一由 NBAlert 工厂接管（270pt 宽 + 发丝描边 + 0.5pt 分割 + 确认强调色）。下排昼色，上排夜色。" data-en="All 68 system alerts routed through one NBAlert factory (270pt, hairline, 0.5pt dividers, accent confirm). Dark row above, light row below.">68 处系统弹窗统一由 NBAlert 工厂接管（270pt 宽 + 发丝描边 + 0.5pt 分割 + 确认强调色）。下排昼色，上排夜色。</p>
+  <div class="comp-stage">
+    <div class="alert-card">
+      <div class="ah"><div class="at" data-zh="作为 BBL 导入?" data-en="Import as BBL?">作为 BBL 导入?</div><div class="am" data-zh="received.bbl 已接收保存。现在导入解码为飞行记录吗?" data-en="received.bbl saved. Decode and import as a flight log now?">received.bbl 已接收保存。现在导入解码为飞行记录吗?</div></div>
+      <div class="ab"><button data-zh="暂不" data-en="Later">暂不</button><button class="primary" data-zh="导入" data-en="Import">导入</button></div>
+    </div>
+    <div class="alert-card">
+      <div class="ah"><div class="at" data-zh="需要相机权限" data-en="Camera Permission">需要相机权限</div><div class="am" data-zh="扫码接收飞行记录需要使用相机，请到设置中开启。" data-en="Scanning flight logs requires the camera. Enable it in Settings.">扫码接收飞行记录需要使用相机，请到设置中开启。</div></div>
+      <div class="ab"><button data-zh="取消" data-en="Cancel">取消</button><button class="primary" data-zh="去设置" data-en="Settings">去设置</button></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:16px;align-items:center">
+      <div class="toast" data-zh="✅ 已复制 CLI · 4 条命令" data-en="✅ CLI copied · 4 commands">✅ 已复制 CLI · 4 条命令</div>
+      <div class="toast" style="border-color:rgba(255,180,84,.4)" data-zh="⚠️ 该 BBL 含 6 个 Session" data-en="⚠️ 6 sessions in this BBL">⚠️ 该 BBL 含 6 个 Session</div>
+      <div style="display:flex;gap:10px"><span class="chip on">S1</span><span class="chip">S2</span><span class="chip">S3</span><span class="chip">+3</span></div>
+      <div style="display:flex;gap:10px"><span class="badge-pro">PRO</span><span class="badge-live off"><span class="dot"></span>BLE</span><span class="badge-live"><span class="dot"></span>BLE</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ iOS 落地映射 ═══════════ -->
+<section id="map">
+  <h2 class="sec" data-zh="iOS 落地映射 · 零逻辑改动" data-en="iOS Mapping · Zero Logic Changes">iOS 落地映射 · 零逻辑改动</h2>
+  <div class="ios-map">
+    <table>
+      <tr><td>NBTheme</td><td><span data-zh="全部颜色/字体/圆角/阴影令牌单例；款式 A/B 仅令牌表不同——组件工厂共用，可演进为 App 内主题切换" data-en="Single token singleton for colors/typography/radius/shadow. Styles A/B differ only in token table — shared component factories, ready for in-app theme switching.">全部颜色/字体/圆角/阴影令牌单例；款式 A/B 仅令牌表不同——组件工厂共用，可演进为 App 内主题切换</span></td></tr>
+      <tr><td>NBTheme.bg/card/hairline</td><td>← <span data-zh="替换 9 个 VC 的 systemBackgroundColor / secondarySystemBackgroundColor" data-en="Replace systemBackgroundColor / secondarySystemBackgroundColor across 9 VCs">替换 9 个 VC 的 systemBackgroundColor / secondarySystemBackgroundColor</span></td></tr>
+      <tr><td>NBTheme.ink/dim/faint</td><td>← <span data-zh="三级文字层级替换 labelColor / secondaryLabelColor" data-en="3-tier text hierarchy replaces labelColor / secondaryLabelColor">三级文字层级替换 labelColor / secondaryLabelColor</span></td></tr>
+      <tr><td>NBTheme.serif/mono</td><td>← <span data-zh="衬线标题 + Menlo eyebrow/CLI 块" data-en="Serif hero + Menlo eyebrow / CLI blocks">衬线标题 + Menlo eyebrow/CLI 块</span></td></tr>
+      <tr><td>NBAlert</td><td>← 68 × <code>UIAlertController</code></td></tr>
+      <tr><td>NBToast</td><td>← <span data-zh="胶囊 Toast 替换 SVProgressHUD 场景" data-en="Capsule toast replaces SVProgressHUD scenes">胶囊 Toast 替换 SVProgressHUD 场景</span></td></tr>
+      <tr><td>AAChartKit</td><td>← <span data-zh="图表色接同一令牌（噪声三轴已改，响应图跟随）；频带色区已上线" data-en="Chart series colors join the token table (noise tri-axis done, response follows); band overlay already live">图表色接同一令牌（噪声三轴已改，响应图跟随）；频带色区已上线</span></td></tr>
+    </table>
+  </div>
+</section>
+
+</div>
+
+<script>
+function toggleLang(){
+  var cur = document.documentElement.lang === 'en' ? 'zh' : 'en';
+  setLang(cur);
+}
+function setLang(l){
+  document.documentElement.lang = l;
+  document.querySelectorAll('[data-zh]').forEach(function(el){
+    var v = el.getAttribute(l==='en' ? 'data-en' : 'data-zh');
+    if(v!==null) el.innerHTML = v;
+  });
+  document.getElementById('langBtn').textContent = (l==='en') ? '中文' : 'EN';
+  document.title = (l==='en')
+    ? 'PID_Liner · UI Redesign Proposal — 3 Styles'
+    : 'PID_Liner · 视觉重设计原型 — 三款式 A/B/T';
+}
+</script>
+</body>
+</html>
