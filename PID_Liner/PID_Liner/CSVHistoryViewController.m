@@ -133,28 +133,8 @@ static const NSInteger kLineCountStatCap = 100000;
 
 #pragma mark - 显示模型
 
-/// 扁平化显示项（用于TableView数据源）
-@interface CSVDisplayItem : NSObject
-@property (nonatomic, strong) CSVRecord *record;
-@property (nonatomic, assign) NSInteger depth;           // 0=父记录, 1=子记录
-@property (nonatomic, assign) BOOL isParent;             // 是否为父记录
-@property (nonatomic, assign) BOOL isExpanded;           // 父记录: 是否展开
-@property (nonatomic, assign) NSInteger childCount;      // 父记录: 子记录数
-@property (nonatomic, assign) NSInteger groupIndex;      // 在 recordGroups 中的索引
-@property (nonatomic, copy, nullable) NSString *chainId; // 关联的迭代链ID
-@property (nonatomic, assign) NSInteger iterationNumber; // 子记录: 第几轮
-@end
-
-@implementation CSVDisplayItem
-@end
-
-/// CSV记录分组（父记录 + 子记录）
-@interface CSVRecordGroup : NSObject
-@property (nonatomic, strong) CSVRecord *parentRecord;
-@property (nonatomic, strong) NSMutableArray<CSVRecord *> *childRecords;
-@property (nonatomic, assign) BOOL isExpanded;
-@property (nonatomic, copy, nullable) NSString *chainId;
-@end
+// (CSVRecordGroup 已上移到 .h —— 分组逻辑抽为 +groupsFromRecords: 纯函数供单元测试;
+//  旧的扁平化 CSVDisplayItem 随 section 化改造删除:section = BBL 组,cell = Session)
 
 @implementation CSVRecordGroup
 @end
@@ -164,8 +144,6 @@ static const NSInteger kLineCountStatCap = 100000;
 @interface CSVHistoryViewController ()
 @property (nonatomic, strong) UILabel *emptyLabel;
 @property (nonatomic, strong) NSMutableArray<CSVRecordGroup *> *recordGroups;
-@property (nonatomic, strong) NSMutableArray<CSVDisplayItem *> *displayItems;
-@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *chainInfoCache; // CSV路径 → 链信息
 @end
 
 @implementation CSVHistoryViewController
@@ -190,8 +168,6 @@ static const NSInteger kLineCountStatCap = 100000;
         _csvRecords = [NSMutableArray array];
     }
     _recordGroups = [NSMutableArray array];
-    _displayItems = [NSMutableArray array];
-    _chainInfoCache = [NSMutableDictionary dictionary];
 
     [self setupUI];
     // 🔑 不在这里 loadExistingCSVFiles——紧跟的 viewWillAppear 会触发一次,别重复扫描
@@ -248,12 +224,19 @@ static const NSInteger kLineCountStatCap = 100000;
         action:@selector(clearAllRecords)];
 
     // 创建TableView
-    _tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    // 🔑 grouped:section = BBL 转换批次(section头 = 账本卡头,cell = Session),卡头不悬浮
+    _tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleGrouped];
     _tableView.delegate = self;
     _tableView.dataSource = self;
     _tableView.translatesAutoresizingMaskIntoConstraints = NO;
     _tableView.rowHeight = UITableViewAutomaticDimension;
     _tableView.estimatedRowHeight = 80;
+    // 🔑 组头高度用固定值(自适应 section header 在部分 iOS 版本会塌成 0 → 整页空白,真机已踩)
+    // 74pt = 3+68+3:卡内容纳两行批次名 + 元信息行
+    _tableView.sectionHeaderHeight = 74;
+    _tableView.estimatedSectionHeaderHeight = 74;
+    _tableView.sectionFooterHeight = 10;  // 组间距
+    if (@available(iOS 15.0, *)) { _tableView.sectionHeaderTopPadding = 0; }
     _tableView.backgroundColor = NBTheme.bg;
     _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;  // 卡片行自带间隙,不要系统分割线
     [_tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"CSVCell"];
@@ -294,9 +277,10 @@ static const NSInteger kLineCountStatCap = 100000;
     NSArray *files = [fm contentsOfDirectoryAtPath:documentsDir error:nil];
 
     [_csvRecords removeAllObjects];
-    [_chainInfoCache removeAllObjects];
 
-    // 1️⃣ 扫描所有CSV文件，创建CSVRecord + 提取链信息
+    // 1️⃣ 扫描所有 CSV → CSVRecord
+    //    sourceBBL(转换批次身份)优先读 header "# Source BBL:"(新管线写入,重名落盘时已加序号),
+    //    历史文件无此行 → 回退文件名前缀(`_sessionN` 之前的部分)
     for (NSString *file in files) {
         if ([file.pathExtension.lowercaseString isEqualToString:@"csv"]) {
             NSString *fullPath = [documentsDir stringByAppendingPathComponent:file];
@@ -308,130 +292,108 @@ static const NSInteger kLineCountStatCap = 100000;
             NSInteger sessionIndex = 0;
 
             if (parts.count >= 2) {
-                sourceBBL = parts[0];
+                sourceBBL = [CSVHistoryViewController bblIdentityFromBaseName:parts[0]];
                 sessionIndex = [parts[1] integerValue];
             } else {
                 sourceBBL = baseName;
             }
+
+            NSString *headerBBL = [self readSourceBBLHeader:fullPath];
+            if (headerBBL.length > 0) sourceBBL = headerBBL;
 
             CSVRecord *record = [[CSVRecord alloc] initWithFileName:file
                                                            filePath:fullPath
                                                           sourceBBL:sourceBBL
                                                        sessionIndex:sessionIndex];
             [_csvRecords addObject:record];
-
-            // 提取迭代链信息并缓存
-            NSDictionary *chainInfo = [self extractChainInfoFromCSVAtPath:fullPath];
-            if (chainInfo) {
-                _chainInfoCache[fullPath] = chainInfo;
-            }
         }
     }
 
-    // 2️⃣ 加载所有迭代链
-    NSArray<IterationChain *> *allChains = [[IterationChainManager sharedManager] allChains];
-
-    // 3️⃣ 按chainId分组子记录（两种来源：CSV头部标记 + 迭代链records）
-    NSMutableDictionary<NSString *, NSMutableArray<CSVRecord *> *> *chainChildMap = [NSMutableDictionary dictionary];
-    NSMutableSet *childFilePaths = [NSMutableSet set];
-
-    // 3a. 来源1: CSV头部 # Chain ID: 标记
-    for (CSVRecord *record in _csvRecords) {
-        NSDictionary *chainInfo = _chainInfoCache[record.filePath];
-        if (chainInfo) {
-            NSString *chainId = chainInfo[@"chainId"];
-            if (!chainChildMap[chainId]) {
-                chainChildMap[chainId] = [NSMutableArray array];
-            }
-            [chainChildMap[chainId] addObject:record];
-            [childFilePaths addObject:record.filePath];
-        }
-    }
-
-    // 3b. 来源2: 迭代链JSON中的records（csvFileName匹配）
-    for (IterationChain *chain in allChains) {
-        NSString *chainId = chain.chainId;
-        if (!chainChildMap[chainId]) {
-            chainChildMap[chainId] = [NSMutableArray array];
-        }
-
-        for (PIDTuningRecord *tuningRecord in chain.records) {
-            NSString *targetFileName = tuningRecord.csvFileName;
-            if (!targetFileName.length) continue;
-
-            // 在所有CSV中查找匹配的文件
-            for (CSVRecord *csvRecord in _csvRecords) {
-                if ([csvRecord.fileName isEqualToString:targetFileName] &&
-                    ![childFilePaths containsObject:csvRecord.filePath] &&
-                    ![csvRecord.filePath isEqualToString:chain.initialCSVPath]) {
-                    [chainChildMap[chainId] addObject:csvRecord];
-                    [childFilePaths addObject:csvRecord.filePath];
-                    break;
-                }
-            }
-        }
-    }
-
-    // 4️⃣ 构建分组
-    NSMutableArray<CSVRecordGroup *> *groups = [NSMutableArray array];
-    NSMutableSet *groupedPaths = [NSMutableSet set]; // 已归入某组的CSV路径
-
-    // 4a. 处理有迭代链的记录
-    for (IterationChain *chain in allChains) {
-        // 查找父记录（chain的initialCSVPath）
-        CSVRecord *parentRecord = nil;
-        for (CSVRecord *record in _csvRecords) {
-            if ([record.filePath isEqualToString:chain.initialCSVPath]) {
-                parentRecord = record;
-                break;
-            }
-        }
-
-        if (!parentRecord) {
-            // 父记录文件已删除，跳过此链（子记录后续作为独立记录处理）
-            continue;
-        }
-
-        CSVRecordGroup *group = [[CSVRecordGroup alloc] init];
-        group.chainId = chain.chainId;
-        group.parentRecord = parentRecord;
-        group.childRecords = chainChildMap[chain.chainId] ?: [NSMutableArray array];
-        group.isExpanded = NO;
-
-        [groupedPaths addObject:parentRecord.filePath];
-
-        // 子记录按创建时间排序
-        [group.childRecords sortUsingComparator:^NSComparisonResult(CSVRecord *a, CSVRecord *b) {
-            return [a.createTime compare:b.createTime];
-        }];
-        for (CSVRecord *child in group.childRecords) {
-            [groupedPaths addObject:child.filePath];
-        }
-
-        [groups addObject:group];
-    }
-
-    // 4b. 处理独立记录（非链父记录、非链子记录）
-    for (CSVRecord *record in _csvRecords) {
-        if (![groupedPaths containsObject:record.filePath]) {
-            CSVRecordGroup *group = [[CSVRecordGroup alloc] init];
-            group.parentRecord = record;
-            group.childRecords = [NSMutableArray array];
-            group.isExpanded = NO;
-            [groups addObject:group];
-        }
-    }
-
-    // 5️⃣ 按父记录创建时间倒序
-    [groups sortUsingComparator:^NSComparisonResult(CSVRecordGroup *a, CSVRecordGroup *b) {
-        return [b.parentRecord.createTime compare:a.parentRecord.createTime];
-    }];
-
-    self.recordGroups = groups;
-    [self buildDisplayItems];
+    // 2️⃣ 按 sourceBBL 聚成分组(纯函数,单元测试覆盖)
+    self.recordGroups = [[self class] groupsFromRecords:_csvRecords];
+    NSLog(@"🔍 [CSV列表] 文件数=%lu 记录数=%lu 组数=%lu", (unsigned long)files.count, (unsigned long)_csvRecords.count, (unsigned long)self.recordGroups.count);
     [self updateEmptyState];
     [_tableView reloadData];
     [self countLinesAsyncIfNeeded];
+}
+
+/// 🔑 纯函数分组:按 sourceBBL 聚合(一次转换 BBL = 一个组)
+/// 父行 = 组内最小 sessionIndex 的记录;子行按 sessionIndex 升序;组按父记录创建时间倒序
++ (NSArray<CSVRecordGroup *> *)groupsFromRecords:(NSArray<CSVRecord *> *)records {
+    NSMutableDictionary<NSString *, NSMutableArray<CSVRecord *> *> *byBBL = [NSMutableDictionary dictionary];
+    for (CSVRecord *record in records) {
+        NSString *key = record.sourceBBL.length > 0 ? record.sourceBBL : record.fileName;
+        if (!byBBL[key]) byBBL[key] = [NSMutableArray array];
+        [byBBL[key] addObject:record];
+    }
+
+    NSMutableArray<CSVRecordGroup *> *groups = [NSMutableArray array];
+    for (NSString *key in byBBL) {
+        NSMutableArray<CSVRecord *> *sessions = byBBL[key];
+        [sessions sortUsingComparator:^NSComparisonResult(CSVRecord *a, CSVRecord *b) {
+            if (a.sessionIndex != b.sessionIndex) {
+                return a.sessionIndex < b.sessionIndex ? NSOrderedAscending : NSOrderedDescending;
+            }
+            return [a.createTime compare:b.createTime];
+        }];
+        CSVRecordGroup *group = [[CSVRecordGroup alloc] init];
+        group.groupKey = key;
+        group.parentRecord = sessions.firstObject;
+        group.childRecords = sessions.count > 1
+            ? [NSMutableArray arrayWithArray:[sessions subarrayWithRange:NSMakeRange(1, sessions.count - 1)]]
+            : [NSMutableArray array];
+        group.isExpanded = NO;
+        [groups addObject:group];
+    }
+
+    [groups sortUsingComparator:^NSComparisonResult(CSVRecordGroup *a, CSVRecordGroup *b) {
+        return [b.parentRecord.createTime compare:a.parentRecord.createTime];
+    }];
+    return groups;
+}
+
+/// 从 CSV 文件名前缀恢复 BBL 身份:剥掉尾部的转换时间戳 `_(8位日期)_(6位时间)`
+/// 🔑 时间戳是「逐 Session 解码时刻」——同一 BBL 的各 Session 解码跨秒后前缀会裂开
+/// (真机实锤:25mini.BBL 的 5 个 Session 裂成 121050/121051/121052/121053 四个前缀),
+/// 必须按 BBL 本名聚合;新管线此值优先来自 header "# Source BBL:"
++ (NSString *)bblIdentityFromBaseName:(NSString *)baseName {
+    if (baseName.length == 0) return baseName;
+    NSError *err = nil;
+    NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:
+                               @"_[0-9]{8}_[0-9]{6}$" options:0 error:&err];
+    if (err) return baseName;
+    NSString *stripped = [re stringByReplacingMatchesInString:baseName
+                                                      options:0
+                                                        range:NSMakeRange(0, baseName.length)
+                                                 withTemplate:@""];
+    while ([stripped hasSuffix:@"_"]) {  // BBL 本名自带下划线结尾的,剥完时间戳后裁掉
+        stripped = [stripped substringToIndex:stripped.length - 1];
+    }
+    return stripped;
+}
+
+/// 读 CSV 头部 "# Source BBL:"(4KB 内;无此行返回 nil,调用方回退文件名前缀)
+- (nullable NSString *)readSourceBBLHeader:(NSString *)filePath {
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:filePath];
+    if (!handle) return nil;
+    @try {
+        NSData *data = [handle readDataOfLength:4096];
+        if (!data) return nil;
+        NSString *content = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        for (NSString *line in [content componentsSeparatedByString:@"\n"]) {
+            NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if ([trimmed hasPrefix:@"# Source BBL:"]) {
+                return [[trimmed substringFromIndex:[@"# Source BBL:" length]]
+                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            }
+            if (trimmed.length > 0 && ![trimmed hasPrefix:@"#"]) break;  // 头部注释区结束
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"⚠️ 读取 Source BBL 异常: %@", exception);
+    } @finally {
+        [handle closeFile];
+    }
+    return nil;
 }
 
 /// 行数统计缓存(NSCache 线程安全):路径|文件大小 → 行数;同会话内文件没变就不重算
@@ -479,16 +441,7 @@ static const NSInteger kLineCountStatCap = 100000;
 
 - (void)addRecord:(CSVRecord *)record {
     [_csvRecords insertObject:record atIndex:0];
-
-    CSVRecordGroup *group = [[CSVRecordGroup alloc] init];
-    group.parentRecord = record;
-    group.childRecords = [NSMutableArray array];
-    group.isExpanded = NO;
-
-    [_recordGroups insertObject:group atIndex:0];
-    [self buildDisplayItems];
-    [self updateEmptyState];
-    [_tableView reloadData];
+    [self loadExistingCSVFiles];  // 按 BBL 批次重聚(新记录可能归入已有组)
 }
 
 - (void)updateEmptyState {
@@ -529,23 +482,26 @@ static const NSInteger kLineCountStatCap = 100000;
 
     [_csvRecords removeAllObjects];
     [_recordGroups removeAllObjects];
-    [_displayItems removeAllObjects];
-    [_chainInfoCache removeAllObjects];
     [self updateEmptyState];
     [_tableView reloadData];
 }
 
 #pragma mark - UITableViewDataSource
 
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return self.recordGroups.count;
+}
+
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return self.displayItems.count;
+    CSVRecordGroup *group = self.recordGroups[section];
+    return group.isExpanded ? (group.childRecords.count + 1) : 0;  // 展开时第 0 行 = 组内 S1
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"CSVCell" forIndexPath:indexPath];
 
-    CSVDisplayItem *item = self.displayItems[indexPath.row];
-    CSVRecord *record = item.record;
+    CSVRecordGroup *group = self.recordGroups[indexPath.section];
+    CSVRecord *record = (indexPath.row == 0) ? group.parentRecord : group.childRecords[indexPath.row - 1];
 
     // 🔑 V3 卡片行:白底圆角卡(云白间隙当分隔),复用时只建一次
     if (!cell.backgroundView) {
@@ -569,82 +525,113 @@ static const NSInteger kLineCountStatCap = 100000;
     config.textProperties.color = NBTheme.ink;
     config.textToSecondaryTextVerticalPadding = 3;
 
-    if (item.isParent) {
-        // 🔹 父记录
-        config.text = record.displayName;
-
-        NSMutableString *subtitle = [NSMutableString string];
-        // 🔑 sessionIndex 来自文件名"_sessionN"(已是1-based人类序号),显示不能再+1
-        //    (历史双+1导致"第6条显示Session7",2026-10-13排查实锤)
-        // 🔑 行数统计上限10万,到顶的文件显示"100000+行"而非误导性的精确值
-        NSString *lineText = (record.lineCount >= kLineCountStatCap)
-            ? [NSString stringWithFormat:@"%ld+ 行", (long)kLineCountStatCap]
-            : [NSString stringWithFormat:@"%ld 行", (long)record.lineCount];
-        [subtitle appendFormat:@"Session %ld | %@ | %@\n%@",
-                (long)record.sessionIndex,
-                [record formattedFileSize],
-                lineText,
-                [record formattedCreateTime]];
-
-        if (item.childCount > 0) {
-            [subtitle appendFormat:@"\n🔄 %ld轮迭代", (long)item.childCount];
-        }
-
-        config.secondaryText = subtitle;
-        config.secondaryTextProperties.numberOfLines = 3;
-        config.secondaryTextProperties.color = NBTheme.dim;
-
-        if (item.childCount > 0) {
-            // 有子记录：展开/折叠指示(迭代链 = 青绿,与首页方案迭代同色)
-            config.image = [UIImage systemImageNamed:item.isExpanded ? @"chevron.down" : @"chevron.right"];
-            config.imageProperties.tintColor = NBTheme.accentGreen;
-            cell.accessoryView = nil;
-            cell.accessoryType = UITableViewCellAccessoryNone;
-        } else {
-            // 独立记录(文档 = 电光蓝,与首页独立分析同色)
-            config.image = [UIImage systemImageNamed:@"doc.text"];
-            config.imageProperties.tintColor = NBTheme.accentBlue;
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        }
-    } else {
-        // 🔹 子记录（迭代轮次）
-        NSString *iterationLabel = item.iterationNumber > 0
-            ? [NSString stringWithFormat:@"第%ld轮", (long)item.iterationNumber]
-            : @"迭代飞行";
-        config.text = [NSString stringWithFormat:@"%@ %@", iterationLabel, record.displayName];
-        config.secondaryText = [NSString stringWithFormat:@"%@ | %@",
-                [record formattedFileSize],
-                [record formattedCreateTime]];
-        config.secondaryTextProperties.numberOfLines = 1;
-        config.secondaryTextProperties.color = NBTheme.faint;
-        config.image = [UIImage systemImageNamed:@"arrow.turn.down.right"];
-        config.imageProperties.tintColor = NBTheme.faint;
-        cell.accessoryType = UITableViewCellAccessoryNone;
-    }
+    // 🔹 Session 行(S 序号来自文件名"_sessionN",已是 1-based 人类序,显示不 +1)
+    // 🔑 行数统计上限10万,到顶的文件显示"100000+行"而非误导性的精确值
+    NSString *lineText = (record.lineCount >= kLineCountStatCap)
+        ? [NSString stringWithFormat:@"%ld+ 行", (long)kLineCountStatCap]
+        : [NSString stringWithFormat:@"%ld 行", (long)record.lineCount];
+    config.text = [NSString stringWithFormat:@"S%ld · %@", (long)record.sessionIndex, record.displayName];
+    config.secondaryText = [NSString stringWithFormat:@"%@ | %@\n%@",
+            [record formattedFileSize],
+            lineText,
+            [record formattedCreateTime]];
+    config.secondaryTextProperties.numberOfLines = 2;
+    config.secondaryTextProperties.color = NBTheme.dim;
+    config.image = [UIImage systemImageNamed:@"doc.text"];
+    config.imageProperties.tintColor = NBTheme.accentBlue;
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
 
     cell.contentConfiguration = config;
-
-    // 子记录缩进
-    cell.indentationLevel = (NSInteger)item.depth;
-    cell.indentationWidth = 24;
-
     return cell;
+}
+
+#pragma mark - 组头(BBL 账本卡头)
+
+/// 组头 = 账本卡:teal 圆点 + BBL 批次名 + 聚合元信息 + Session 数 + 折叠箭头;点击展开/收起
+/// 🔑 实现:纯 frame 布局的普通 UIView——UITableViewHeaderFooterView + Auto Layout 在真机/模拟器
+/// 上渲染为空白(排查实锤),换 frame 实现彻底绕开该坑;高度由 sectionHeaderHeight 固定 74 保证
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    CSVRecordGroup *group = self.recordGroups[section];
+    CSVRecord *head = group.parentRecord;
+
+    NSInteger totalSize = head.fileSize;
+    NSInteger totalLines = head.lineCount;
+    for (CSVRecord *child in group.childRecords) {
+        totalSize += child.fileSize;
+        totalLines += child.lineCount;
+    }
+
+    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 74)];
+    v.backgroundColor = [UIColor colorWithRed:1 green:0.87 blue:0.35 alpha:0.35];  // DEBUG:可见性探测底,显示确认后移除
+
+    UIView *card = [[UIView alloc] initWithFrame:CGRectInset(v.bounds, 8, 3)];
+    card.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    card.backgroundColor = NBTheme.card;
+    card.layer.cornerRadius = 16;
+    card.layer.borderWidth = 1;
+    card.layer.borderColor = NBTheme.hairline.CGColor;
+    [v addSubview:card];
+
+    CGFloat cardW = CGRectGetWidth(card.bounds);
+
+    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(13, CGRectGetMidY(card.bounds) - 4.5, 9, 9)];
+    dot.backgroundColor = NBTheme.accentGreen;
+    dot.layer.cornerRadius = 4.5;
+    [card addSubview:dot];
+
+    UILabel *name = [[UILabel alloc] initWithFrame:CGRectMake(31, 9, cardW - 31 - 16, 36)];
+    name.text = group.groupKey;
+    name.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
+    name.textColor = NBTheme.ink;
+    name.numberOfLines = 2;
+    name.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [card addSubview:name];
+
+    UILabel *count = [[UILabel alloc] initWithFrame:CGRectMake(cardW - 104, CGRectGetMidY(card.bounds) - 7, 92, 14)];
+    count.text = [NSString stringWithFormat:@"%ld 个Session", (long)(group.childRecords.count + 1)];
+    count.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightBold];
+    count.textColor = NBTheme.accentGreen;
+    count.textAlignment = NSTextAlignmentRight;
+    count.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [card addSubview:count];
+
+    UILabel *meta = [[UILabel alloc] initWithFrame:CGRectMake(31, 48, cardW - 31 - 18, 12)];
+    meta.text = [NSString stringWithFormat:@"%ld SESSIONS · %.1f MB · %ld 行",
+                 (long)(group.childRecords.count + 1),
+                 totalSize / (1024.0 * 1024.0),
+                 (long)totalLines];
+    meta.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+    meta.textColor = NBTheme.faint;
+    meta.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [card addSubview:meta];
+
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(groupHeadTapped:)];
+    [v addGestureRecognizer:tap];
+    v.tag = section;
+
+    return v;
+}
+
+/// 组头点击 → 展开/收起该 BBL 组
+- (void)groupHeadTapped:(UITapGestureRecognizer *)tap {
+    [self toggleExpandForGroupAtIndex:tap.view.tag];
 }
 
 #pragma mark - UITableViewDelegate
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    // 所有 Session 行 → 操作菜单(组头的展开/收起在卡头点击,不占 didSelect)
+    [self showActionSheetForRecord:[self recordAtIndexPath:indexPath]];
+}
 
-    CSVDisplayItem *item = self.displayItems[indexPath.row];
-
-    if (item.isParent && item.childCount > 0) {
-        // 父记录有子记录 → 展开/折叠
-        [self toggleExpandForGroupAtIndex:item.groupIndex];
-    } else {
-        // 独立记录或子记录 → 显示操作菜单
-        [self showActionSheetForRecord:item.record];
-    }
+/// 组内寻址:row 0 = 父 Session(S1),其余 = 子 Session
+- (nullable CSVRecord *)recordAtIndexPath:(NSIndexPath *)indexPath {
+    CSVRecordGroup *group = self.recordGroups[indexPath.section];
+    if (!group) return nil;
+    if (indexPath.row == 0) return group.parentRecord;
+    if (indexPath.row - 1 < (NSInteger)group.childRecords.count) return group.childRecords[indexPath.row - 1];
+    return nil;
 }
 
 /**
@@ -701,7 +688,8 @@ static const NSInteger kLineCountStatCap = 100000;
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
     trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 
-    CSVDisplayItem *item = self.displayItems[indexPath.row];
+    // 原始转换产物:每行(含组头展开后的 S1)都可直接分享/重命名/删除
+    CSVRecord *record = [self recordAtIndexPath:indexPath];
 
     // 分享操作
     UIContextualAction *shareAction = [UIContextualAction
@@ -735,206 +723,38 @@ static const NSInteger kLineCountStatCap = 100000;
         }];
     deleteAction.image = [UIImage systemImageNamed:@"trash"];
 
-    // 子记录不需要重命名（迭代CSV文件名是系统生成的）
-    if (!item.isParent) {
-        return [UISwipeActionsConfiguration configurationWithActions:@[shareAction, deleteAction]];
-    }
-
     return [UISwipeActionsConfiguration configurationWithActions:@[shareAction, renameAction, deleteAction]];
 }
 
 #pragma mark - 分组与显示辅助方法
 
-/// 从CSV文件头部提取迭代链信息
-/// @return @{@"chainId": @"xxx", @"iteration": @(N)} 或 nil
-- (nullable NSDictionary *)extractChainInfoFromCSVAtPath:(NSString *)filePath {
-    NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:filePath];
-    if (!handle) return nil;
-
-    NSString *chainId = nil;
-    NSInteger iteration = 0;
-
-    @try {
-        NSData *data = [handle readDataOfLength:4096];
-        if (!data) return nil;
-
-        NSString *content = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        if (!content) return nil;
-
-        NSArray *lines = [content componentsSeparatedByString:@"\n"];
-        for (NSString *line in lines) {
-            NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-
-            if ([trimmed hasPrefix:@"# Chain ID:"]) {
-                chainId = [[trimmed substringFromIndex:[@"# Chain ID:" length]]
-                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            } else if ([trimmed hasPrefix:@"# Chain Iteration:"]) {
-                iteration = [[[trimmed substringFromIndex:[@"# Chain Iteration:" length]]
-                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] integerValue];
-            }
-
-            // 非注释行结束header区域
-            if (trimmed.length > 0 && ![trimmed hasPrefix:@"#"]) break;
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"⚠️ 读取CSV链信息异常: %@", exception);
-    } @finally {
-        [handle closeFile];
-    }
-
-    if (chainId) {
-        return @{@"chainId": chainId, @"iteration": @(iteration)};
-    }
-    return nil;
-}
-
-/// 从分组数据构建扁平化显示数组
-- (void)buildDisplayItems {
-    NSMutableArray<CSVDisplayItem *> *items = [NSMutableArray array];
-
-    for (NSInteger g = 0; g < self.recordGroups.count; g++) {
-        CSVRecordGroup *group = self.recordGroups[g];
-
-        // 父记录
-        CSVDisplayItem *parentItem = [[CSVDisplayItem alloc] init];
-        parentItem.record = group.parentRecord;
-        parentItem.depth = 0;
-        parentItem.isParent = YES;
-        parentItem.isExpanded = group.isExpanded;
-        parentItem.childCount = group.childRecords.count;
-        parentItem.groupIndex = g;
-        parentItem.chainId = group.chainId;
-        [items addObject:parentItem];
-
-        // 子记录（仅在展开时）
-        if (group.isExpanded) {
-            for (NSInteger c = 0; c < group.childRecords.count; c++) {
-                CSVDisplayItem *childItem = [[CSVDisplayItem alloc] init];
-                childItem.record = group.childRecords[c];
-                childItem.depth = 1;
-                childItem.isParent = NO;
-                childItem.groupIndex = g;
-
-                // 从缓存中取迭代轮次号
-                NSDictionary *cachedInfo = self.chainInfoCache[childItem.record.filePath];
-                if (cachedInfo) {
-                    childItem.iterationNumber = [cachedInfo[@"iteration"] integerValue];
-                } else {
-                    childItem.iterationNumber = (NSInteger)(c + 2); // 退化为序号
-                }
-                childItem.chainId = group.chainId;
-
-                [items addObject:childItem];
-            }
-        }
-    }
-
-    self.displayItems = items;
-}
-
-/// 查找指定分组的父记录在 displayItems 中的索引
-- (NSInteger)displayIndexForGroupParent:(NSInteger)groupIndex {
-    for (NSInteger i = 0; i < self.displayItems.count; i++) {
-        CSVDisplayItem *item = self.displayItems[i];
-        if (item.isParent && item.groupIndex == groupIndex) {
-            return i;
-        }
-    }
-    return NSNotFound;
-}
-
-/// 展开/折叠指定分组
-- (void)toggleExpandForGroupAtIndex:(NSInteger)groupIndex {
-    CSVRecordGroup *group = self.recordGroups[groupIndex];
-    NSInteger childCount = group.childRecords.count;
-    if (childCount == 0) return;
-
-    // 记录父记录位置
-    NSInteger parentIndex = [self displayIndexForGroupParent:groupIndex];
-
-    // 切换展开状态
+/// 展开/折叠指定 BBL 组(整段 section 重建,卡头箭头/子行一并刷新)
+- (void)toggleExpandForGroupAtIndex:(NSInteger)section {
+    CSVRecordGroup *group = self.recordGroups[section];
+    if (group.childRecords.count == 0) return;  // 单 Session 批次无子行
     group.isExpanded = !group.isExpanded;
-
-    // 构建插入/删除的indexPath
-    NSMutableArray<NSIndexPath *> *indexPaths = [NSMutableArray array];
-    for (NSInteger i = 0; i < childCount; i++) {
-        [indexPaths addObject:[NSIndexPath indexPathForRow:parentIndex + 1 + i inSection:0]];
-    }
-
-    // 重建显示数据
-    [self buildDisplayItems];
-
-    // 直接更新父Cell的图标（避免reload闪烁）
-    UITableViewCell *parentCell = [_tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:parentIndex inSection:0]];
-    if (parentCell) {
-        id<UIContentConfiguration> config = [parentCell contentConfiguration];
-        if ([config isKindOfClass:[UIListContentConfiguration class]]) {
-            UIListContentConfiguration *newConfig = [(UIListContentConfiguration *)config copy];
-            newConfig.image = [UIImage systemImageNamed:group.isExpanded ? @"chevron.down" : @"chevron.right"];
-            parentCell.contentConfiguration = newConfig;
-        }
-    }
-
-    // 动画插入/删除子行
-    [_tableView beginUpdates];
-    if (group.isExpanded) {
-        [_tableView insertRowsAtIndexPaths:indexPaths withRowAnimation:UITableViewRowAnimationAutomatic];
-    } else {
-        [_tableView deleteRowsAtIndexPaths:indexPaths withRowAnimation:UITableViewRowAnimationAutomatic];
-    }
-    [_tableView endUpdates];
+    [_tableView reloadSections:[NSIndexSet indexSetWithIndex:section]
+              withRowAnimation:UITableViewRowAnimationAutomatic];
 }
 
 #pragma mark - Actions
 
 - (void)deleteRecordAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.row >= self.displayItems.count) return;
+    // 原始转换产物语义:一次只删一个 Session 文件(整批清理走右上角清空)
+    CSVRecord *record = [self recordAtIndexPath:indexPath];
+    if (!record) return;
 
-    CSVDisplayItem *item = self.displayItems[indexPath.row];
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"删除这条 Session 记录?"
+        message:[NSString stringWithFormat:@"「%@」将被删除,不可恢复。", record.displayName]
+        preferredStyle:UIAlertControllerStyleAlert];
 
-    if (item.isParent && item.childCount > 0) {
-        // 父记录有子记录 → 确认弹窗，连带删除
-        NSString *message = [NSString stringWithFormat:@"此记录包含 %ld 轮迭代数据，将一并删除。", (long)item.childCount];
-        UIAlertController *alert = [UIAlertController
-            alertControllerWithTitle:@"删除记录"
-            message:message
-            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [self performDeleteSingleRecord:record];
+    }]];
 
-        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-            [self performDeleteParentAtIndexPath:indexPath];
-        }]];
-
-        [self presentViewController:alert animated:YES completion:nil];
-    } else {
-        // 独立记录或子记录 → 直接删除
-        [self performDeleteSingleRecord:item.record];
-    }
-}
-
-/// 删除父记录及其所有子记录
-- (void)performDeleteParentAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.row >= self.displayItems.count) return;
-
-    CSVDisplayItem *item = self.displayItems[indexPath.row];
-    CSVRecordGroup *group = self.recordGroups[item.groupIndex];
-    NSFileManager *fm = [NSFileManager defaultManager];
-
-    // 删除父记录
-    [fm removeItemAtPath:item.record.filePath error:nil];
-
-    // 删除所有子记录
-    for (CSVRecord *child in group.childRecords) {
-        [fm removeItemAtPath:child.filePath error:nil];
-    }
-
-    // 删除关联的迭代链
-    if (group.chainId.length > 0) {
-        [[IterationChainManager sharedManager] deleteChain:group.chainId];
-    }
-
-    NSLog(@"🗑 删除记录及%ld轮迭代: %@", (long)group.childRecords.count, item.record.fileName);
-    [self loadExistingCSVFiles];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 /// 删除单条记录（子记录或独立记录）
@@ -955,8 +775,8 @@ static const NSInteger kLineCountStatCap = 100000;
 }
 
 - (void)shareRecordAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.row >= self.displayItems.count) return;
-    CSVRecord *record = self.displayItems[indexPath.row].record;
+    CSVRecord *record = [self recordAtIndexPath:indexPath];
+    if (!record) return;
     NSURL *fileURL = [NSURL fileURLWithPath:record.filePath];
 
     // 🔥 如果有别名，创建临时副本使用别名文件名
@@ -1017,8 +837,8 @@ static const NSInteger kLineCountStatCap = 100000;
  * 🔥 重命名 CSV 文件（显示别名弹窗）
  */
 - (void)renameRecordAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.row >= self.displayItems.count) return;
-    CSVRecord *record = self.displayItems[indexPath.row].record;
+    CSVRecord *record = [self recordAtIndexPath:indexPath];
+    if (!record) return;
     [self showRenameAlertForRecord:record indexPath:indexPath];
 }
 
@@ -1163,12 +983,17 @@ static const NSInteger kLineCountStatCap = 100000;
     NSInteger index = sender.tag;
     if (index >= _csvRecords.count) return;
 
-    // 从原始csvRecords找到记录，再在displayItems中查找对应indexPath
+    // 按 filePath 在分组结构中定位(section,row)后复用分享流程
     CSVRecord *targetRecord = _csvRecords[index];
-    for (NSInteger i = 0; i < self.displayItems.count; i++) {
-        if ([self.displayItems[i].record.filePath isEqualToString:targetRecord.filePath]) {
-            [self shareRecordAtIndexPath:[NSIndexPath indexPathForRow:i inSection:0]];
-            return;
+    for (NSInteger s = 0; s < self.recordGroups.count; s++) {
+        CSVRecordGroup *group = self.recordGroups[s];
+        NSMutableArray<CSVRecord *> *all = [NSMutableArray arrayWithObject:group.parentRecord];
+        [all addObjectsFromArray:group.childRecords];
+        for (NSInteger r = 0; r < all.count; r++) {
+            if ([all[r].filePath isEqualToString:targetRecord.filePath]) {
+                [self shareRecordAtIndexPath:[NSIndexPath indexPathForRow:r inSection:s]];
+                return;
+            }
         }
     }
 }

@@ -69,6 +69,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// Documents 沙盒目录(转换产物落盘位置;与 ViewController/CSVHistory 一致)
 + (NSString *)documentsDirectory;
 
+/// 🔑 存储前重名防御:为候选基础名取 Documents 内唯一名(吴总→吴总1→吴总2…取第一个空闲)
+/// @param base 基础名(不含扩展名,通常为 BBL 文件名去扩展名)
+/// @param ext  扩展名(如 @"bbl";查重只比对同扩展名,别名的显示名不受影响)
+/// @param directory 在该目录内查重(生产传 Documents;测试传临时目录)
++ (NSString *)uniqueBaseName:(NSString *)base
+                   extension:(NSString *)ext
+                 inDirectory:(NSString *)directory;
+
+/// 便捷版:在 Documents 内查重
++ (NSString *)uniqueDocumentsBaseNameForBase:(NSString *)base extension:(NSString *)ext;
+
 /// Documents 是否已有 CSV 记录(空态兜底判断基准)
 + (BOOL)hasAnyCSVRecord;
 

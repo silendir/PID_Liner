@@ -354,10 +354,13 @@ typedef NS_ENUM(NSUInteger, MscStage) {
     }
 
     // asCopy:YES 已把文件复制到临时区,再转存沙盒(与扫码接收一致的落盘位置)
-    NSString *dest = [[BBLImportService documentsDirectory] stringByAppendingPathComponent:name];
+    // 🔑 存储前重名防御:同名 BBL 不覆盖,自动加序号(吴总→吴总1→吴总2),保留两者
+    NSString *uniqueBase = [BBLImportService uniqueDocumentsBaseNameForBase:name.stringByDeletingPathExtension
+                                                                  extension:name.pathExtension];
+    NSString *dest = [[BBLImportService documentsDirectory]
+        stringByAppendingPathComponent:[uniqueBase stringByAppendingPathExtension:name.pathExtension]];
     NSError *error = nil;
     NSURL *destURL = [NSURL fileURLWithPath:dest];
-    [[NSFileManager defaultManager] removeItemAtPath:dest error:nil];
     if (![[NSFileManager defaultManager] copyItemAtURL:url toURL:destURL error:&error]) {
         [self showAlertTitle:@"保存失败" message:error.localizedDescription];
         return;

@@ -1,2 +1,6 @@
 # Xcode 用户界面状态(窗口布局,无实义)
 *.xcuserstate
+
+# 真机数据备份(大体量,严禁入库)
+真机Documents备份/
+*.xcappdata

@@ -631,10 +631,13 @@
         return;
     }
 
-    // asCopy:YES 已复制到临时区,转存 Documents(与蓝牙/扫码导入一致的落盘位置)
-    NSString *dest = [[BBLImportService documentsDirectory] stringByAppendingPathComponent:name];
+    // asCopy:YES 已复制到临时区,转存 Documents
+    // 🔑 存储前重名防御:同名 BBL 不覆盖,自动加序号(吴总→吴总1→吴总2),保留两者
+    NSString *uniqueBase = [BBLImportService uniqueDocumentsBaseNameForBase:name.stringByDeletingPathExtension
+                                                                  extension:name.pathExtension];
+    NSString *dest = [[BBLImportService documentsDirectory]
+        stringByAppendingPathComponent:[uniqueBase stringByAppendingPathExtension:name.pathExtension]];
     NSError *copyError = nil;
-    [[NSFileManager defaultManager] removeItemAtPath:dest error:nil];
     if (![[NSFileManager defaultManager] copyItemAtURL:url toURL:[NSURL fileURLWithPath:dest] error:&copyError]) {
         [self showSimpleAlertWithTitle:@"保存失败" message:copyError.localizedDescription];
         return;

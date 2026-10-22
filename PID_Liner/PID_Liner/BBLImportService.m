@@ -196,8 +196,8 @@ typedef NS_ENUM(NSInteger, BBLImportErrorCode) {
         csvPath = origPath;
     }
 
-    // 注入元数据注释行(craftName/fw/PID/flightTime + 可选 motorKV)
-    [self injectMetadataIntoCSV:csvPath header:targetSession.header motorKV:motorKV];
+    // 注入元数据注释行(Source BBL/craftName/fw/PID/flightTime + 可选 motorKV)
+    [self injectMetadataIntoCSV:csvPath header:targetSession.header motorKV:motorKV sourceBBL:baseName];
 
     return csvPath;
 }
@@ -260,11 +260,32 @@ typedef NS_ENUM(NSInteger, BBLImportErrorCode) {
     return [fmt stringFromDate:[NSDate date]];
 }
 
+/// 🔑 存储前重名防御:候选名被占用则追加序号(吴总→吴总1→吴总2…),保留两者绝不覆盖
++ (NSString *)uniqueBaseName:(NSString *)base
+                   extension:(NSString *)ext
+                 inDirectory:(NSString *)directory {
+    if (base.length == 0) return base;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *candidate = base;
+    NSUInteger n = 1;
+    while ([fm fileExistsAtPath:[directory stringByAppendingPathComponent:
+                                 [candidate stringByAppendingPathExtension:ext]]]) {
+        candidate = [NSString stringWithFormat:@"%@%lu", base, (unsigned long)n];
+        n++;
+    }
+    return candidate;
+}
+
++ (NSString *)uniqueDocumentsBaseNameForBase:(NSString *)base extension:(NSString *)ext {
+    return [self uniqueBaseName:base extension:ext inDirectory:[self documentsDirectory]];
+}
+
 /// 向 CSV 头部注入 BBL 元数据注释行(供 PIDCSVParser 解析)
-/// 顺序:craftName → flightTime → firmware → PID(roll/pitch/yaw) → motorKV(可选)
+/// 顺序:sourceBBL → craftName → flightTime → firmware → PID(roll/pitch/yaw) → motorKV(可选)
 - (void)injectMetadataIntoCSV:(NSString *)csvPath
                        header:(BBLLogHeader *)header
-                      motorKV:(nullable NSString *)motorKV {
+                      motorKV:(nullable NSString *)motorKV
+                    sourceBBL:(nullable NSString *)sourceBBL {
     if (!csvPath || !header) return;
 
     NSError *readErr = nil;
@@ -277,6 +298,12 @@ typedef NS_ENUM(NSInteger, BBLImportErrorCode) {
     }
 
     NSMutableString *prefix = [NSMutableString string];
+
+    // 🔑 转换批次身份(接收落盘时对重名已加序号,如 吴总1)——CSV 列表按它分组的正牌依据,
+    //    不再依赖文件名前缀反推(文件流转/改名也不丢)
+    if (sourceBBL.length > 0) {
+        [prefix appendFormat:@"# Source BBL:%@\n", sourceBBL];
+    }
 
     // craftName
     if (header.craftName.length > 0) {
