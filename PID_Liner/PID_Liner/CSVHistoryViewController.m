@@ -52,9 +52,8 @@ static const NSInteger kLineCountStatCap = 100000;
         _fileSize = [attrs[NSFileSize] integerValue];
         _createTime = attrs[NSFileCreationDate] ?: [NSDate date];
     }
-
-    // 使用流式读取统计行数，避免大文件导致内存问题
-    _lineCount = [self countLinesInFileStreaming:_filePath maxLines:kLineCountStatCap];
+    // 🔑 行数统计不再在 init 里做——曾经这里主线程逐字节扫描整个 CSV(大文件上百 MB)
+    // 是列表打开卡顿的根因;现在由 CSVHistoryViewController 后台异步补齐(见 countLinesAsyncIfNeeded)
 }
 
 /// 流式读取文件统计行数，设置上限避免超大文件卡顿
@@ -185,7 +184,7 @@ static const NSInteger kLineCountStatCap = 100000;
     _chainInfoCache = [NSMutableDictionary dictionary];
 
     [self setupUI];
-    [self loadExistingCSVFiles];
+    // 🔑 不在这里 loadExistingCSVFiles——紧跟的 viewWillAppear 会触发一次,别重复扫描
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -420,6 +419,46 @@ static const NSInteger kLineCountStatCap = 100000;
     [self buildDisplayItems];
     [self updateEmptyState];
     [_tableView reloadData];
+    [self countLinesAsyncIfNeeded];
+}
+
+/// 行数统计缓存(NSCache 线程安全):路径|文件大小 → 行数;同会话内文件没变就不重算
++ (NSCache<NSString *, NSNumber *> *)lineCountCache {
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [[NSCache alloc] init]; });
+    return cache;
+}
+
+/// 🔑 行数后台补齐:列表用 fileSize 秒开,行数流式统计放后台跑完再刷一次
+/// (大 CSV 的整文件扫描曾经是 push 卡顿的根因;缓存命中后二次进入零开销)
+- (void)countLinesAsyncIfNeeded {
+    NSCache *cache = [[self class] lineCountCache];
+    NSMutableArray<CSVRecord *> *pending = [NSMutableArray array];
+    for (CSVRecord *r in _csvRecords) {
+        if (r.lineCount > 0) continue;  // 已有行数
+        NSString *key = [NSString stringWithFormat:@"%@|%@", r.filePath, @(r.fileSize)];
+        NSNumber *cached = [cache objectForKey:key];
+        if (cached) {
+            r.lineCount = cached.integerValue;
+        } else {
+            [pending addObject:r];
+        }
+    }
+    [_tableView reloadData];  // 缓存命中的行数先刷出来
+
+    if (pending.count == 0) return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        for (CSVRecord *r in pending) {
+            NSString *key = [NSString stringWithFormat:@"%@|%@", r.filePath, @(r.fileSize)];
+            NSInteger lines = [r countLinesInFileStreaming:r.filePath maxLines:kLineCountStatCap];
+            [cache setObject:@(lines) forKey:key];
+            r.lineCount = lines;  // NSInteger 写入,主线程 reload 后可见
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [_tableView reloadData];  // 一次性刷新行数列
+        });
+    });
 }
 
 - (void)reloadData {
