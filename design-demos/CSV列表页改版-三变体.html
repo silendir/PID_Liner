@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PID_Liner · CSV 列表页改版 — 三变体</title>
+<style>
+/* ============================================================
+   CSV 记录列表页改版 · 三变体(与首页 V3 同一令牌家族)
+   令牌: 云白底/白卡/墨色三级文字/蓝·青绿·珊瑚语义色/衬线标题/mono eyebrow
+   数据: 用户真机截图的真实文件名
+   ============================================================ */
+:root{
+  --bg:#F6F8FD; --card:#FFFFFF;
+  --ink:#0B1230; --dim:#5A6480; --faint:#9AA3BC;
+  --hairline:#E6EAF4;
+  --blue:#2B5BFF; --blue-tint:#EDF2FF; --blue-line:#C9D6F8;
+  --teal:#0FA47A; --teal-tint:#E7F8F2; --teal-line:#BCE7D8;
+  --coral:#F04E4E; --coral-tint:#FDEEED;
+  --amber:#F08A3C;
+  --serif:'Georgia','Times New Roman','STSong',serif;
+  --sans:-apple-system,'PingFang SC','Helvetica Neue',sans-serif;
+  --mono:'SF Mono','Menlo',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#EEF1F8;font-family:var(--sans);color:var(--ink);padding:32px 24px 60px}
+.page-head{max-width:1200px;margin:0 auto 28px}
+.eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--blue);text-transform:uppercase}
+h1{font-family:var(--serif);font-style:italic;font-size:30px;font-weight:600;margin:10px 0 6px}
+h1 b{color:var(--blue)}
+.sub{color:var(--dim);font-size:13px;max-width:900px}
+.row{display:flex;gap:36px;flex-wrap:wrap;max-width:1200px;margin:0 auto;align-items:flex-start}
+.col{display:flex;flex-direction:column;gap:10px;width:340px}
+.col .tag{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--dim);text-transform:uppercase}
+.col .tag b{color:var(--blue)}
+.col .desc{font-size:11.5px;color:var(--faint);line-height:1.6;max-width:340px;min-height:52px}
+/* iPhone 框 */
+.phone{width:340px;height:716px;background:var(--bg);border-radius:44px;border:6px solid #1d2436;box-shadow:0 0 0 1.5px #2a3350,0 18px 40px rgba(11,18,48,.12);overflow:hidden;position:relative}
+.island{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:96px;height:26px;background:#000;border-radius:999px;z-index:9}
+.screen{position:absolute;inset:0;padding:52px 0 0;display:flex;flex-direction:column}
+/* 导航 */
+.nav{display:flex;align-items:center;justify-content:space-between;padding:6px 14px 8px}
+.nav .bt{font-family:var(--mono);font-size:10px;color:var(--faint)}
+.nav .tt{font-size:15px;font-weight:600;color:var(--ink)}
+.nav .trash{width:30px;height:30px;border-radius:10px;background:#fff;border:1px solid var(--hairline);display:flex;align-items:center;justify-content:center}
+.rule{height:1px;background:var(--hairline)}
+/* 页头 */
+.pagehero{padding:14px 16px 10px}
+.pagehero .k{font-family:var(--mono);font-size:8.5px;letter-spacing:3px;color:var(--faint);text-transform:uppercase}
+.pagehero .t{font-family:var(--serif);font-size:21px;font-weight:600;margin-top:4px}
+.pagehero .t em{color:var(--blue);font-style:italic}
+.pagehero .m{font-family:var(--mono);font-size:9px;color:var(--faint);margin-top:5px}
+.list{flex:1;overflow:hidden;padding:4px 16px 0;display:flex;flex-direction:column;gap:8px}
+/* 通用小组件 */
+.chip{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:8.5px;border-radius:999px;padding:2.5px 8px}
+.chip.teal{color:var(--teal);background:var(--teal-tint);border:1px solid var(--teal-line);font-weight:700}
+.chip.blue{color:var(--blue);background:var(--blue-tint);border:1px solid var(--blue-line)}
+.chip.gray{color:var(--dim);background:#fff;border:1px solid var(--hairline)}
+.name{font-size:12.5px;font-weight:600;word-break:break-all;line-height:1.35}
+.meta{font-family:var(--mono);font-size:9px;color:var(--faint)}
+.date{font-family:var(--mono);font-size:8.5px;color:var(--faint)}
+.icon-tile{width:36px;height:36px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+
+/* ══════ V-A 档案卡 ══════ */
+.va .card{background:#fff;border:1px solid var(--hairline);border-radius:20px;padding:13px 14px;box-shadow:0 1px 2px rgba(11,18,48,.04),0 10px 26px rgba(11,18,48,.06);display:flex;flex-direction:column;gap:8px}
+.va .top{display:flex;gap:11px;align-items:flex-start}
+.va .tile{background:var(--blue-tint);border:1px solid var(--blue-line)}
+.va .r1{flex:1;min-width:0;display:flex;justify-content:space-between;gap:6px}
+.va .meta{display:flex;gap:5px;flex-wrap:wrap}
+.va .foot{display:flex;justify-content:space-between;align-items:center;border-top:1px dashed var(--hairline);padding-top:7px}
+
+/* ══════ V-B 分组账本 ══════ */
+.vb .card{background:#fff;border:1px solid var(--hairline);border-radius:18px;box-shadow:0 1px 2px rgba(11,18,48,.04),0 10px 26px rgba(11,18,48,.06);overflow:hidden}
+.vb .head{display:flex;align-items:center;gap:9px;padding:12px 13px;border-bottom:1px solid var(--hairline);background:linear-gradient(180deg,var(--teal-tint),#fff)}
+.vb .dot{width:9px;height:9px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 3px var(--teal-tint);flex-shrink:0}
+.vb .head .n{flex:1;min-width:0}
+.vb .rows{display:flex;flex-direction:column}
+.vb .r{display:flex;align-items:center;gap:9px;padding:9px 13px;border-bottom:.5px solid var(--hairline)}
+.vb .r:last-child{border-bottom:none}
+.vb .spine{width:2px;height:26px;border-radius:2px;background:var(--teal-line);margin-left:6px;flex-shrink:0}
+.vb .rn{font-family:var(--mono);font-size:8.5px;font-weight:700;color:var(--teal);background:var(--teal-tint);border:1px solid var(--teal-line);border-radius:8px;padding:2px 6px;flex-shrink:0}
+.vb .solo .head{background:#fff;border-bottom:none}
+.vb .solo .dot{background:var(--blue);box-shadow:0 0 0 3px var(--blue-tint)}
+.vb .foot{display:flex;justify-content:space-between;padding:8px 13px;border-top:.5px solid var(--hairline);background:#FBFCFF}
+.vb .more{font-family:var(--mono);font-size:9px;color:var(--teal)}
+
+/* ══════ V-C 彩色徽章流 ══════ */
+.vc .card{background:#fff;border:1px solid var(--hairline);border-radius:18px;padding:11px 12px;box-shadow:0 1px 2px rgba(11,18,48,.04),0 10px 26px rgba(11,18,48,.06);display:flex;gap:11px;align-items:stretch}
+.vc .spine{width:4px;border-radius:4px;flex-shrink:0}
+.vc .spine.teal{background:linear-gradient(180deg,var(--teal),#5FC3A8)}
+.vc .spine.blue{background:linear-gradient(180deg,var(--blue),#4D8BFF)}
+.vc .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.vc .chips{display:flex;gap:5px;flex-wrap:wrap}
+.vc .tile-wrap{display:flex;align-items:center}
+.vc .tile{width:40px;height:40px;border-radius:13px;display:flex;align-items:center;justify-content:center}
+.vc .tile.teal{background:linear-gradient(160deg,var(--teal-tint),#fff);border:1px solid var(--teal-line)}
+.vc .tile.blue{background:linear-gradient(160deg,var(--blue-tint),#fff);border:1px solid var(--blue-line)}
+.vc .num{font-family:var(--serif);font-style:italic;font-size:19px;font-weight:600;text-align:center;line-height:1}
+.vc .num small{display:block;font-family:var(--mono);font-style:normal;font-size:6.5px;letter-spacing:1px;color:var(--faint);margin-top:2px}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <div class="eyebrow">PID_Liner · CSV List Redesign · 3 Takes</div>
+  <h1>CSV 列表页改版 · <b>三变体</b></h1>
+  <p class="sub">与首页 V3 同一令牌家族（云白/白卡/墨色三级/蓝·青绿语义），每个变体一个明确的设计动作。数据为你真机截图的真实文件名。</p>
+</div>
+
+<div class="row">
+
+  <!-- ═══ V-A 档案卡 ═══ -->
+  <div class="col va">
+    <div class="tag"><b>V-A</b> · 档案卡 Editorial</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="nav">
+        <span class="bt">‹ 返回</span>
+        <span class="tt">CSV 转换记录</span>
+        <span class="trash"><svg width="13" height="13" viewBox="0 0 16 16"><rect x="3" y="2" width="8" height="11" rx="2" fill="#1B2233"/><line x1="5" y1="5" x2="9" y2="5" stroke="#5EEAD4" stroke-width="1.2"/><g stroke="#F04E4E" stroke-width="1.6" stroke-linecap="round"><line x1="11.5" y1="11.5" x2="14.5" y2="14.5"/><line x1="14.5" y1="11.5" x2="11.5" y2="14.5"/></g></svg></span>
+      </div>
+      <div class="rule"></div>
+      <div class="pagehero">
+        <div class="k">Flight Records · By Chain</div>
+        <div class="t">转换<em>档案</em></div>
+        <div class="m">3 RECORDS · 1 CHAIN · 23.7 MB TOTAL</div>
+      </div>
+      <div class="list">
+        <div class="card">
+          <div class="top">
+            <div class="icon-tile tile">
+              <svg width="18" height="18" viewBox="0 0 18 18"><rect x="3" y="1.5" width="12" height="15" rx="2.5" fill="#fff" stroke="var(--blue)" stroke-width="1.4"/><line x1="5.5" y1="5.5" x2="12.5" y2="5.5" stroke="var(--blue)" stroke-width="1.2"/><line x1="5.5" y1="8.5" x2="12.5" y2="8.5" stroke="var(--blue)" stroke-width="1.2" opacity=".5"/><line x1="5.5" y1="11.5" x2="10" y2="11.5" stroke="var(--blue)" stroke-width="1.2" opacity=".5"/></svg>
+            </div>
+            <div class="r1">
+              <div class="name">昊 2.5单独__20261018_143108_session2</div>
+              <span class="chip teal">5 轮迭代</span>
+            </div>
+          </div>
+          <div class="meta">
+            <span class="chip gray">S2</span>
+            <span class="chip gray">12.4 MB</span>
+            <span class="chip gray">84,213 行</span>
+          </div>
+          <div class="foot">
+            <span class="date">2026-10-18 14:31</span>
+            <span class="meta" style="color:var(--teal);font-weight:700">进行中 · R5 →</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="top">
+            <div class="icon-tile tile">
+              <svg width="18" height="18" viewBox="0 0 18 18"><rect x="3" y="1.5" width="12" height="15" rx="2.5" fill="#fff" stroke="var(--blue)" stroke-width="1.4"/><line x1="5.5" y1="5.5" x2="12.5" y2="5.5" stroke="var(--blue)" stroke-width="1.2"/><line x1="5.5" y1="8.5" x2="12.5" y2="8.5" stroke="var(--blue)" stroke-width="1.2" opacity=".5"/><line x1="5.5" y1="11.5" x2="10" y2="11.5" stroke="var(--blue)" stroke-width="1.2" opacity=".5"/></svg>
+            </div>
+            <div class="r1">
+              <div class="name">昊总 BETAFPVG473_V3 下午__20261012_173634_session6</div>
+              <span class="chip blue">独立</span>
+            </div>
+          </div>
+          <div class="meta">
+            <span class="chip gray">S6</span>
+            <span class="chip gray">8.1 MB</span>
+            <span class="chip gray">52,070 行</span>
+          </div>
+          <div class="foot">
+            <span class="date">2026-10-12 17:36</span>
+            <span class="meta">分析 / 诊断 →</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="top">
+            <div class="icon-tile tile">
+              <svg width="18" height="18" viewBox="0 0 18 18"><rect x="3" y="1.5" width="12" height="15" rx="2.5" fill="#fff" stroke="var(--blue)" stroke-width="1.4"/><line x1="5.5" y1="5.5" x2="12.5" y2="5.5" stroke="var(--blue)" stroke-width="1.2"/><line x1="5.5" y1="8.5" x2="12.5" y2="8.5" stroke="var(--blue)" stroke-width="1.2" opacity=".5"/><line x1="5.5" y1="11.5" x2="10" y2="11.5" stroke="var(--blue)" stroke-width="1.2" opacity=".5"/></svg>
+            </div>
+            <div class="r1">
+              <div class="name">515inch2.0__20261005_210058_session1</div>
+              <span class="chip blue">独立</span>
+            </div>
+          </div>
+          <div class="meta">
+            <span class="chip gray">S1</span>
+            <span class="chip gray">3.2 MB</span>
+            <span class="chip gray">21,884 行</span>
+          </div>
+          <div class="foot">
+            <span class="date">2026-10-05 21:00</span>
+            <span class="meta">分析 / 诊断 →</span>
+          </div>
+        </div>
+      </div>
+    </div></div>
+    <div class="desc">编辑感「档案卡」：mono 眉标 + 灰阶元信息 chips + 卡底虚线页脚放日期与去向。最克制、最「文件柜」。</div>
+  </div>
+
+  <!-- ═══ V-B 分组账本 ═══ -->
+  <div class="col vb">
+    <div class="tag"><b>V-B</b> · 分组账本 Ledger</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="nav">
+        <span class="bt">‹ 返回</span>
+        <span class="tt">CSV 转换记录</span>
+        <span class="trash"><svg width="13" height="13" viewBox="0 0 16 16"><rect x="3" y="2" width="8" height="11" rx="2" fill="#1B2233"/><line x1="5" y1="5" x2="9" y2="5" stroke="#5EEAD4" stroke-width="1.2"/><g stroke="#F04E4E" stroke-width="1.6" stroke-linecap="round"><line x1="11.5" y1="11.5" x2="14.5" y2="14.5"/><line x1="14.5" y1="11.5" x2="11.5" y2="14.5"/></g></svg></span>
+      </div>
+      <div class="rule"></div>
+      <div class="pagehero">
+        <div class="k">Flight Records · By Chain</div>
+        <div class="t">迭代<em>账本</em></div>
+        <div class="m">1 CHAIN · 2 STANDALONE · 23.7 MB TOTAL</div>
+      </div>
+      <div class="list">
+        <!-- 迭代链:一张卡 = 一个账本 -->
+        <div class="card">
+          <div class="head">
+            <div class="dot"></div>
+            <div class="n">
+              <div class="name" style="font-size:12px">昊 2.5单独__20261018_143108</div>
+              <div class="meta" style="margin-top:2px">SESSION 2 · 12.4 MB · 84,213 行</div>
+            </div>
+            <span class="chip teal">5 轮 · R5</span>
+          </div>
+          <div class="rows">
+            <div class="r">
+              <div class="spine"></div>
+              <span class="rn">R5</span>
+              <div style="flex:1;min-width:0">
+                <div class="name" style="font-size:11px;font-weight:500">昊 2.5单独__20261018_1812_session5</div>
+                <div class="meta" style="margin-top:2px">9.8 MB · 66,012 行</div>
+              </div>
+              <span class="date">10-18</span>
+            </div>
+            <div class="r">
+              <div class="spine"></div>
+              <span class="rn">R4</span>
+              <div style="flex:1;min-width:0">
+                <div class="name" style="font-size:11px;font-weight:500">昊 2.5单独__20261018_1654_session4</div>
+                <div class="meta" style="margin-top:2px">9.1 MB · 61,340 行</div>
+              </div>
+              <span class="date">10-18</span>
+            </div>
+          </div>
+          <div class="foot">
+            <span class="more">+ 3 更早轮次 ▾</span>
+            <span class="meta" style="color:var(--teal);font-weight:700">继续迭代 →</span>
+          </div>
+        </div>
+
+        <!-- 独立记录:小卡 -->
+        <div class="card solo">
+          <div class="head">
+            <div class="dot"></div>
+            <div class="n">
+              <div class="name" style="font-size:12px">昊总 BETAFPVG473_V3 下午__20261012_173634_session6</div>
+              <div class="meta" style="margin-top:2px">8.1 MB · 52,070 行</div>
+            </div>
+            <span class="chip blue">独立</span>
+          </div>
+          <div class="foot"><span class="date">2026-10-12 17:36</span><span class="meta">分析 / 诊断 →</span></div>
+        </div>
+
+        <div class="card solo">
+          <div class="head">
+            <div class="dot"></div>
+            <div class="n">
+              <div class="name" style="font-size:12px">515inch2.0__20261005_210058_session1</div>
+              <div class="meta" style="margin-top:2px">3.2 MB · 21,884 行</div>
+            </div>
+            <span class="chip blue">独立</span>
+          </div>
+          <div class="foot"><span class="date">2026-10-05 21:00</span><span class="meta">分析 / 诊断 →</span></div>
+        </div>
+      </div>
+    </div></div>
+    <div class="desc">「分组账本」：一张卡 = 一条迭代链，轮次行带青绿脊线与 R 编号，链内嵌套一目了然；独立记录降为小卡。信息结构最强。</div>
+  </div>
+
+  <!-- ═══ V-C 彩色徽章流 ═══ -->
+  <div class="col vc">
+    <div class="tag"><b>V-C</b> · 彩色徽章流 Poster</div>
+    <div class="phone"><div class="island"></div><div class="screen">
+      <div class="nav">
+        <span class="bt">‹ 返回</span>
+        <span class="tt">CSV 转换记录</span>
+        <span class="trash"><svg width="13" height="13" viewBox="0 0 16 16"><rect x="3" y="2" width="8" height="11" rx="2" fill="#1B2233"/><line x1="5" y1="5" x2="9" y2="5" stroke="#5EEAD4" stroke-width="1.2"/><g stroke="#F04E4E" stroke-width="1.6" stroke-linecap="round"><line x1="11.5" y1="11.5" x2="14.5" y2="14.5"/><line x1="14.5" y1="11.5" x2="11.5" y2="14.5"/></g></svg></span>
+      </div>
+      <div class="rule"></div>
+      <div class="pagehero">
+        <div class="k">Flight Records · By Chain</div>
+        <div class="t">飞行<em>日志墙</em></div>
+        <div class="m">3 RECORDS · 1 CHAIN · 23.7 MB TOTAL</div>
+      </div>
+      <div class="list">
+        <div class="card">
+          <div class="spine teal"></div>
+          <div class="body">
+            <div class="name">昊 2.5单独__20261018_143108_session2</div>
+            <div class="chips">
+              <span class="chip teal">🔄 5 轮迭代 · R5</span>
+              <span class="chip gray">S2</span>
+              <span class="date" style="align-self:center">10-18 14:31</span>
+            </div>
+            <div class="chips">
+              <span class="chip gray">12.4 MB</span>
+              <span class="chip gray">84,213 行</span>
+            </div>
+          </div>
+          <div class="tile-wrap">
+            <div class="tile teal"><div class="num" style="color:var(--teal)">5<small>ROUNDS</small></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="spine blue"></div>
+          <div class="body">
+            <div class="name">昊总 BETAFPVG473_V3 下午__20261012_173634_session6</div>
+            <div class="chips">
+              <span class="chip blue">独立记录</span>
+              <span class="chip gray">S6</span>
+              <span class="date" style="align-self:center">10-12 17:36</span>
+            </div>
+            <div class="chips">
+              <span class="chip gray">8.1 MB</span>
+              <span class="chip gray">52,070 行</span>
+            </div>
+          </div>
+          <div class="tile-wrap">
+            <div class="tile blue">
+              <svg width="19" height="19" viewBox="0 0 18 18"><rect x="3" y="1.5" width="12" height="15" rx="2.5" fill="#fff" stroke="var(--blue)" stroke-width="1.4"/><line x1="5.5" y1="5.5" x2="12.5" y2="5.5" stroke="var(--blue)" stroke-width="1.2"/><line x1="5.5" y1="8.5" x2="12.5" y2="8.5" stroke="var(--blue)" stroke-width="1.2" opacity=".5"/></svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="spine blue"></div>
+          <div class="body">
+            <div class="name">515inch2.0__20261005_210058_session1</div>
+            <div class="chips">
+              <span class="chip blue">独立记录</span>
+              <span class="chip gray">S1</span>
+              <span class="date" style="align-self:center">10-05 21:00</span>
+            </div>
+            <div class="chips">
+              <span class="chip gray">3.2 MB</span>
+              <span class="chip gray">21,884 行</span>
+            </div>
+          </div>
+          <div class="tile-wrap">
+            <div class="tile blue">
+              <svg width="19" height="19" viewBox="0 0 18 18"><rect x="3" y="1.5" width="12" height="15" rx="2.5" fill="#fff" stroke="var(--blue)" stroke-width="1.4"/><line x1="5.5" y1="5.5" x2="12.5" y2="5.5" stroke="var(--blue)" stroke-width="1.2"/><line x1="5.5" y1="8.5" x2="12.5" y2="8.5" stroke="var(--blue)" stroke-width="1.2" opacity=".5"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+    <div class="desc">「彩色徽章流」：左侧彩色脊线表明身份（青绿=链 / 蓝=独立），右侧大数字磁贴（5 ROUNDS），元信息全部 chip 化。最鲜艳、海报感最强。</div>
+  </div>
+
+</div>
+</body>
+</html>

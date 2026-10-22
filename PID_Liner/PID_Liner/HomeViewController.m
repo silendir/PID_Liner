@@ -3,6 +3,8 @@
 //  PID_Liner
 //
 //  首页 · Y 型三入口 (任务#28 阶段0.3)
+//  V3 明亮改版:色晕卡面 + 栏目矢量示意图(NBHomeIllustrationView) + 令牌(NBTheme)
+//  视觉基准: design-demos/首页改版-明亮示意图版.html (V3)
 //
 
 #import "HomeViewController.h"
@@ -16,6 +18,8 @@
 #import "IterationChain.h"
 #import "FCBluetoothService.h"
 #import "MSPClient.h"
+#import "NBTheme.h"
+#import "NBHomeIllustrationView.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <SVProgressHUD/SVProgressHUD.h>
 
@@ -28,6 +32,12 @@
 // 🔑 一键清黑匣子流水线状态(全程 HUD,不进页面)
 @property (nonatomic, assign) BOOL bbEraseRunning;         // 防重入:流水线跑完/失败前不允许再触发
 @property (nonatomic, assign) NSInteger bbPollCount;       // SUMMARY 轮询次数(判定总超时)
+// 🔑 V3 明亮改版:header 测高/入场动画/PRO 渐变同步
+@property (nonatomic, strong) UIView *proBadge;            // 方案迭代卡的 PRO(渐变 frame 需测高后同步)
+@property (nonatomic, strong) CAGradientLayer *proGradient;
+@property (nonatomic, strong) NSMutableArray<NBHomeIllustrationView *> *headerIllustrations;
+@property (nonatomic, assign) CGFloat headerSizedWidth;    // 已测高时的宽度(宽度变了才重测)
+@property (nonatomic, assign) BOOL introPlayed;            // 描线动画只播一次
 @end
 
 @implementation HomeViewController
@@ -37,9 +47,9 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     NSLog(@"本类为:%@", [NSString stringWithUTF8String:object_getClassName(self)]);
-    self.title = @"PID_Liner";
-    self.view.backgroundColor = [UIColor systemBackgroundColor];
+    self.view.backgroundColor = NBTheme.bg;  // V3:云白固定明亮(nav 标题由 header 大标题承载,不设 self.title)
     self.schemes = [NSMutableArray array];
+    self.headerIllustrations = [NSMutableArray array];
 
     [self setupNav];
     [self setupTableView];
@@ -49,31 +59,92 @@
     [super viewWillAppear:animated];
     // 每次回到首页刷新方案列表(迭代链可能在子页面变化)
     [self loadSchemes];
+    // 🔑 onStateChanged 是单槽回调(被子页/清匣流水线争用),回首页重挂、离页置 nil
+    [self installBLEBadgeObserver];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [FCBluetoothService shared].onStateChanged = nil;
+}
+
+// 首页固定明亮:深色系统下状态栏保持深色字(子页照旧跟随系统)
+- (UIStatusBarStyle)preferredStatusBarStyle {
+    return UIStatusBarStyleDarkContent;
+}
+
+// 🔑 tableHeaderView 测高:宽度烙进 frame → 强制布一遍 → fitting(宽度同时走参数) → 重赋值刷新 contentSize
+// (老做法在 viewDidLoad 里用 self.view.bounds 测,宽度未定时测高必错;以宽度变化为 key,首帧+旋转都会走到)
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGFloat w = CGRectGetWidth(self.view.bounds);
+    if (w <= 0) return;
+    if (w != _headerSizedWidth) {
+        _headerSizedWidth = w;
+        UIView *h = _headerView ?: _tableView.tableHeaderView;
+        if (h) {
+            h.frame = CGRectMake(0, 0, w, 1);
+            [h setNeedsLayout];
+            [h layoutIfNeeded];
+            CGFloat fit = [h systemLayoutSizeFittingSize:CGSizeMake(w, 0)
+                               withHorizontalFittingPriority:UILayoutPriorityRequired
+                                 verticalFittingPriority:UILayoutPriorityFittingSizeLevel].height;
+            h.frame = CGRectMake(0, 0, w, ceil(fit));
+            _tableView.tableHeaderView = h;
+        }
+    }
+    // PRO 渐变 frame:首帧子树可能还是零帧,每次布局都补同步(有真实 bounds 才写)
+    if (_proGradient && _proBadge.bounds.size.width > 0 &&
+        !CGRectEqualToRect(_proGradient.frame, _proBadge.bounds)) {
+        _proGradient.frame = _proBadge.bounds;
+    }
+    // 描线入场动画只播一次(等插图拿到真实宽度)
+    if (!_introPlayed && _headerIllustrations.firstObject.bounds.size.width > 0) {
+        _introPlayed = YES;
+        for (NBHomeIllustrationView *v in _headerIllustrations) [v playIntroAnimationOnce];
+    }
 }
 
 #pragma mark - UI Setup
 
 - (void)setupNav {
-    // 左上角 ☰ → 总列表(CSVHistoryVC,原始记录仓库)
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"line.horizontal.3"]
-                style:UIBarButtonItemStylePlain
-               target:self
-               action:@selector(totalListButtonTapped)];
+    // 左上角「CSV 记录」白底胶囊按钮 → 总列表(CSVHistoryVC,原始记录仓库)——款式照 V3 原型
+    UIButton *csvButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    csvButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentFill;
+    [csvButton setTitle:@"📄 CSV 记录" forState:UIControlStateNormal];
+    [csvButton setTitleColor:NBTheme.dim forState:UIControlStateNormal];
+    csvButton.titleLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightMedium];
+    csvButton.backgroundColor = NBTheme.card;
+    csvButton.layer.cornerRadius = 15;
+    csvButton.layer.borderWidth = 1;
+    csvButton.layer.borderColor = NBTheme.hairline.CGColor;
+    csvButton.contentEdgeInsets = UIEdgeInsetsMake(0, 12, 0, 12);
+    [csvButton addTarget:self action:@selector(totalListButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [csvButton.heightAnchor constraintEqualToConstant:30].active = YES;
+    [csvButton.widthAnchor constraintGreaterThanOrEqualToConstant:104].active = YES;
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:csvButton];
 
-    // 右上角双按钮:蓝牙取数 + 一键清黑匣子(扫码已摘——cimbar 光学传输实用度低;
-    // ➕新建方案已删——意义不明且职责与 🎯空态/独立分析右上/☰转换记录「创建迭代方案」重叠)
+    // 右上角双按钮(自绘图标):蓝牙取数(标准蓝牙符号) + 一键清黑匣子(黑匣子+红✕,清空语义)
+    // (扫码已摘——cimbar 光学传输实用度低;➕新建方案已删——意义不明且职责重叠)
     UIBarButtonItem *bleButton = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"antenna.radiowaves.left.and.right"]
+        initWithImage:[NBHomeIllustrationView navBluetoothImage]
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(bleImportEntryTapped)];
     UIBarButtonItem *eraseButton = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"trash"]
+        initWithImage:[NBHomeIllustrationView navEraseBlackboxImage]
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(eraseBlackboxEntryTapped)];
     self.navigationItem.rightBarButtonItems = @[eraseButton, bleButton];
+
+    // 🔑 V3:首页固定明亮,appearance 只挂本页 navigationItem(子页照旧跟随系统)
+    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
+    [appearance configureWithOpaqueBackground];
+    appearance.backgroundColor = NBTheme.bg;
+    appearance.shadowColor = NBTheme.hairline;
+    self.navigationItem.standardAppearance = appearance;
+    self.navigationItem.scrollEdgeAppearance = appearance;
 }
 
 - (void)setupTableView {
@@ -81,8 +152,10 @@
     _tableView.dataSource = self;
     _tableView.delegate = self;
     _tableView.translatesAutoresizingMaskIntoConstraints = NO;
-    _tableView.rowHeight = 78;
+    _tableView.rowHeight = UITableViewAutomaticDimension;  // 长文件名折行,行高自适应
     _tableView.estimatedRowHeight = 78;
+    _tableView.backgroundColor = NBTheme.bg;
+    _tableView.separatorColor = NBTheme.hairline;
     _tableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
     [_tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"SchemeCell"];
     [self.view addSubview:_tableView];
@@ -94,25 +167,19 @@
         [_tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
     ]];
 
-    // 顶部 header = 「选一条路」+ Y 型三入口
-    // 🔑 tableHeaderView 用 auto layout 必须手动算高度设 frame,否则高度为 0
+    // 顶部 header = 大标题 + V3 色晕三入口 + 「我的方案」节标题
+    // 🔑 构建与测高分离:这里只占位赋值,真实测高在 viewDidLayoutSubviews(宽度定了才准)
     UIView *header = [self buildHeaderView];
-    [header setNeedsLayout];
-    [header layoutIfNeeded];
-    CGSize fitSize = [header systemLayoutSizeFittingSize:UILayoutFittingCompressedSize];
-    CGRect hFrame = header.frame;
-    hFrame.size.width = CGRectGetWidth(self.view.bounds);
-    hFrame.size.height = fitSize.height;
-    header.frame = hFrame;
     self.headerView = header;
+    header.frame = CGRectMake(0, 0, CGRectGetWidth(self.view.bounds), 1);
     _tableView.tableHeaderView = header;
 
     // 方案列表空态提示(放在 tableFooterView,无方案时显示)
     _emptySchemeLabel = [[UILabel alloc] init];
-    _emptySchemeLabel.text = @"暂无方案\n\n点「🎯 方案迭代」开始一轮调参";
+    _emptySchemeLabel.text = @"暂无迭代方案\n\n点「方案迭代」开始一轮调参";
     _emptySchemeLabel.textAlignment = NSTextAlignmentCenter;
     _emptySchemeLabel.numberOfLines = 0;
-    _emptySchemeLabel.textColor = [UIColor secondaryLabelColor];
+    _emptySchemeLabel.textColor = NBTheme.faint;
     _emptySchemeLabel.font = [UIFont systemFontOfSize:15];
 }
 
@@ -120,36 +187,44 @@
     UIView *container = [[UIView alloc] init];
     container.backgroundColor = [UIColor clearColor];
 
-    // ===== 「选一条路」标题区 =====
+    // ===== 衬线大标题:「选一条嗨路」(嗨路 蓝色+斜体) =====
+    NSMutableAttributedString *ts = [[NSMutableAttributedString alloc]
+        initWithString:@"选一条嗨路"
+            attributes:@{
+                NSFontAttributeName: [NBTheme serifBold:26],
+                NSForegroundColorAttributeName: NBTheme.ink
+            }];
+    [ts addAttributes:@{
+        NSForegroundColorAttributeName: NBTheme.accentBlue,
+        NSObliquenessAttributeName: @0.12  // Songti 无斜体面,用 obliqueness 模拟
+    } range:NSMakeRange(3, 2)];
     UILabel *title = [[UILabel alloc] init];
-    title.text = @"选一条嗨路";
-    title.font = [UIFont systemFontOfSize:27 weight:UIFontWeightBold];
+    title.attributedText = ts;
     title.translatesAutoresizingMaskIntoConstraints = NO;
     [container addSubview:title];
 
     UILabel *subtitle = [[UILabel alloc] init];
     subtitle.text = @"调一下, 还是深度喂屎";
     subtitle.font = [UIFont systemFontOfSize:13];
-    subtitle.textColor = [UIColor secondaryLabelColor];
+    subtitle.textColor = NBTheme.dim;
     subtitle.translatesAutoresizingMaskIntoConstraints = NO;
     [container addSubview:subtitle];
 
-    // ===== Y 型上排两入口:独立分析 / 方案迭代 =====
-    UIView *indepCard = [self buildEntryCardWithIcon:@"🛩️"
-                                                title:@"独立分析"
-                                              subtitle:@"导入 BBL\n选文件即出曲线"
-                                            badgeText:@"NO-SAVE"
-                                          badgeColor:[UIColor colorWithRed:0.96 green:0.76 blue:0.21 alpha:1.0]
-                                        badgeBgColor:[UIColor colorWithRed:1.0 green:0.95 blue:0.78 alpha:1.0]
-                                              action:@selector(independentEntryTapped)];
+    // BLE 呼吸点徽章(常驻状态;初始中性文案,不提前触发蓝牙权限弹窗)
+    UIView *bleBadge = [self buildBLEBadge];
+    [container addSubview:bleBadge];
 
-    UIView *iterCard = [self buildEntryCardWithIcon:@"🎯"
-                                               title:@"方案迭代"
-                                             subtitle:@"多轮闭环收敛\n换参飞 → 反馈"
-                                           badgeText:[self iterationBadgeText]
-                                         badgeColor:[UIColor colorWithRed:0.06 green:0.46 blue:0.43 alpha:1.0]
-                                       badgeBgColor:[UIColor colorWithRed:0.80 green:0.96 blue:0.94 alpha:1.0]
-                                             action:@selector(iterationEntryTapped)];
+    // ===== 上排两入口:V3 色晕卡面(插图区在卡上半,文字沉底) =====
+    UIView *indepCard = [self buildV3EntryCardWithScene:NBHomeSceneIndependent
+                                                  title:@"独立分析"
+                                               subtitle:@"黑匣子 BBL 导入 · 秒出响应曲线"
+                                                    pro:NO
+                                                 action:@selector(independentEntryTapped)];
+    UIView *iterCard = [self buildV3EntryCardWithScene:NBHomeSceneIteration
+                                                 title:@"方案迭代"
+                                              subtitle:@"多轮闭环收敛 · 换参飞 → 反馈"
+                                                    pro:YES
+                                                 action:@selector(iterationEntryTapped)];
 
     UIStackView *topRow = [[UIStackView alloc] initWithArrangedSubviews:@[indepCard, iterCard]];
     topRow.axis = UILayoutConstraintAxisHorizontal;
@@ -158,8 +233,8 @@
     topRow.translatesAutoresizingMaskIntoConstraints = NO;
     [container addSubview:topRow];
 
-    // ===== 第三入口:炸机诊断(PRO 付费,横条) =====
-    UIView *diagCard = [self buildDiagEntryCard];
+    // ===== 第三入口:炸机诊断横条(无 PRO;PRO 归方案迭代) =====
+    UIView *diagCard = [self buildV3DiagBar];
     [container addSubview:diagCard];
 
     // ===== 「我的方案」小标题 =====
@@ -168,14 +243,15 @@
     [container addSubview:schemeHeader];
 
     UILabel *schemeTitle = [[UILabel alloc] init];
-    schemeTitle.text = @"我的方案";
+    schemeTitle.text = @"我的多轮迭代方案";
     schemeTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    schemeTitle.textColor = NBTheme.ink;
     schemeTitle.translatesAutoresizingMaskIntoConstraints = NO;
     [schemeHeader addSubview:schemeTitle];
 
     UILabel *schemeCount = [[UILabel alloc] init];
-    schemeCount.font = [UIFont systemFontOfSize:12];
-    schemeCount.textColor = [UIColor secondaryLabelColor];
+    schemeCount.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
+    schemeCount.textColor = NBTheme.faint;
     schemeCount.translatesAutoresizingMaskIntoConstraints = NO;
     schemeCount.tag = 1001;  // 方案数刷新用
     [schemeHeader addSubview:schemeCount];
@@ -184,13 +260,17 @@
         [title.topAnchor constraintEqualToAnchor:container.topAnchor constant:18],
         [title.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:16],
 
+        [bleBadge.trailingAnchor constraintEqualToAnchor:container.trailingAnchor constant:-16],
+        [bleBadge.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+
         [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2],
         [subtitle.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:16],
+        [subtitle.trailingAnchor constraintLessThanOrEqualToAnchor:container.trailingAnchor constant:-16],
         [subtitle.bottomAnchor constraintEqualToAnchor:topRow.topAnchor constant:-14],
 
         [topRow.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:16],
         [topRow.trailingAnchor constraintEqualToAnchor:container.trailingAnchor constant:-16],
-        [topRow.heightAnchor constraintEqualToConstant:118],
+        // 卡高由卡内约束自撑(插图固定高 86 挂在插图上),不用魔法数
 
         [diagCard.topAnchor constraintEqualToAnchor:topRow.bottomAnchor constant:10],
         [diagCard.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:16],
@@ -207,110 +287,154 @@
         [schemeTitle.centerYAnchor constraintEqualToAnchor:schemeHeader.centerYAnchor],
 
         [schemeCount.leadingAnchor constraintEqualToAnchor:schemeTitle.trailingAnchor constant:8],
-        [schemeCount.centerYAnchor constraintEqualToAnchor:schemeHeader.centerYAnchor]
+        [schemeCount.centerYAnchor constraintEqualToAnchor:schemeHeader.centerYAnchor],
+        [schemeCount.trailingAnchor constraintLessThanOrEqualToAnchor:schemeHeader.trailingAnchor]
     ]];
 
     return container;
 }
 
-/// 构建一个 Y 型上排入口卡片(图标+标题+副标题+badge),整卡可点
-- (UIView *)buildEntryCardWithIcon:(NSString *)icon
-                             title:(NSString *)cardTitle
-                          subtitle:(NSString *)subtitle
-                        badgeText:(NSString *)badgeText
-                        badgeColor:(UIColor *)badgeColor
-                      badgeBgColor:(UIColor *)badgeBgColor
-                            action:(SEL)action {
+/// V3 色晕入口卡:上半插图区(固定高 86,色晕渐变) + 下半标题行(+可选 PRO) + 单行副题
+- (UIView *)buildV3EntryCardWithScene:(NBHomeScene)scene
+                                 title:(NSString *)cardTitle
+                              subtitle:(NSString *)subtitle
+                                    pro:(BOOL)pro
+                                 action:(SEL)action {
     UIView *card = [[UIView alloc] init];
-    card.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    card.backgroundColor = NBTheme.card;
     card.layer.cornerRadius = 16;
+    card.layer.shadowColor = [NBTheme.ink colorWithAlphaComponent:0.06].CGColor;
+    card.layer.shadowOffset = CGSizeMake(0, 4);
+    card.layer.shadowRadius = 10;
+    card.layer.shadowOpacity = 1;  // 颜色里已带 alpha,这里固定 1
     card.translatesAutoresizingMaskIntoConstraints = NO;
 
-    UILabel *iconLabel = [[UILabel alloc] init];
-    iconLabel.text = icon;
-    iconLabel.font = [UIFont systemFontOfSize:22];
-    iconLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    [card addSubview:iconLabel];
+    NBHomeIllustrationView *fig = [[NBHomeIllustrationView alloc] initWithFrame:CGRectZero scene:scene];
+    fig.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:fig];
+    [_headerIllustrations addObject:fig];
 
     UILabel *titleLabel = [[UILabel alloc] init];
     titleLabel.text = cardTitle;
     titleLabel.font = [UIFont systemFontOfSize:14.5 weight:UIFontWeightBold];
+    titleLabel.textColor = NBTheme.ink;
     titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [card addSubview:titleLabel];
 
     UILabel *subLabel = [[UILabel alloc] init];
     subLabel.text = subtitle;
     subLabel.font = [UIFont systemFontOfSize:11.5];
-    subLabel.numberOfLines = 0;
-    subLabel.textColor = [UIColor secondaryLabelColor];
+    subLabel.textColor = NBTheme.dim;
+    subLabel.numberOfLines = 1;
+    subLabel.adjustsFontSizeToFitWidth = YES;
+    subLabel.minimumScaleFactor = 0.85;
     subLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [card addSubview:subLabel];
 
-    UILabel *badge = [self buildBadgeWithText:badgeText color:badgeColor bgColor:badgeBgColor];
-    badge.translatesAutoresizingMaskIntoConstraints = NO;
-    [card addSubview:badge];
-
     [NSLayoutConstraint activateConstraints:@[
-        [iconLabel.topAnchor constraintEqualToAnchor:card.topAnchor constant:14],
-        [iconLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:12],
+        [fig.topAnchor constraintEqualToAnchor:card.topAnchor],
+        [fig.leadingAnchor constraintEqualToAnchor:card.leadingAnchor],
+        [fig.trailingAnchor constraintEqualToAnchor:card.trailingAnchor],
+        [fig.heightAnchor constraintEqualToConstant:86],
 
-        [titleLabel.topAnchor constraintEqualToAnchor:card.topAnchor constant:14],
-        [titleLabel.leadingAnchor constraintEqualToAnchor:iconLabel.trailingAnchor constant:8],
+        [titleLabel.topAnchor constraintEqualToAnchor:fig.bottomAnchor constant:12],
+        [titleLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:12],
 
         [subLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:3],
         [subLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:12],
         [subLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-12],
-
-        [badge.topAnchor constraintEqualToAnchor:subLabel.bottomAnchor constant:8],
-        [badge.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:12]
+        [subLabel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-12]
     ]];
 
-    // 整卡可点
+    if (pro) {
+        // PRO:渐变容器 view(底层) + 白字 label(内容层)——文字不能放 UILabel.layer.contents 上,
+        // sublayer 会盖住 contents,所以不能直接往 UILabel.layer 里插渐变
+        UIView *proWrap = [[UIView alloc] init];
+        proWrap.layer.cornerRadius = 6;
+        proWrap.layer.masksToBounds = YES;
+        proWrap.translatesAutoresizingMaskIntoConstraints = NO;
+        [card addSubview:proWrap];
+
+        self.proGradient = [CAGradientLayer layer];
+        _proGradient.colors = @[(__bridge id)NBTheme.proOrange.CGColor, (__bridge id)NBTheme.proRed.CGColor];
+        _proGradient.startPoint = CGPointMake(0, 0.5);
+        _proGradient.endPoint = CGPointMake(1, 0.5);
+        [proWrap.layer addSublayer:_proGradient];
+
+        UILabel *proText = [[UILabel alloc] init];
+        proText.text = @"PRO";
+        proText.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
+        proText.textColor = UIColor.whiteColor;
+        proText.translatesAutoresizingMaskIntoConstraints = NO;
+        [proWrap addSubview:proText];
+
+        self.proBadge = proWrap;
+        // 宽度直接按文本量出(避免 wrap↔label 互相定宽的循环依赖)
+        CGFloat textW = [@"PRO" sizeWithAttributes:@{NSFontAttributeName: proText.font}].width;
+        [NSLayoutConstraint activateConstraints:@[
+            [proWrap.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-12],
+            [proWrap.centerYAnchor constraintEqualToAnchor:titleLabel.centerYAnchor],
+            [proWrap.widthAnchor constraintEqualToConstant:ceil(textW) + 12],
+            [proWrap.heightAnchor constraintEqualToConstant:18],
+            [proText.centerXAnchor constraintEqualToAnchor:proWrap.centerXAnchor],
+            [proText.centerYAnchor constraintEqualToAnchor:proWrap.centerYAnchor]
+        ]];
+    }
+
     [self attachTapAction:action toView:card];
     return card;
 }
 
-/// 构建炸机诊断横条入口(PRO 付费)
-- (UIView *)buildDiagEntryCard {
+/// 炸机诊断横条:左 38pt 珊瑚 tint 圆角块内「摔断四轴」小场景 + 标题/副题
+- (UIView *)buildV3DiagBar {
     UIView *card = [[UIView alloc] init];
-    card.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    card.backgroundColor = NBTheme.card;
     card.layer.cornerRadius = 16;
+    card.layer.shadowColor = [NBTheme.ink colorWithAlphaComponent:0.06].CGColor;
+    card.layer.shadowOffset = CGSizeMake(0, 4);
+    card.layer.shadowRadius = 10;
+    card.layer.shadowOpacity = 1;
     card.translatesAutoresizingMaskIntoConstraints = NO;
 
-    UILabel *iconLabel = [[UILabel alloc] init];
-    iconLabel.text = @"🩺";
-    iconLabel.font = [UIFont systemFontOfSize:24];
-    iconLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    [card addSubview:iconLabel];
+    UIView *ico = [[UIView alloc] init];
+    ico.backgroundColor = NBTheme.accentCoralTint;
+    ico.layer.cornerRadius = 11;
+    ico.layer.masksToBounds = YES;
+    ico.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:ico];
+
+    NBHomeIllustrationView *mini = [[NBHomeIllustrationView alloc] initWithFrame:CGRectZero scene:NBHomeSceneCrashMini];
+    mini.translatesAutoresizingMaskIntoConstraints = NO;
+    [ico addSubview:mini];
+    [_headerIllustrations addObject:mini];
 
     UILabel *titleLabel = [[UILabel alloc] init];
     titleLabel.text = @"炸机诊断";
     titleLabel.font = [UIFont systemFontOfSize:14.5 weight:UIFontWeightBold];
+    titleLabel.textColor = NBTheme.ink;
     titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [card addSubview:titleLabel];
 
-    UILabel *proBadge = [self buildBadgeWithText:@"PRO"
-                                           color:[UIColor whiteColor]
-                                          bgColor:[UIColor systemPurpleColor]];
-    proBadge.translatesAutoresizingMaskIntoConstraints = NO;
-    [card addSubview:proBadge];
-
     UILabel *subLabel = [[UILabel alloc] init];
-    subLabel.text = @"AI 找炸机根因 · 失步 / 烧电机 / 缺相";
+    subLabel.text = @"教培机黑匣子不开源 · 我们读得懂";
     subLabel.font = [UIFont systemFontOfSize:11.5];
-    subLabel.textColor = [UIColor secondaryLabelColor];
+    subLabel.textColor = NBTheme.dim;
     subLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [card addSubview:subLabel];
 
     [NSLayoutConstraint activateConstraints:@[
-        [iconLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [iconLabel.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
+        [ico.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
+        [ico.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
+        [ico.widthAnchor constraintEqualToConstant:38],
+        [ico.heightAnchor constraintEqualToConstant:38],
 
-        [titleLabel.leadingAnchor constraintEqualToAnchor:iconLabel.trailingAnchor constant:12],
+        [mini.topAnchor constraintEqualToAnchor:ico.topAnchor],
+        [mini.leadingAnchor constraintEqualToAnchor:ico.leadingAnchor],
+        [mini.trailingAnchor constraintEqualToAnchor:ico.trailingAnchor],
+        [mini.bottomAnchor constraintEqualToAnchor:ico.bottomAnchor],
+
+        [titleLabel.leadingAnchor constraintEqualToAnchor:ico.trailingAnchor constant:12],
         [titleLabel.topAnchor constraintEqualToAnchor:card.topAnchor constant:14],
-
-        [proBadge.leadingAnchor constraintEqualToAnchor:titleLabel.trailingAnchor constant:6],
-        [proBadge.centerYAnchor constraintEqualToAnchor:titleLabel.centerYAnchor],
 
         [subLabel.leadingAnchor constraintEqualToAnchor:titleLabel.leadingAnchor],
         [subLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:2]
@@ -318,6 +442,76 @@
 
     [self attachTapAction:@selector(crashDiagEntryTapped) toView:card];
     return card;
+}
+
+/// BLE 呼吸点徽章:初始中性文案(不读 bluetoothStateText——它会 lazy 建中心并触发权限弹窗)
+- (UIView *)buildBLEBadge {
+    UIView *badge = [[UIView alloc] init];
+    badge.backgroundColor = NBTheme.card;
+    badge.layer.cornerRadius = 12;
+    badge.layer.borderWidth = 1;
+    badge.layer.borderColor = NBTheme.hairline.CGColor;
+    badge.translatesAutoresizingMaskIntoConstraints = NO;
+
+    UIView *dot = [[UIView alloc] init];
+    dot.backgroundColor = NBTheme.faint;  // 未就绪中性灰;就绪后 updateBLEBadge 换青绿
+    dot.layer.cornerRadius = 3.5;
+    dot.translatesAutoresizingMaskIntoConstraints = NO;
+    dot.tag = 2005;
+    [badge addSubview:dot];
+
+    UILabel *text = [[UILabel alloc] init];
+    text.text = @"蓝牙待连接";
+    text.font = [UIFont systemFontOfSize:10];
+    text.textColor = NBTheme.dim;
+    text.translatesAutoresizingMaskIntoConstraints = NO;
+    text.tag = 2006;
+    [badge addSubview:text];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [dot.leadingAnchor constraintEqualToAnchor:badge.leadingAnchor constant:10],
+        [dot.centerYAnchor constraintEqualToAnchor:badge.centerYAnchor],
+        [dot.widthAnchor constraintEqualToConstant:7],
+        [dot.heightAnchor constraintEqualToConstant:7],
+
+        [text.leadingAnchor constraintEqualToAnchor:dot.trailingAnchor constant:6],
+        [text.trailingAnchor constraintEqualToAnchor:badge.trailingAnchor constant:-10],
+        [text.topAnchor constraintEqualToAnchor:badge.topAnchor constant:5],
+        [text.bottomAnchor constraintEqualToAnchor:badge.bottomAnchor constant:-5]
+    ]];
+
+    // 1.6s 呼吸
+    [UIView animateWithDuration:0.8
+                          delay:0
+                        options:UIViewAnimationOptionRepeat | UIViewAnimationOptionAutoreverse | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{ dot.alpha = 0.35; }
+                     completion:nil];
+    return badge;
+}
+
+/// BLE 状态刷新(只在 onStateChanged 回调/central 已存在时调用,读 stateText 安全)
+- (void)updateBLEBadgeReady:(BOOL)ready text:(NSString *)stateText {
+    UIView *h = _headerView ?: _tableView.tableHeaderView;
+    UIView *dot = [h viewWithTag:2005];
+    UILabel *label = [h viewWithTag:2006];
+    if (!dot || !label) return;
+    dot.backgroundColor = ready ? NBTheme.accentGreen : NBTheme.faint;
+    NSString *t = ready ? @"蓝牙已连接" : stateText;
+    if (t.length) label.text = t;
+}
+
+/// 重挂 BLE 状态回调(单槽:清匣流水线/子页会覆写,回首页时重挂)
+- (void)installBLEBadgeObserver {
+    FCBluetoothService *ble = [FCBluetoothService shared];  // 安全:不创建 central,不触发权限弹窗
+    __weak typeof(self) weakSelf = self;
+    ble.onStateChanged = ^(BOOL ready, NSString *stateText) {
+        __strong typeof(weakSelf) s = weakSelf;
+        [s updateBLEBadgeReady:ready text:stateText];
+    };
+    // central 已存在(用户用过蓝牙功能)时立即刷一次;此时读 stateText 无弹窗风险
+    if (ble.bluetoothReady) {
+        [self updateBLEBadgeReady:YES text:ble.bluetoothStateText];
+    }
 }
 
 /// 构建 chip 样式的小徽标(auto layout 友好:空格做水平内边距 + 固定高度约束)
@@ -377,15 +571,6 @@
     _emptySchemeLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [footer addSubview:_emptySchemeLabel];
     _tableView.tableFooterView = footer;
-}
-
-/// 方案迭代 badge 文案(进行中数量,0.3 静态展示;0.4 接真实进度)
-- (NSString *)iterationBadgeText {
-    NSUInteger inProgress = 0;
-    for (IterationChain *chain in self.schemes) {
-        if (!chain.isConverged) inProgress++;
-    }
-    return inProgress > 0 ? [NSString stringWithFormat:@"%lu 个进行中", (unsigned long)inProgress] : @"多轮闭环";
 }
 
 #pragma mark - 三入口 Actions
@@ -824,15 +1009,19 @@
     }
 
     NSMutableAttributedString *attr = [[NSMutableAttributedString alloc] init];
+    NSMutableParagraphStyle *namePara = [NSMutableParagraphStyle new];
+    namePara.lineBreakMode = NSLineBreakByCharWrapping;  // 真实长文件名(中英混排)按字断行
     [attr appendAttributedString:[[NSAttributedString alloc] initWithString:name
                                                                 attributes:@{
-                                                                    NSFontAttributeName: [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold]
+                                                                    NSFontAttributeName: [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold],
+                                                                    NSForegroundColorAttributeName: NBTheme.ink,
+                                                                    NSParagraphStyleAttributeName: namePara
                                                                 }]];
     [attr appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
     [attr appendAttributedString:[[NSAttributedString alloc] initWithString:detail
                                                                 attributes:@{
                                                                     NSFontAttributeName: [UIFont systemFontOfSize:12],
-                                                                    NSForegroundColorAttributeName: [UIColor secondaryLabelColor]
+                                                                    NSForegroundColorAttributeName: NBTheme.dim
                                                                 }]];
 
     cell.textLabel.attributedText = attr;

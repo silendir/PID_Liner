@@ -13,6 +13,7 @@
 #import "CrashDiagnosisViewController.h"
 #import "IterationChainManager.h"
 #import "BBLImportService.h"
+#import "NBTheme.h"
 
 /// 行数流式统计的封顶值:超过即不再数,显示为"N+ 行"(防超大文件卡顿;
 /// 显示层必须带"+"否则会被误读为文件精确行数——2026-10-13 排查黄线事故时被它误导过)
@@ -173,7 +174,16 @@ static const NSInteger kLineCountStatCap = 100000;
     [super viewDidLoad];
     NSLog(@"本类为:%@",[NSString stringWithUTF8String:object_getClassName(self)]);
     self.title = @"CSV转换记录";
-    self.view.backgroundColor = [UIColor systemBackgroundColor];
+    self.view.backgroundColor = NBTheme.bg;  // V3:云白,与首页同家族
+
+    // 🔑 V3 导航:本页 appearance(亮底+发丝分割),标题 ink——与首页同一套令牌
+    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
+    [appearance configureWithOpaqueBackground];
+    appearance.backgroundColor = NBTheme.bg;
+    appearance.shadowColor = NBTheme.hairline;
+    appearance.titleTextAttributes = @{NSForegroundColorAttributeName: NBTheme.ink};
+    self.navigationItem.standardAppearance = appearance;
+    self.navigationItem.scrollEdgeAppearance = appearance;
 
     // 初始化数据源
     if (!_csvRecords) {
@@ -244,6 +254,8 @@ static const NSInteger kLineCountStatCap = 100000;
     _tableView.translatesAutoresizingMaskIntoConstraints = NO;
     _tableView.rowHeight = UITableViewAutomaticDimension;
     _tableView.estimatedRowHeight = 80;
+    _tableView.backgroundColor = NBTheme.bg;
+    _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;  // 卡片行自带间隙,不要系统分割线
     [_tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"CSVCell"];
     [self.view addSubview:_tableView];
 
@@ -252,7 +264,7 @@ static const NSInteger kLineCountStatCap = 100000;
     _emptyLabel.text = @"暂无转换记录\n\n请在主页面选择Session并转换";
     _emptyLabel.textAlignment = NSTextAlignmentCenter;
     _emptyLabel.numberOfLines = 0;
-    _emptyLabel.textColor = [UIColor secondaryLabelColor];
+    _emptyLabel.textColor = NBTheme.faint;
     _emptyLabel.font = [UIFont systemFontOfSize:16];
     _emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _emptyLabel.hidden = YES;
@@ -535,7 +547,27 @@ static const NSInteger kLineCountStatCap = 100000;
     CSVDisplayItem *item = self.displayItems[indexPath.row];
     CSVRecord *record = item.record;
 
+    // 🔑 V3 卡片行:白底圆角卡(云白间隙当分隔),复用时只建一次
+    if (!cell.backgroundView) {
+        UIView *wrap = [[UIView alloc] init];
+        wrap.backgroundColor = [UIColor clearColor];
+        UIView *card = [[UIView alloc] initWithFrame:CGRectInset(wrap.bounds, 8, 3)];
+        card.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        card.backgroundColor = NBTheme.card;
+        card.layer.cornerRadius = 16;
+        card.layer.borderWidth = 1;
+        card.layer.borderColor = NBTheme.hairline.CGColor;
+        [wrap addSubview:card];
+        cell.backgroundView = wrap;
+        cell.backgroundColor = [UIColor clearColor];
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        cell.textLabel.backgroundColor = [UIColor clearColor];
+        cell.detailTextLabel.backgroundColor = [UIColor clearColor];
+    }
+
     UIListContentConfiguration *config = [UIListContentConfiguration subtitleCellConfiguration];
+    config.textProperties.color = NBTheme.ink;
+    config.textToSecondaryTextVerticalPadding = 3;
 
     if (item.isParent) {
         // 🔹 父记录
@@ -560,18 +592,18 @@ static const NSInteger kLineCountStatCap = 100000;
 
         config.secondaryText = subtitle;
         config.secondaryTextProperties.numberOfLines = 3;
-        config.secondaryTextProperties.color = [UIColor secondaryLabelColor];
+        config.secondaryTextProperties.color = NBTheme.dim;
 
         if (item.childCount > 0) {
-            // 有子记录：显示展开/折叠指示
+            // 有子记录：展开/折叠指示(迭代链 = 青绿,与首页方案迭代同色)
             config.image = [UIImage systemImageNamed:item.isExpanded ? @"chevron.down" : @"chevron.right"];
-            config.imageProperties.tintColor = [UIColor systemOrangeColor];
+            config.imageProperties.tintColor = NBTheme.accentGreen;
             cell.accessoryView = nil;
             cell.accessoryType = UITableViewCellAccessoryNone;
         } else {
-            // 独立记录
+            // 独立记录(文档 = 电光蓝,与首页独立分析同色)
             config.image = [UIImage systemImageNamed:@"doc.text"];
-            config.imageProperties.tintColor = [UIColor systemBlueColor];
+            config.imageProperties.tintColor = NBTheme.accentBlue;
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
     } else {
@@ -584,9 +616,9 @@ static const NSInteger kLineCountStatCap = 100000;
                 [record formattedFileSize],
                 [record formattedCreateTime]];
         config.secondaryTextProperties.numberOfLines = 1;
-        config.secondaryTextProperties.color = [UIColor tertiaryLabelColor];
+        config.secondaryTextProperties.color = NBTheme.faint;
         config.image = [UIImage systemImageNamed:@"arrow.turn.down.right"];
-        config.imageProperties.tintColor = [UIColor systemGrayColor];
+        config.imageProperties.tintColor = NBTheme.faint;
         cell.accessoryType = UITableViewCellAccessoryNone;
     }
 
