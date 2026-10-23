@@ -12,10 +12,11 @@
 //
 
 #import <UIKit/UIKit.h>
+#import "NBBaseViewController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface CrashDiagnosisViewController : UIViewController
+@interface CrashDiagnosisViewController : NBBaseViewController
 
 /// 用 CSV 路径初始化
 /// @param csvPath 飞行记录 CSV 路径(传给 CrashDiagnosisEngine)

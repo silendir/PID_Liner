@@ -6,6 +6,7 @@
 //
 
 #import <UIKit/UIKit.h>
+#import "NBBaseViewController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -53,7 +54,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 // CSV历史记录ViewController
-@interface CSVHistoryViewController : UIViewController <UITableViewDelegate, UITableViewDataSource>
+@interface CSVHistoryViewController : NBBaseViewController <UITableViewDelegate, UITableViewDataSource>
 
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) NSMutableArray<CSVRecord *> *csvRecords;

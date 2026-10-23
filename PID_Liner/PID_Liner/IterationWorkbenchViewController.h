@@ -17,10 +17,11 @@
 //
 
 #import <UIKit/UIKit.h>
+#import "NBBaseViewController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface IterationWorkbenchViewController : UIViewController
+@interface IterationWorkbenchViewController : NBBaseViewController
 
 /// 用迭代链 ID 初始化
 - (instancetype)initWithChainId:(NSString *)chainId;

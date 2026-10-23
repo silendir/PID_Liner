@@ -8,10 +8,11 @@
 //
 
 #import <UIKit/UIKit.h>
+#import "NBBaseViewController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface MassStorageImportViewController : UIViewController
+@interface MassStorageImportViewController : NBBaseViewController
 @end
 
 NS_ASSUME_NONNULL_END
