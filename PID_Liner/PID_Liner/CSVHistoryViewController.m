@@ -28,8 +28,10 @@ static const NSInteger kLineCountStatCap = 100000;
 @property (nonatomic, strong) UIView *sheet;       // 白底大卡(backgroundView,角随行位变化)
 @property (nonatomic, strong) UIView *spine;       // 左侧批次脊线(与组头脊线连成一条)
 @property (nonatomic, strong) UIView *divider;     // 行间发丝线(首行隐藏——组头底部已有)
-@property (nonatomic, strong) UILabel *sessionBadge; // 原始 Session 序号徽章(S4,仅多批次显示)
-@property (nonatomic, strong) NSLayoutConstraint *nameLeading; // 名称缩进随徽章显隐调整
+@property (nonatomic, strong) UIView *tileSession;      // 右侧 Session 序号磁贴(多批次:Session+序号;单批次隐藏)
+@property (nonatomic, strong) UILabel *tileWord;        // "Session" 灰字
+@property (nonatomic, strong) UILabel *tileNum;         // 序号(大号青绿)
+@property (nonatomic, strong) NSLayoutConstraint *nameTrailing; // 名称右边界随磁贴显隐调整
 @property (nonatomic, strong) UILabel *nameLabel;
 @property (nonatomic, strong) UILabel *sizeChip;
 @property (nonatomic, strong) UILabel *linesChip;
@@ -63,27 +65,47 @@ static const NSInteger kLineCountStatCap = 100000;
         [self.contentView addSubview:divider];
         self.divider = divider;
 
-        UILabel *sessionBadge = [[UILabel alloc] init];
-        sessionBadge.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightBold];
-        sessionBadge.textColor = NBTheme.accentGreen;
-        sessionBadge.backgroundColor = NBTheme.accentGreenTint;
-        sessionBadge.layer.cornerRadius = 9;
-        sessionBadge.textAlignment = NSTextAlignmentCenter;
-        sessionBadge.translatesAutoresizingMaskIntoConstraints = NO;
-        sessionBadge.hidden = YES;
-        [self.contentView addSubview:sessionBadge];
-        self.sessionBadge = sessionBadge;
+        // 🔑 右侧 Session 全名磁贴(多批次:Session4;单批次隐藏)
+        UIView *tileSession = [[UIView alloc] init];
+        tileSession.layer.cornerRadius = 12;
+        tileSession.layer.borderWidth = 1;
+        tileSession.translatesAutoresizingMaskIntoConstraints = NO;
+        tileSession.hidden = YES;
+        [self.contentView addSubview:tileSession];
+        self.tileSession = tileSession;
+
+        UILabel *tileWord = [[UILabel alloc] init];
+        tileWord.font = [UIFont systemFontOfSize:9];
+        tileWord.textColor = NBTheme.dim;
+        tileWord.translatesAutoresizingMaskIntoConstraints = NO;
+        [tileSession addSubview:tileWord];
+        self.tileWord = tileWord;
+
+        UILabel *tileNum = [[UILabel alloc] init];
+        tileNum.font = [UIFont fontWithName:@"Georgia-Bold" size:20];
+        tileNum.textColor = NBTheme.accentGreen;
+        tileNum.translatesAutoresizingMaskIntoConstraints = NO;
+        [tileSession addSubview:tileNum];
+        self.tileNum = tileNum;
+
+        [NSLayoutConstraint activateConstraints:@[
+            [tileNum.centerYAnchor constraintEqualToAnchor:tileSession.centerYAnchor],
+            [tileNum.trailingAnchor constraintEqualToAnchor:tileSession.trailingAnchor constant:-9],
+            [tileWord.centerYAnchor constraintEqualToAnchor:tileSession.centerYAnchor],
+            [tileWord.trailingAnchor constraintEqualToAnchor:tileNum.leadingAnchor constant:-2],
+            [tileWord.leadingAnchor constraintGreaterThanOrEqualToAnchor:tileSession.leadingAnchor constant:9]
+        ]];
 
         UILabel *name = [[UILabel alloc] init];
         name.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
         name.textColor = NBTheme.ink;
         name.numberOfLines = 2;
+        name.lineBreakMode = NSLineBreakByCharWrapping;  // 长文件名按字符折行
         name.translatesAutoresizingMaskIntoConstraints = NO;
         [self.contentView addSubview:name];
         self.nameLabel = name;
 
-        NSLayoutConstraint *nameLeading = [name.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:50];
-        self.nameLeading = nameLeading;
+        self.nameTrailing = [name.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16];
 
         UILabel *sizeChip = [[UILabel alloc] init];
         sizeChip.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
@@ -129,13 +151,12 @@ static const NSInteger kLineCountStatCap = 100000;
             [divider.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor],
             [divider.heightAnchor constraintEqualToConstant:0.5],
 
-            [sessionBadge.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
-            [sessionBadge.centerYAnchor constraintEqualToAnchor:name.centerYAnchor],
-            [sessionBadge.widthAnchor constraintEqualToConstant:34],
-            [sessionBadge.heightAnchor constraintEqualToConstant:18],
-
             [name.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:10],
-            [name.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+            [name.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+            [tileSession.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-14],
+            [tileSession.centerYAnchor constraintEqualToAnchor:name.centerYAnchor],
+            [tileSession.widthAnchor constraintEqualToConstant:68],
+            [tileSession.heightAnchor constraintEqualToConstant:30],
 
             [sizeChip.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
             [sizeChip.topAnchor constraintEqualToAnchor:name.bottomAnchor constant:7],
@@ -153,7 +174,8 @@ static const NSInteger kLineCountStatCap = 100000;
             [date.topAnchor constraintEqualToAnchor:sizeChip.bottomAnchor constant:5],
             [date.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-10]
         ]];
-        [self.nameLeading setActive:YES];
+        [self.nameTrailing setActive:YES];
+        [self.tileSession setHidden:YES];
     }
     return self;
 }
@@ -162,6 +184,7 @@ static const NSInteger kLineCountStatCap = 100000;
 - (void)configureWithRecord:(CSVRecord *)record multiSession:(BOOL)multi showDivider:(BOOL)showDivider isLast:(BOOL)isLast {
     UIColor *accent = multi ? NBTheme.accentGreen : NBTheme.accentBlue;
     UIColor *tint   = multi ? NBTheme.accentGreenTint : NBTheme.accentBlueTint;
+    UIColor *line   = multi ? NBTheme.accentGreenLine : NBTheme.accentBlueLine;
 
     self.spine.backgroundColor = accent;
     // 末行脊线随卡底收圆(下两角 r8),中段行四角微圆保持连续
@@ -176,10 +199,15 @@ static const NSInteger kLineCountStatCap = 100000;
     self.divider.hidden = !showDivider;
     self.nameLabel.text = record.displayName;
 
-    // 🔑 原始 Session 序号徽章:仅多批次显示(单日志 BBL 恒为 S1,无区分意义)
-    self.sessionBadge.hidden = !multi;
-    self.sessionBadge.text = [NSString stringWithFormat:@"S%ld", (long)record.sessionIndex];
-    self.nameLeading.constant = multi ? 50 : 16;
+    // 🔑 原始 Session 序号磁贴:仅多批次显示(单日志 BBL 恒为 S1,无区分意义)
+    self.tileSession.hidden = !multi;
+    self.tileWord.text = @"Session";
+    self.tileWord.textColor = NBTheme.dim;
+    self.tileNum.text = [NSString stringWithFormat:@"%ld", (long)record.sessionIndex];
+    self.tileSession.backgroundColor = tint;
+    self.tileSession.layer.borderColor = line.CGColor;
+    self.tileNum.textColor = accent;
+    self.nameTrailing.constant = multi ? -90 : -16;  // 让位右侧磁贴(68pt+间隙),长文件名换行
 
     self.sizeChip.text = [NSString stringWithFormat:@" %@ ", [record formattedFileSize]];
     self.linesChip.text = (record.lineCount >= kLineCountStatCap)
@@ -766,6 +794,7 @@ static const NSInteger kLineCountStatCap = 100000;
     name.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
     name.textColor = NBTheme.ink;
     name.numberOfLines = 2;
+        name.lineBreakMode = NSLineBreakByCharWrapping;  // 长文件名按字符折行
     name.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [card addSubview:name];
 
