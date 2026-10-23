@@ -20,6 +20,177 @@
 /// 显示层必须带"+"否则会被误读为文件精确行数——2026-10-13 排查黄线事故时被它误导过)
 static const NSInteger kLineCountStatCap = 100000;
 
+#pragma mark - Session Cell(V-C 徽章流款式)
+
+/// Session 行:与组头同处一张白色圆角大卡内(section 化内嵌列表),行间发丝线分隔
+/// 美术照 V-C 原型;信息项与位置不变,仅外观升级。最后一行收底圆角(组尾)
+@interface NBSessionCell : UITableViewCell
+@property (nonatomic, strong) UIView *sheet;       // 白底大卡(backgroundView,角随行位变化)
+@property (nonatomic, strong) UIView *spine;       // 左侧批次脊线(与组头脊线连成一条)
+@property (nonatomic, strong) UIView *divider;     // 行间发丝线(首行隐藏——组头底部已有)
+@property (nonatomic, strong) UILabel *sessionBadge; // 原始 Session 序号徽章(S4,仅多批次显示)
+@property (nonatomic, strong) NSLayoutConstraint *nameLeading; // 名称缩进随徽章显隐调整
+@property (nonatomic, strong) UILabel *nameLabel;
+@property (nonatomic, strong) UILabel *sizeChip;
+@property (nonatomic, strong) UILabel *linesChip;
+@property (nonatomic, strong) UILabel *shortChip;
+@property (nonatomic, strong) UILabel *dateLabel;
+@end
+
+@implementation NBSessionCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
+    if (self) {
+        self.backgroundColor = [UIColor clearColor];
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+
+        UIView *sheet = [[UIView alloc] init];
+        sheet.backgroundColor = NBTheme.card;
+        sheet.layer.masksToBounds = YES;  // 🔑 裁剪脊线:脊线跟随大卡圆角(末行收底弧线),而不是各自圆角断开
+        self.backgroundView = sheet;
+        self.sheet = sheet;
+
+        UIView *spine = [[UIView alloc] init];
+        spine.translatesAutoresizingMaskIntoConstraints = NO;
+        [sheet addSubview:spine];  // 🔑 挂在 sheet 上被圆角裁剪——挂 contentView 会盖住圆角
+        self.spine = spine;
+
+        UIView *divider = [[UIView alloc] init];
+        divider.backgroundColor = NBTheme.hairline;
+        divider.translatesAutoresizingMaskIntoConstraints = NO;
+        divider.hidden = YES;
+        [self.contentView addSubview:divider];
+        self.divider = divider;
+
+        UILabel *sessionBadge = [[UILabel alloc] init];
+        sessionBadge.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightBold];
+        sessionBadge.textColor = NBTheme.accentGreen;
+        sessionBadge.backgroundColor = NBTheme.accentGreenTint;
+        sessionBadge.layer.cornerRadius = 9;
+        sessionBadge.textAlignment = NSTextAlignmentCenter;
+        sessionBadge.translatesAutoresizingMaskIntoConstraints = NO;
+        sessionBadge.hidden = YES;
+        [self.contentView addSubview:sessionBadge];
+        self.sessionBadge = sessionBadge;
+
+        UILabel *name = [[UILabel alloc] init];
+        name.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        name.textColor = NBTheme.ink;
+        name.numberOfLines = 2;
+        name.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.contentView addSubview:name];
+        self.nameLabel = name;
+
+        NSLayoutConstraint *nameLeading = [name.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:50];
+        self.nameLeading = nameLeading;
+
+        UILabel *sizeChip = [[UILabel alloc] init];
+        sizeChip.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+        sizeChip.textColor = NBTheme.dim;
+        sizeChip.backgroundColor = [UIColor colorWithRed:0.95 green:0.96 blue:0.99 alpha:1];
+        sizeChip.layer.cornerRadius = 8;
+        sizeChip.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.contentView addSubview:sizeChip];
+        self.sizeChip = sizeChip;
+
+        UILabel *linesChip = [[UILabel alloc] init];
+        linesChip.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+        linesChip.textColor = NBTheme.dim;
+        linesChip.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.contentView addSubview:linesChip];
+        self.linesChip = linesChip;
+
+        UILabel *shortChip = [[UILabel alloc] init];
+        shortChip.font = [UIFont systemFontOfSize:9 weight:UIFontWeightSemibold];
+        shortChip.textColor = NBTheme.accentCoral;
+        shortChip.backgroundColor = NBTheme.accentCoralTint;
+        shortChip.layer.cornerRadius = 8;
+        shortChip.textAlignment = NSTextAlignmentCenter;
+        shortChip.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.contentView addSubview:shortChip];
+        self.shortChip = shortChip;
+
+        UILabel *date = [[UILabel alloc] init];
+        date.font = [UIFont monospacedSystemFontOfSize:8.5 weight:UIFontWeightRegular];
+        date.textColor = NBTheme.faint;
+        date.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.contentView addSubview:date];
+        self.dateLabel = date;
+
+        [NSLayoutConstraint activateConstraints:@[
+            [spine.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor],
+            [spine.topAnchor constraintEqualToAnchor:self.contentView.topAnchor],
+            [spine.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor],
+            [spine.widthAnchor constraintEqualToConstant:4],
+
+            [divider.topAnchor constraintEqualToAnchor:self.contentView.topAnchor],
+            [divider.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+            [divider.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor],
+            [divider.heightAnchor constraintEqualToConstant:0.5],
+
+            [sessionBadge.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+            [sessionBadge.centerYAnchor constraintEqualToAnchor:name.centerYAnchor],
+            [sessionBadge.widthAnchor constraintEqualToConstant:34],
+            [sessionBadge.heightAnchor constraintEqualToConstant:18],
+
+            [name.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:10],
+            [name.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+
+            [sizeChip.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+            [sizeChip.topAnchor constraintEqualToAnchor:name.bottomAnchor constant:7],
+            [sizeChip.heightAnchor constraintEqualToConstant:16],
+
+            [linesChip.leadingAnchor constraintEqualToAnchor:sizeChip.trailingAnchor constant:6],
+            [linesChip.centerYAnchor constraintEqualToAnchor:sizeChip.centerYAnchor],
+
+            [shortChip.leadingAnchor constraintEqualToAnchor:linesChip.trailingAnchor constant:6],
+            [shortChip.centerYAnchor constraintEqualToAnchor:sizeChip.centerYAnchor],
+            [shortChip.heightAnchor constraintEqualToConstant:16],
+            [shortChip.widthAnchor constraintEqualToConstant:70],
+
+            [date.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+            [date.topAnchor constraintEqualToAnchor:sizeChip.bottomAnchor constant:5],
+            [date.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-10]
+        ]];
+        [self.nameLeading setActive:YES];
+    }
+    return self;
+}
+
+/// 外观配置(信息与位置逻辑不变;多批次=青绿/单批次=电光蓝;isLast 收底圆角)
+- (void)configureWithRecord:(CSVRecord *)record multiSession:(BOOL)multi showDivider:(BOOL)showDivider isLast:(BOOL)isLast {
+    UIColor *accent = multi ? NBTheme.accentGreen : NBTheme.accentBlue;
+    UIColor *tint   = multi ? NBTheme.accentGreenTint : NBTheme.accentBlueTint;
+
+    self.spine.backgroundColor = accent;
+    // 末行脊线随卡底收圆(下两角 r8),中段行四角微圆保持连续
+    self.spine.layer.cornerRadius = isLast ? 8 : 2;
+    self.spine.layer.maskedCorners = isLast
+        ? (kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner)
+        : (kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner | kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner);
+    self.sheet.layer.cornerRadius = isLast ? 16 : 0;
+    if (isLast) {
+        self.sheet.layer.maskedCorners = kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
+    }
+    self.divider.hidden = !showDivider;
+    self.nameLabel.text = record.displayName;
+
+    // 🔑 原始 Session 序号徽章:仅多批次显示(单日志 BBL 恒为 S1,无区分意义)
+    self.sessionBadge.hidden = !multi;
+    self.sessionBadge.text = [NSString stringWithFormat:@"S%ld", (long)record.sessionIndex];
+    self.nameLeading.constant = multi ? 50 : 16;
+
+    self.sizeChip.text = [NSString stringWithFormat:@" %@ ", [record formattedFileSize]];
+    self.linesChip.text = (record.lineCount >= kLineCountStatCap)
+        ? [NSString stringWithFormat:@" %ld+ 行 ", (long)kLineCountStatCap]
+        : [NSString stringWithFormat:@" %ld 行 ", (long)record.lineCount];
+    self.shortChip.hidden = !record.shortClip;
+    self.shortChip.text = @" ⚠️ 无效 ";  // 过短无法解析(<2s):中英文皆短的明文标识
+}
+
+@end
+
 #pragma mark - CSVRecord Implementation
 
 @implementation CSVRecord
@@ -234,13 +405,13 @@ static const NSInteger kLineCountStatCap = 100000;
     _tableView.estimatedRowHeight = 80;
     // 🔑 组头高度用固定值(自适应 section header 在部分 iOS 版本会塌成 0 → 整页空白,真机已踩)
     // 74pt = 3+68+3:卡内容纳两行批次名 + 元信息行
-    _tableView.sectionHeaderHeight = 74;
-    _tableView.estimatedSectionHeaderHeight = 74;
+    _tableView.sectionHeaderHeight = 96;   // 组头:名称两行 + 元信息 + 创建时间 + 右侧磁贴
+    _tableView.estimatedSectionHeaderHeight = 96;
     _tableView.sectionFooterHeight = 10;  // 组间距
     if (@available(iOS 15.0, *)) { _tableView.sectionHeaderTopPadding = 0; }
     _tableView.backgroundColor = NBTheme.bg;
     _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;  // 卡片行自带间隙,不要系统分割线
-    [_tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"CSVCell"];
+    [_tableView registerClass:[NBSessionCell class] forCellReuseIdentifier:@"CSVCell"];
     [self.view addSubview:_tableView];
 
     // 空状态提示
@@ -257,8 +428,8 @@ static const NSInteger kLineCountStatCap = 100000;
     // 设置约束
     [NSLayoutConstraint activateConstraints:@[
         [_tableView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
-        [_tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-        [_tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [_tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
+        [_tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
         [_tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
 
         [_emptyLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
@@ -523,57 +694,16 @@ static const NSInteger kLineCountStatCap = 100000;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"CSVCell" forIndexPath:indexPath];
+    NBSessionCell *cell = [tableView dequeueReusableCellWithIdentifier:@"CSVCell" forIndexPath:indexPath];
 
     CSVRecordGroup *group = self.recordGroups[indexPath.section];
     CSVRecord *record = (indexPath.row == 0) ? group.parentRecord : group.childRecords[indexPath.row - 1];
 
-    // 🔑 V3 卡片行:白底圆角卡(云白间隙当分隔),复用时只建一次
-    if (!cell.backgroundView) {
-        UIView *wrap = [[UIView alloc] init];
-        wrap.backgroundColor = [UIColor clearColor];
-        UIView *card = [[UIView alloc] initWithFrame:CGRectInset(wrap.bounds, 8, 3)];
-        card.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        card.backgroundColor = NBTheme.card;
-        card.layer.cornerRadius = 16;
-        card.layer.borderWidth = 1;
-        card.layer.borderColor = NBTheme.hairline.CGColor;
-        [wrap addSubview:card];
-        cell.backgroundView = wrap;
-        cell.backgroundColor = [UIColor clearColor];
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        cell.textLabel.backgroundColor = [UIColor clearColor];
-        cell.detailTextLabel.backgroundColor = [UIColor clearColor];
-    }
-
-    UIListContentConfiguration *config = [UIListContentConfiguration subtitleCellConfiguration];
-    config.textProperties.color = NBTheme.ink;
-    config.textToSecondaryTextVerticalPadding = 3;
-
-    // 🔹 Session 行
-    // 🔑 "S{N}" 前缀只在多 Session 批次显示(那里才有区分意义);
-    //    单日志 BBL 解码序号恒为 1,显示 "S1" 反而让人误以为丢了轮次身份(批次身份在卡头 BBL 名)
-    // 🔑 行数统计上限10万,到顶的文件显示"100000+行"而非误导性的精确值
-    NSString *lineText = (record.lineCount >= kLineCountStatCap)
-        ? [NSString stringWithFormat:@"%ld+ 行", (long)kLineCountStatCap]
-        : [NSString stringWithFormat:@"%ld 行", (long)record.lineCount];
+    // 🔑 V-C 徽章流款式(语义脊线/徽章化元信息/序号磁贴);信息与位置不变,仅外观
     BOOL multiSession = (group.childRecords.count > 0);
-    config.text = multiSession
-        ? [NSString stringWithFormat:@"S%ld · %@", (long)record.sessionIndex, record.displayName]
-        : record.displayName;
-    NSString *clipTag = record.shortClip ? @" · ⚠️ 短片段" : @"";
-    config.secondaryText = [NSString stringWithFormat:@"%@ | %@%@\n%@",
-            [record formattedFileSize],
-            lineText,
-            clipTag,
-            [record formattedCreateTime]];
-    config.secondaryTextProperties.numberOfLines = 2;
-    config.secondaryTextProperties.color = NBTheme.dim;
-    config.image = [UIImage systemImageNamed:@"doc.text"];
-    config.imageProperties.tintColor = NBTheme.accentBlue;
-    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    BOOL isLast = (indexPath.row == [self tableView:tableView numberOfRowsInSection:indexPath.section] - 1);
+    [cell configureWithRecord:record multiSession:multiSession showDivider:(indexPath.row > 0) isLast:isLast];
 
-    cell.contentConfiguration = config;
     return cell;
 }
 
@@ -594,26 +724,44 @@ static const NSInteger kLineCountStatCap = 100000;
     }
 
     // 🔑 宽度用表格实际宽度初始化 + 挂自适应:reloadSections 重建时不再出现宽度跳变
-    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CGRectGetWidth(tableView.bounds), 74)];
+    // 🔑 大卡账本:卡头 = 组大卡的顶部段(展开=只圆上角+底部发丝线;收起=四角圆独立成卡)
+    // 🔑 宽度用表格实际宽度初始化 + 挂自适应:reloadSections 重建时不再出现宽度跳变
+    // 🔑 大卡账本:卡头 = 组大卡的顶部段(展开=只圆上角+底部发丝线;收起=四角圆独立成卡)
+    // 组头高 96:名称两行 + 元信息行 + 创建时间行,右侧 Session 数磁贴独立避让
+    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CGRectGetWidth(tableView.bounds), 96)];
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     v.backgroundColor = [UIColor clearColor];  // 透出表格底色,与页面一致
 
-    UIView *card = [[UIView alloc] initWithFrame:CGRectInset(v.bounds, 8, 3)];
-    card.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CGRectGetWidth(v.bounds), 96)];
+    card.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     card.backgroundColor = NBTheme.card;
     card.layer.cornerRadius = 16;
-    card.layer.borderWidth = 1;
-    card.layer.borderColor = NBTheme.hairline.CGColor;
+    card.layer.maskedCorners = group.isExpanded
+        ? (kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner)
+        : (kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner | kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner);
+    card.layer.masksToBounds = YES;
     [v addSubview:card];
+
+    if (group.isExpanded) {  // 展开时:卡头与首行之间的发丝分隔线(V-B 账本同款)
+        UIView *hl = [[UIView alloc] initWithFrame:CGRectMake(13, 95.5, CGRectGetWidth(card.bounds) - 26, 0.5)];
+        hl.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        hl.backgroundColor = NBTheme.hairline;
+        [card addSubview:hl];
+    }
 
     CGFloat cardW = CGRectGetWidth(card.bounds);
 
-    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(13, CGRectGetMidY(card.bounds) - 4.5, 9, 9)];
-    dot.backgroundColor = NBTheme.accentGreen;
-    dot.layer.cornerRadius = 4.5;
-    [card addSubview:dot];
+    // 🔑 批次身份双编码:左侧脊线 + 圆点(青绿=多 Session 批次 / 电光蓝=单 Session 批次)
+    BOOL multi = (group.childRecords.count > 0);
+    UIColor *accent   = multi ? NBTheme.accentGreen : NBTheme.accentBlue;
+    UIColor *tintBg   = multi ? NBTheme.accentGreenTint : NBTheme.accentBlueTint;
+    UIColor *tintLine = multi ? NBTheme.accentGreenLine : NBTheme.accentBlueLine;
 
-    UILabel *name = [[UILabel alloc] initWithFrame:CGRectMake(31, 9, cardW - 31 - 16, 36)];
+    UIView *spine = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 4, 96)];
+    spine.backgroundColor = accent;
+    [card addSubview:spine];
+
+    UILabel *name = [[UILabel alloc] initWithFrame:CGRectMake(31, 12, cardW - 31 - 78, 36)];
     name.text = group.groupKey;
     name.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
     name.textColor = NBTheme.ink;
@@ -621,15 +769,43 @@ static const NSInteger kLineCountStatCap = 100000;
     name.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [card addSubview:name];
 
-    UILabel *count = [[UILabel alloc] initWithFrame:CGRectMake(cardW - 104, CGRectGetMidY(card.bounds) - 7, 92, 14)];
-    count.text = [NSString stringWithFormat:@"%ld 个Session", (long)(group.childRecords.count + 1)];
-    count.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightBold];
-    count.textColor = NBTheme.accentGreen;
-    count.textAlignment = NSTextAlignmentRight;
-    count.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    [card addSubview:count];
+    // 🔑 右侧显眼磁贴:多批次 = 大号 Session 数(青绿);单批次 = 文档图标(电光蓝)
+    UIView *tile = [[UIView alloc] initWithFrame:CGRectMake(cardW - 62, 14, 46, 46)];
+    tile.backgroundColor = tintBg;
+    tile.layer.cornerRadius = 13;
+    tile.layer.borderWidth = 1;
+    tile.layer.borderColor = tintLine.CGColor;
+    [card addSubview:tile];
 
-    UILabel *meta = [[UILabel alloc] initWithFrame:CGRectMake(31, 48, cardW - 31 - 18, 12)];
+    if (multi) {
+        UILabel *num = [[UILabel alloc] initWithFrame:CGRectMake(0, 6, 46, 20)];
+        num.text = [NSString stringWithFormat:@"%ld", (long)(group.childRecords.count + 1)];
+        num.font = [UIFont fontWithName:@"Georgia-Bold" size:18];
+        num.textColor = accent;
+        num.textAlignment = NSTextAlignmentCenter;
+        [tile addSubview:num];
+        UILabel *sub = [[UILabel alloc] initWithFrame:CGRectMake(0, 27, 46, 9)];
+        sub.text = @"SESSIONS";
+        sub.font = [UIFont monospacedSystemFontOfSize:6.5 weight:UIFontWeightRegular];
+        sub.textColor = NBTheme.faint;
+        sub.textAlignment = NSTextAlignmentCenter;
+        [tile addSubview:sub];
+    } else {
+        UILabel *num = [[UILabel alloc] initWithFrame:CGRectMake(0, 6, 46, 20)];
+        num.text = [NSString stringWithFormat:@"%ld", (long)(group.childRecords.count + 1)];
+        num.font = [UIFont fontWithName:@"Georgia-Bold" size:18];
+        num.textColor = accent;
+        num.textAlignment = NSTextAlignmentCenter;
+        [tile addSubview:num];
+        UILabel *sub = [[UILabel alloc] initWithFrame:CGRectMake(0, 27, 46, 9)];
+        sub.text = @"SESSIONS";
+        sub.font = [UIFont monospacedSystemFontOfSize:6.5 weight:UIFontWeightRegular];
+        sub.textColor = NBTheme.faint;
+        sub.textAlignment = NSTextAlignmentCenter;
+        [tile addSubview:sub];
+    }
+
+    UILabel *meta = [[UILabel alloc] initWithFrame:CGRectMake(31, 54, cardW - 31 - 24, 12)];
     // 批次创建时间 = 组内最早 createTime(第一次转换落盘时刻)
     NSDate *batchDate = head.createTime;
     for (CSVRecord *child in group.childRecords) {
@@ -641,15 +817,23 @@ static const NSInteger kLineCountStatCap = 100000;
         batchDateFmt = [[NSDateFormatter alloc] init];
         batchDateFmt.dateFormat = @"MM-dd HH:mm";
     });
-    meta.text = [NSString stringWithFormat:@"%ld SESSIONS · %.1f MB · %ld 行 · 创建于 %@",
+    meta.text = [NSString stringWithFormat:@"%ld SESSIONS · %.1f MB · %ld 行",
                  (long)(group.childRecords.count + 1),
                  totalSize / (1024.0 * 1024.0),
-                 (long)totalLines,
-                 [batchDateFmt stringFromDate:batchDate]];
+                 (long)totalLines];
     meta.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
     meta.textColor = NBTheme.faint;
     meta.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [card addSubview:meta];
+
+    // 创建时间独立一行(与右侧 Session 数磁贴错开)
+    UILabel *batchDateLabel = [[UILabel alloc] initWithFrame:CGRectMake(31, 70, cardW - 31 - 24, 12)];
+    batchDateLabel.text = [NSString stringWithFormat:@"创建于 %@",
+        [batchDateFmt stringFromDate:batchDate]];
+    batchDateLabel.font = [UIFont monospacedSystemFontOfSize:8.5 weight:UIFontWeightRegular];
+    batchDateLabel.textColor = NBTheme.faint;
+    batchDateLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [card addSubview:batchDateLabel];
 
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(groupHeadTapped:)];
     [v addGestureRecognizer:tap];

@@ -107,6 +107,18 @@
 
 #pragma mark - UI Setup
 
+/// 🔑 防连点:仅当自己仍是栈顶才允许 push(双击/转场期间重复点击会压入重复页面);
+/// 守卫持续到 pop 回首页,即"跳转完成才恢复交互"
+- (BOOL)canPush {
+    return self.navigationController && self.navigationController.topViewController == self;
+}
+
+/// 统一 push 入口(带防连点守卫)
+- (void)pushVC:(UIViewController *)vc {
+    if (![self canPush]) return;
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
 - (void)setupNav {
     // 左上角「CSV 记录」白底胶囊按钮 → 总列表(CSVHistoryVC,原始记录仓库)——款式照 V3 原型
     UIButton *csvButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -584,7 +596,7 @@
 
 - (void)enterIndependentAnalysis {
     IndependentAnalysisViewController *vc = [[IndependentAnalysisViewController alloc] init];
-    [self.navigationController pushViewController:vc animated:YES];
+    [self pushVC:vc];
 }
 
 /// 🎯 方案迭代 → 有链进最近工作台;无链弹推荐导入例子(加入=建示例链→进工作台)
@@ -736,7 +748,7 @@
 
 - (void)pushWorkbenchForChain:(IterationChain *)chain {
     IterationWorkbenchViewController *vc = [[IterationWorkbenchViewController alloc] initWithChainId:chain.chainId];
-    [self.navigationController pushViewController:vc animated:YES];
+    [self pushVC:vc];
 }
 
 /// 🩺 炸机诊断 → 0.3 指向现有 CSVHistory(选记录诊断);0.4 独立诊断屏
@@ -943,12 +955,12 @@
 - (void)bleImportEntryTapped {
     NSLog(@"[Home] 蓝牙取数入口");
     MassStorageImportViewController *vc = [[MassStorageImportViewController alloc] init];
-    [self.navigationController pushViewController:vc animated:YES];
+    [self pushVC:vc];
 }
 
 - (void)pushCSVHistory {
     CSVHistoryViewController *vc = [[CSVHistoryViewController alloc] init];
-    [self.navigationController pushViewController:vc animated:YES];
+    [self pushVC:vc];
 }
 
 #pragma mark - 空态兜底(三入口统一:空 → 弹推荐导入例子 → 加入 → 各走流程)
@@ -1039,7 +1051,7 @@
     // 0.4c:点方案 → 进该链的工作台
     IterationChain *chain = self.schemes[indexPath.row];
     IterationWorkbenchViewController *vc = [[IterationWorkbenchViewController alloc] initWithChainId:chain.chainId];
-    [self.navigationController pushViewController:vc animated:YES];
+    [self pushVC:vc];
 }
 
 /// 方案列表左滑删除(整链硬删,含全部轮次)
